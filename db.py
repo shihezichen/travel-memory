@@ -1,0 +1,1376 @@
+"""旅行记忆系统 — 数据层 (SQLite) + 多用户"""
+import datetime
+import hashlib
+import hmac
+import json
+import secrets
+import sqlite3
+from pathlib import Path
+
+DB_PATH = Path(__file__).parent / "data.db"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    salt TEXT NOT NULL,
+    display_name TEXT,
+    is_admin INTEGER DEFAULT 0,
+    last_trip_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    expires_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS trips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    start_date TEXT,
+    end_date TEXT,
+    description TEXT,
+    status TEXT DEFAULT 'planning',            -- 状态机: planning/traveling/completed/archived
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    start_date TEXT,
+    end_date TEXT,
+    description TEXT,
+    route_mode TEXT DEFAULT 'drive',
+    is_waypoint INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_points_trip_date ON points(trip_id, start_date);
+
+CREATE TABLE IF NOT EXISTS media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    point_id INTEGER NOT NULL REFERENCES points(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    thumb_filename TEXT,
+    exif_time TEXT,
+    exif_lat REAL,
+    exif_lng REAL,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_media_point ON media(point_id);
+
+CREATE TABLE IF NOT EXISTS shares (
+    token TEXT PRIMARY KEY,
+    trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    password_hash TEXT,
+    salt TEXT,
+    expires_at TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS route_cache (
+    cache_key TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
+-- AI 生成内容落库（P1-2: 总结/路书/明信片/日记持久化，可追溯 + 复用）
+CREATE TABLE IF NOT EXISTS generations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,                        -- trip_summary/route_guide/postcard/diary
+    style TEXT DEFAULT '旅行者视角',
+    language TEXT DEFAULT 'zh',
+    text TEXT NOT NULL,
+    tokens_used INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_generations_trip ON generations(trip_id, kind);
+
+-- ===== 领域 API 层新增（2026-08-24）=====
+
+-- API Key（对外 agent 认证，与用户登录 session 分离）
+CREATE TABLE IF NOT EXISTS api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash TEXT NOT NULL UNIQUE,
+    key_prefix TEXT NOT NULL,
+    name TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL DEFAULT 'read',       -- read/write/share/admin 逗号分隔
+    expires_at TEXT,
+    last_used_at TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    revoked INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
+-- 审计日志（谁/何时/调了什么/是否成功/token 消耗）
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    method TEXT,
+    path TEXT,
+    scope TEXT,
+    status TEXT,                              -- ok/error
+    detail TEXT,
+    tokens_used INTEGER DEFAULT 0,
+    latency_ms INTEGER,
+    client_request_id TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+-- 用户长期偏好画像（联想层沉淀）
+CREATE TABLE IF NOT EXISTS user_prefs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pref_key TEXT NOT NULL,
+    pref_value TEXT,
+    strength REAL DEFAULT 0.5,
+    evidence_count INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE(user_id, pref_key)
+);
+CREATE INDEX IF NOT EXISTS idx_prefs_user ON user_prefs(user_id);
+
+-- 点级情绪/场景元数据（N-7）：感官记忆重建的地基，稀疏可增量更新
+CREATE TABLE IF NOT EXISTS point_meta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    point_id INTEGER NOT NULL REFERENCES points(id) ON DELETE CASCADE,
+    mood TEXT,                                 -- 情绪标签（如「宁静」「兴奋」「怀旧」）
+    weather TEXT,                              -- 天气（如「晴」「海边微风」）
+    scene TEXT,                                -- 场景（如「海边日落」「古城街巷」）
+    time_of_day TEXT,                          -- 时段（如「黄昏」「清晨」）
+    season TEXT,                               -- 季节（规则可算，LLM 确认）
+    meta_json TEXT,                            -- 扩展感官字段（气味/声音/温度等，JSON）
+    source TEXT DEFAULT 'llm',                 -- rule / llm
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE(point_id)
+);
+CREATE INDEX IF NOT EXISTS idx_point_meta_point ON point_meta(point_id);
+
+-- 幂等键（P0-2）：写操作 client_request_id 去重，防远程 agent 网络重试重复建点/建行程
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    api_key_id INTEGER,
+    client_request_id TEXT NOT NULL,
+    action TEXT,
+    status TEXT DEFAULT 'completed',          -- completed / pending
+    result TEXT,                               -- JSON：首次执行的响应结果（幂等命中时原样返回）
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE(api_key_id, client_request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_idem_key ON idempotency_keys(api_key_id, client_request_id);
+"""
+
+# 会话有效期（天）
+SESSION_HOURS = 3  # 登录会话时长：3 小时无活动自动下线（滑动过期）
+# 滑动续期的写节流：expires_at 距「满血」还差不到这么多分钟，就不重写。
+# 打开一个行程页要打 7 个 API，每个都续期一次等于 7 次写事务，纯属浪费。
+SESSION_RENEW_SKEW_MINUTES = 5
+
+
+def get_conn():
+    # timeout 是「撞上写锁时等多久」，默认 5s。WAL 下几乎撞不上，留 15s 是给
+    # checkpoint / 备份快照这类偶发的长写操作兜底，免得高并发下直接抛 database is locked。
+    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    # synchronous 是连接级 pragma（不像 journal_mode 会持久化到库文件），所以每次都要设。
+    # WAL + NORMAL 下写事务不再每次 fsync，掉电最多丢最近几个事务、不会损坏库。
+    conn.execute("PRAGMA synchronous = NORMAL")
+    return conn
+
+
+def init_db():
+    conn = get_conn()
+    # WAL：读写不再互斥，写锁只在提交瞬间持有。这是并发下最大的一处收益，
+    # journal_mode 是库文件的持久属性，设一次就一直生效，所以只在这里做。
+    # 副产物是 data.db-wal / data.db-shm 两个文件（.gitignore 已包含）。
+    # 冷备用的是 sqlite3 的 backup() API，在 WAL 下同样能拿到一致性快照。
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.DatabaseError:
+        # 某些网络文件系统不支持 WAL 需要的共享内存，失败就继续用原来的模式。
+        pass
+    conn.executescript(SCHEMA)
+    # 兼容旧库：trips 若无 user_id 列则补上（历史数据 user_id 置 NULL）
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(trips)")]
+    if "user_id" not in cols:
+        conn.execute("ALTER TABLE trips ADD COLUMN user_id INTEGER REFERENCES users(id)")
+    # 兼容旧库：trips 若无 status 列则补上（历史行程默认 planning）
+    if "status" not in cols:
+        conn.execute("ALTER TABLE trips ADD COLUMN status TEXT DEFAULT 'planning'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_user ON trips(user_id)")
+    # 兼容旧库：shares 若无 expires_at 列则补上（历史分享视为永久有效）
+    share_cols = [r["name"] for r in conn.execute("PRAGMA table_info(shares)")]
+    if "expires_at" not in share_cols:
+        conn.execute("ALTER TABLE shares ADD COLUMN expires_at TEXT")
+    if "password_hash" not in share_cols:
+        conn.execute("ALTER TABLE shares ADD COLUMN password_hash TEXT")
+    if "salt" not in share_cols:
+        conn.execute("ALTER TABLE shares ADD COLUMN salt TEXT")
+    # 兼容旧库：points 若无 route_mode 列则补上（默认驾车 'drive'）
+    point_cols = [r["name"] for r in conn.execute("PRAGMA table_info(points)")]
+    if "route_mode" not in point_cols:
+        conn.execute("ALTER TABLE points ADD COLUMN route_mode TEXT DEFAULT 'drive'")
+    if "sort_order" not in point_cols:
+        conn.execute("ALTER TABLE points ADD COLUMN sort_order INTEGER DEFAULT 0")
+    if "is_waypoint" not in point_cols:
+        conn.execute("ALTER TABLE points ADD COLUMN is_waypoint INTEGER DEFAULT 0")
+    if "coord_sys" not in point_cols:
+        # 存量数据按 GCJ-02 打标（高德前端一直按火星坐标渲染）
+        conn.execute("ALTER TABLE points ADD COLUMN coord_sys TEXT DEFAULT 'gcj02'")
+    if "elevation" not in point_cols:
+        # 海拔（米）。外部高程服务按需回填一次后就缓存在这里，NULL = 还没查过
+        conn.execute("ALTER TABLE points ADD COLUMN elevation REAL")
+    # 兼容旧库：media 若无 caption 列则补上（每张照片/视频的一段文字描述）
+    media_cols = [r["name"] for r in conn.execute("PRAGMA table_info(media)")]
+    if "caption" not in media_cols:
+        conn.execute("ALTER TABLE media ADD COLUMN caption TEXT")
+    if "sort_order" not in media_cols:
+        # 点详情里可以像发朋友圈那样拖拽排序，顺序存这里。
+        # 默认 0 = 没排过，此时仍按拍摄时间排（见 list_media 的 ORDER BY）
+        conn.execute("ALTER TABLE media ADD COLUMN sort_order INTEGER DEFAULT 0")
+    # 兼容旧库：users 若无 last_trip_id 列则补上（记住上次打开的行程，跨设备生效）
+    user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
+    if "last_trip_id" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN last_trip_id INTEGER")
+    # 过期会话只增不删（登出才 DELETE），启动时顺手清一次。
+    # 表本身很小，清理是为了别让它无限长下去。
+    conn.execute("DELETE FROM sessions WHERE expires_at IS NOT NULL "
+                 "AND expires_at <= datetime('now','localtime')")
+    conn.commit()
+    conn.close()
+
+
+def rows_to_dicts(rows):
+    return [dict(r) for r in rows]
+
+
+# ---------- 密码 ----------
+_PBKDF2_ITERS = 100_000
+
+
+def hash_password(password: str, salt: str = None) -> tuple[str, str]:
+    if salt is None:
+        salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt), _PBKDF2_ITERS
+    )
+    return salt, h.hex()
+
+
+def verify_password(password: str, salt: str, expected: str) -> bool:
+    _, h = hash_password(password, salt)
+    return hmac.compare_digest(h, expected)
+
+
+# ---------- 用户 ----------
+def create_user(username, password, display_name="", is_admin=0):
+    salt, phash = hash_password(password)
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO users(username, password_hash, salt, display_name, is_admin) "
+        "VALUES(?,?,?,?,?)",
+        (username, phash, salt, display_name or username, is_admin),
+    )
+    conn.commit()
+    uid = cur.lastrowid
+    conn.close()
+    return uid
+
+
+def get_user_by_username(username):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def set_last_trip(user_id, trip_id):
+    """记住该用户最后打开的行程（跨设备恢复；trip_id 为 None 时清空）"""
+    conn = get_conn()
+    conn.execute("UPDATE users SET last_trip_id=? WHERE id=?", (trip_id, user_id))
+    conn.commit()
+    conn.close()
+
+
+def verify_user(username, password):
+    u = get_user_by_username(username)
+    if not u:
+        return None
+    if verify_password(password, u["salt"], u["password_hash"]):
+        return u
+    return None
+
+
+def get_or_create_admin():
+    """管理员账号（token 直登用），username 固定 admin，is_admin=1"""
+    admin = get_user_by_username("admin")
+    if admin:
+        return admin
+    salt, phash = hash_password(secrets.token_urlsafe(24))
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO users(username, password_hash, salt, display_name, is_admin) "
+        "VALUES('admin',?,?,?,1)",
+        (phash, salt, "管理员"),
+    )
+    conn.commit()
+    uid = cur.lastrowid
+    conn.close()
+    return get_user_by_id(uid)
+
+
+# ---------- 会话 ----------
+def create_session(user_id):
+    token = secrets.token_urlsafe(32)
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO sessions(token, user_id, expires_at) "
+        "VALUES(?,?,datetime('now','localtime','+%d hours'))" % SESSION_HOURS,
+        (token, user_id),
+    )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def _session_needs_renew(expires_at) -> bool:
+    """expires_at 已经比「现在 + SESSION_HOURS」少了 SKEW 分钟以上才值得重写。"""
+    if not expires_at:
+        return True
+    try:
+        exp = datetime.datetime.strptime(str(expires_at), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return True   # 格式不认识就按老行为续期，宁可多写一次也别让人莫名下线
+    full = datetime.datetime.now() + datetime.timedelta(hours=SESSION_HOURS)
+    return exp < full - datetime.timedelta(minutes=SESSION_RENEW_SKEW_MINUTES)
+
+
+def get_session_user(token):
+    """返回 session 对应 user（含过期检查 + 滑动刷新），无效/过期返回 None"""
+    if not token:
+        return None
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT u.*, s.expires_at AS _session_expires_at "
+        "FROM sessions s JOIN users u ON u.id=s.user_id "
+        "WHERE s.token=? AND (s.expires_at IS NULL OR s.expires_at > datetime('now','localtime'))",
+        (token,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
+    user = dict(row)
+    expires_at = user.pop("_session_expires_at", None)   # 只是内部用，不外泄给调用方
+    # 滑动过期：有活动就顺延过期时间。但没必要每个请求都写 —— 见 SESSION_RENEW_SKEW_MINUTES。
+    # 语义从「3 小时无活动下线」变成「3 小时无活动下线，精度 ±5 分钟」，用户无感。
+    if _session_needs_renew(expires_at):
+        conn.execute(
+            "UPDATE sessions SET expires_at=datetime('now','localtime','+%d hours') WHERE token=?"
+            % SESSION_HOURS,
+            (token,),
+        )
+        conn.commit()
+    conn.close()
+    return user
+
+
+def delete_session(token):
+    conn = get_conn()
+    conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+    conn.commit()
+    conn.close()
+
+
+# ---------- 归属校验辅助 ----------
+def get_trip_owner_id(trip_id):
+    conn = get_conn()
+    row = conn.execute("SELECT user_id FROM trips WHERE id=?", (trip_id,)).fetchone()
+    conn.close()
+    return row["user_id"] if row else None
+
+
+def get_point_owner_id(point_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT t.user_id FROM points p JOIN trips t ON t.id=p.trip_id WHERE p.id=?",
+        (point_id,),
+    ).fetchone()
+    conn.close()
+    return row["user_id"] if row else None
+
+
+def get_media_owner_id(media_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT t.user_id FROM media m JOIN points p ON p.id=m.point_id "
+        "JOIN trips t ON t.id=p.trip_id WHERE m.id=?",
+        (media_id,),
+    ).fetchone()
+    conn.close()
+    return row["user_id"] if row else None
+
+
+# ---------- 行程 ----------
+def list_trips(user):
+    conn = get_conn()
+    if user["is_admin"]:
+        rows = conn.execute(
+            "SELECT * FROM trips ORDER BY COALESCE(start_date, created_at) DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM trips WHERE user_id=? "
+            "ORDER BY COALESCE(start_date, created_at) DESC",
+            (user["id"],),
+        ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def get_trip(trip_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_trip(user, name, start_date, end_date, description="", status="planning"):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO trips(user_id, name, start_date, end_date, description, status) "
+        "VALUES(?,?,?,?,?,?)",
+        (user["id"], name, start_date, end_date, description, status),
+    )
+    conn.commit()
+    tid = cur.lastrowid
+    conn.close()
+    return tid
+
+
+def update_trip(trip_id, name=None, start_date=None, end_date=None,
+                description=None, status=None):
+    """字段级更新行程；None 字段跳过（支持只改 status 的状态机操作）。"""
+    sets, args = [], []
+    if name is not None:
+        sets.append("name=?"); args.append(name)
+    if start_date is not None:
+        sets.append("start_date=?"); args.append(start_date)
+    if end_date is not None:
+        sets.append("end_date=?"); args.append(end_date)
+    if description is not None:
+        sets.append("description=?"); args.append(description)
+    if status is not None:
+        sets.append("status=?"); args.append(status)
+    if not sets:
+        return
+    conn = get_conn()
+    conn.execute(f"UPDATE trips SET {', '.join(sets)} WHERE id=?", (*args, trip_id))
+    conn.commit()
+    conn.close()
+
+
+# ---------- AI 生成内容落库（P1-2）----------
+def save_generation(trip_id, kind, text, tokens_used, style="旅行者视角", language="zh"):
+    """落库一次 AI 生成记录；返回记录 id"""
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO generations(trip_id, kind, style, language, text, tokens_used) "
+        "VALUES(?,?,?,?,?,?)",
+        (trip_id, kind, style, language, text, tokens_used),
+    )
+    conn.commit()
+    gid = cur.lastrowid
+    conn.close()
+    return gid
+
+
+def list_generations(trip_id, kind=None, limit=20):
+    """查询某行程的生成记录（按时间倒序，可选按 kind 过滤）"""
+    conn = get_conn()
+    if kind:
+        rows = conn.execute(
+            "SELECT * FROM generations WHERE trip_id=? AND kind=? "
+            "ORDER BY id DESC LIMIT ?",
+            (trip_id, kind, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM generations WHERE trip_id=? ORDER BY id DESC LIMIT ?",
+            (trip_id, limit),
+        ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def delete_trip(trip_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
+    # 清掉指向该行程的「上次打开」记录，避免登录时恢复到已删除的行程
+    conn.execute("UPDATE users SET last_trip_id=NULL WHERE last_trip_id=?", (trip_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_trip_media_files(trip_id):
+    """返回某行程下所有媒体的物理文件信息（filename + thumb_filename），用于级联删除"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT m.filename, m.thumb_filename FROM media m "
+        "JOIN points p ON m.point_id = p.id WHERE p.trip_id = ?",
+        (trip_id,),
+    ).fetchall()
+    conn.close()
+    return [(r["filename"], r["thumb_filename"]) for r in rows]
+
+
+def list_trip_media(trip_id):
+    """行程内全部媒体（含所属点信息），按 EXIF/上传时间排序（P2-3 媒体底座）"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT m.id, m.point_id, m.type, m.filename, m.thumb_filename, "
+        "m.exif_time, m.exif_lat, m.exif_lng, m.created_at, m.caption, "
+        "p.name AS point_name, p.start_date AS point_start, p.end_date AS point_end "
+        "FROM media m JOIN points p ON m.point_id = p.id "
+        "WHERE p.trip_id = ? "
+        "ORDER BY COALESCE(m.exif_time, m.created_at) ASC, m.id ASC",
+        (trip_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def search_trip_media(trip_id, q=None, mtype=None, date_from=None, date_to=None):
+    """行程内多媒体检索：关键字(文件名/地点名/描述/caption) / 类型 / EXIF 时间范围（P2-3）"""
+    conn = get_conn()
+    sql = (
+        "SELECT m.id, m.point_id, m.type, m.filename, m.thumb_filename, "
+        "m.exif_time, m.exif_lat, m.exif_lng, m.caption, "
+        "p.name AS point_name, p.description AS point_desc, "
+        "p.start_date AS point_start, p.end_date AS point_end "
+        "FROM media m JOIN points p ON m.point_id = p.id "
+        "WHERE p.trip_id = ?"
+    )
+    args = [trip_id]
+    if mtype:
+        sql += " AND m.type = ?"
+        args.append(mtype)
+    if date_from:
+        sql += " AND COALESCE(m.exif_time, m.created_at) >= ?"
+        args.append(date_from)
+    if date_to:
+        if len(date_to) == 10:
+            # 只给了日期（YYYY-MM-DD）时按「整天」算。不能拼成 "<date> 23:59:59"：
+            # exif_time 是 ISO 的 "<date>T08:00:00"，而 created_at 是 "<date> 08:00:00"，
+            # 两种分隔符混存，字符串比较下 'T'(0x54) > ' '(0x20)，当天的照片会被自己的
+            # 截止日期滤掉。改成只比日期前缀，对两种格式都正确。
+            sql += " AND substr(COALESCE(m.exif_time, m.created_at), 1, 10) <= ?"
+        else:
+            sql += " AND COALESCE(m.exif_time, m.created_at) <= ?"
+        args.append(date_to)
+    rows = conn.execute(sql, args).fetchall()
+    conn.close()
+    result = rows_to_dicts(rows)
+    if q:
+        ql = q.lower()
+        result = [r for r in result
+                  if ql in (r["filename"] or "").lower()
+                  or ql in (r["point_name"] or "").lower()
+                  or ql in (r["point_desc"] or "").lower()
+                  or ql in (r["caption"] or "").lower()]
+    return result
+
+
+# ---------- 点 ----------
+def list_points(trip_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM points WHERE trip_id=? "
+        "ORDER BY start_date ASC, sort_order ASC, id ASC",
+        (trip_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def set_point_elevation(point_id, elevation):
+    """写入某个点的海拔（米）。elevation 为 None 表示查不到，也写进去避免反复重查——
+    这里统一存成 -32768 这种哨兵值不够直观，所以查不到就保持 NULL，由调用方控制重试节奏。"""
+    conn = get_conn()
+    conn.execute("UPDATE points SET elevation=? WHERE id=?", (elevation, point_id))
+    conn.commit()
+    conn.close()
+
+
+def list_points_without_elevation(trip_id):
+    """该行程里还没有海拔数据的点（带坐标的才算）。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, lat, lng FROM points "
+        "WHERE trip_id=? AND elevation IS NULL AND lat IS NOT NULL AND lng IS NOT NULL",
+        (trip_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def list_all_points(user):
+    """用户所有行程的所有点（含坐标），供足迹热力图/全量足迹展示。
+
+    admin 返回全库；普通用户只返回自己的点。仅取有有效坐标的点。
+    """
+    conn = get_conn()
+    base = (
+        "SELECT p.id, p.trip_id, p.name, p.lat, p.lng, p.is_waypoint, p.start_date "
+        "FROM points p JOIN trips t ON t.id = p.trip_id "
+        "WHERE p.lat IS NOT NULL AND p.lng IS NOT NULL"
+    )
+    if user["is_admin"]:
+        rows = conn.execute(base + " ORDER BY p.start_date ASC, p.id ASC").fetchall()
+    else:
+        rows = conn.execute(
+            base + " AND t.user_id=? ORDER BY p.start_date ASC, p.id ASC",
+            (user["id"],),
+        ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def list_photo_points(user, trip_id=None):
+    """含照片的点（坐标 + 该点照片缩略图列表），供地图照片图层使用。
+
+    trip_id 给了就只取这一个行程——地图上正在看哪个行程，就只该看到哪个行程的照片。
+    不给则回落到全量（admin 全库、普通用户只看自己的）。仅取有坐标且有照片缩略图的点。
+    返回 [{point_id, name, lng, lat, photos: [{media_id, thumb}]}, ...]
+    """
+    conn = get_conn()
+    base = (
+        "SELECT p.id AS pid, p.name, p.lat, p.lng, m.id AS mid, m.thumb_filename "
+        "FROM points p JOIN media m ON m.point_id = p.id "
+        "JOIN trips t ON t.id = p.trip_id "
+        "WHERE m.type='photo' AND m.thumb_filename IS NOT NULL AND m.thumb_filename != '' "
+        "AND p.lat IS NOT NULL AND p.lng IS NOT NULL"
+    )
+    tail = " ORDER BY p.id ASC, COALESCE(m.exif_time, m.created_at) ASC, m.id ASC"
+    where, args = "", []
+    if trip_id is not None:
+        where += " AND p.trip_id=?"
+        args.append(trip_id)
+    if not user["is_admin"]:
+        where += " AND t.user_id=?"
+        args.append(user["id"])
+    rows = conn.execute(base + where + tail, args).fetchall()
+    conn.close()
+
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for r in rows:
+        grouped[r["pid"]].append(r)
+
+    result = []
+    for pid, ms in grouped.items():
+        first = ms[0]
+        result.append({
+            "point_id": pid,
+            "name": first["name"],
+            "lng": first["lng"],
+            "lat": first["lat"],
+            "photos": [{"media_id": m["mid"], "thumb": m["thumb_filename"]} for m in ms],
+        })
+    return result
+
+
+def list_searchable_points(user):
+    """用户所有行程的所有点（含名称/描述/所属行程名），供记忆语义检索召回。
+
+    admin 返回全库；普通用户只返回自己的点。仅取有名称的点。
+    """
+    conn = get_conn()
+    base = (
+        "SELECT p.id, p.trip_id, t.name AS trip_name, p.name, p.description, "
+        "p.start_date, p.lat, p.lng, t.status AS trip_status "
+        "FROM points p JOIN trips t ON t.id = p.trip_id "
+        "WHERE p.name IS NOT NULL AND p.name != ''"
+    )
+    if user["is_admin"]:
+        rows = conn.execute(base + " ORDER BY p.start_date DESC, p.id DESC").fetchall()
+    else:
+        rows = conn.execute(
+            base + " AND t.user_id=? ORDER BY p.start_date DESC, p.id DESC",
+            (user["id"],),
+        ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def get_point_media_counts(trip_id):
+    """每个点的照片/视频计数，返回 {point_id: {"photo": n, "video": n}}"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT m.point_id AS pid, m.type AS type, COUNT(*) AS n "
+        "FROM media m JOIN points p ON p.id = m.point_id "
+        "WHERE p.trip_id = ? GROUP BY m.point_id, m.type",
+        (trip_id,),
+    ).fetchall()
+    conn.close()
+    counts = {}
+    for r in rows:
+        counts.setdefault(r["pid"], {"photo": 0, "video": 0})[r["type"]] = r["n"]
+    return counts
+
+
+def get_point(point_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM points WHERE id=?", (point_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_point(trip_id, name, lat, lng, start_date, end_date, description="", route_mode="drive", is_waypoint=0):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO points(trip_id, name, lat, lng, start_date, end_date, description, route_mode, is_waypoint) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (trip_id, name, lat, lng, start_date, end_date, description, route_mode, int(is_waypoint)),
+    )
+    conn.commit()
+    pid = cur.lastrowid
+    conn.close()
+    return pid
+
+
+def update_point(point_id, name, lat, lng, start_date, end_date, description="", route_mode="drive", is_waypoint=0):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE points SET name=?, lat=?, lng=?, start_date=?, end_date=?, description=?, route_mode=?, is_waypoint=? "
+        "WHERE id=?",
+        (name, lat, lng, start_date, end_date, description, route_mode, int(is_waypoint), point_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_point_route_mode(point_id, route_mode):
+    """仅更新某点「到下一点」的连线方式（drive/line）。"""
+    conn = get_conn()
+    conn.execute("UPDATE points SET route_mode=? WHERE id=?", (route_mode, point_id))
+    conn.commit()
+    conn.close()
+
+
+def reorder_points(trip_id, ordered_ids):
+    """按传入的完整点序重排同一天内的 sort_order。
+
+    ordered_ids 是该行程下全部点的最终期望顺序（含所有日期）。
+    按 start_date 分组后，组内顺序即 sort_order（0,1,2...）；跨天顺序不受影响
+    （仍由 start_date 决定）。返回是否成功（id 全部属于该 trip 且无重复）。
+    """
+    if not ordered_ids:
+        return False
+    # 重复 id 必须拒绝：下面拿到的 rows 是去重后的集合，用 len(rows) 和 len(set(ids))
+    # 比较等于两边都去了重，[a, a] 会被放过。重复项在分组赋 sort_order 时会让同一个
+    # 点占两个名次，结果是静默的错序，所以在进库前就挡掉。
+    if len(ordered_ids) != len(set(ordered_ids)):
+        return False
+    conn = get_conn()
+    placeholders = ",".join("?" * len(ordered_ids))
+    rows = conn.execute(
+        f"SELECT id, start_date FROM points WHERE trip_id=? AND id IN ({placeholders})",
+        (trip_id, *ordered_ids),
+    ).fetchall()
+    if len(rows) != len(ordered_ids):
+        conn.close()
+        return False
+    date_map = {r["id"]: r["start_date"] for r in rows}
+
+    # 按日期分组，组内按传入顺序赋 sort_order
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for pid in ordered_ids:
+        if pid not in date_map:
+            conn.close()
+            return False
+        groups.setdefault(date_map[pid], []).append(pid)
+    for day, ids in groups.items():
+        for idx, pid in enumerate(ids):
+            conn.execute("UPDATE points SET sort_order=? WHERE id=?", (idx, pid))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_point(point_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM points WHERE id=?", (point_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_point_media_files(point_id):
+    """返回某点下所有媒体的物理文件信息（filename + thumb_filename）"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT filename, thumb_filename FROM media WHERE point_id = ?",
+        (point_id,),
+    ).fetchall()
+    conn.close()
+    return [(r["filename"], r["thumb_filename"]) for r in rows]
+
+
+# ---------- 分享 ----------
+def create_share(trip_id, expire_days=None, password=None):
+    """单链接模式：一个行程最多一个活跃分享链接。
+    已有活跃链接则复用其 token 并更新过期时间/密码（旧配置被覆盖），否则新建。
+    expire_days=None 表示永久有效；password 可选（None=无密码）。"""
+    salt = phash = None
+    if password:
+        salt, phash = hash_password(password)
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT token FROM shares WHERE trip_id=? "
+        "AND (expires_at IS NULL OR expires_at > datetime('now','localtime')) "
+        "ORDER BY created_at DESC LIMIT 1",
+        (trip_id,),
+    ).fetchone()
+    if row:
+        token = row["token"]
+        # 复用：删除该 trip 其余活跃链接，保持「单链接」
+        conn.execute(
+            "DELETE FROM shares WHERE trip_id=? AND token!=? "
+            "AND (expires_at IS NULL OR expires_at > datetime('now','localtime'))",
+            (trip_id, token),
+        )
+        if expire_days:
+            conn.execute(
+                "UPDATE shares SET password_hash=?, salt=?, "
+                "expires_at=datetime('now','localtime', ?) WHERE token=?",
+                (phash, salt, f"+{int(expire_days)} days", token),
+            )
+        else:
+            conn.execute(
+                "UPDATE shares SET password_hash=?, salt=?, expires_at=NULL WHERE token=?",
+                (phash, salt, token),
+            )
+    else:
+        token = secrets.token_urlsafe(24)
+        if expire_days:
+            conn.execute(
+                "INSERT INTO shares(token, trip_id, password_hash, salt, expires_at) "
+                "VALUES(?,?,?,?, datetime('now','localtime', ?))",
+                (token, trip_id, phash, salt, f"+{int(expire_days)} days"),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO shares(token, trip_id, password_hash, salt) VALUES(?,?,?,?)",
+                (token, trip_id, phash, salt),
+            )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def get_share(token):
+    """按 token 取分享记录（含 trip_id）；不存在或已过期返回 None（过期则顺带清理）"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM shares WHERE token=? "
+        "AND (expires_at IS NULL OR expires_at > datetime('now','localtime'))",
+        (token,),
+    ).fetchone()
+    if not row:
+        conn.execute(
+            "DELETE FROM shares WHERE token=? AND expires_at IS NOT NULL "
+            "AND expires_at <= datetime('now','localtime')",
+            (token,),
+        )
+        conn.commit()
+        conn.close()
+        return None
+    conn.close()
+    d = dict(row)
+    d["has_password"] = bool(d.get("password_hash"))
+    return d
+
+
+def verify_share_password(token, password):
+    """校验分享密码；分享无密码时恒为 True（用于统一放行逻辑）"""
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM shares WHERE token=?", (token,)).fetchone()
+    conn.close()
+    if not row:
+        return False
+    if not row["password_hash"]:
+        return True
+    if not password:
+        return False
+    return verify_password(password, row["salt"], row["password_hash"])
+
+
+def delete_share(token):
+    conn = get_conn()
+    conn.execute("DELETE FROM shares WHERE token=?", (token,))
+    conn.commit()
+    conn.close()
+
+
+def delete_shares_for_trip(trip_id):
+    """撤销某行程的所有分享链接"""
+    conn = get_conn()
+    conn.execute("DELETE FROM shares WHERE trip_id=?", (trip_id,))
+    conn.commit()
+    conn.close()
+
+
+def count_shares_for_trip(trip_id):
+    """某行程当前有效（未过期）的分享链接数量"""
+    conn = get_conn()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM shares WHERE trip_id=? "
+        "AND (expires_at IS NULL OR expires_at > datetime('now','localtime'))",
+        (trip_id,),
+    ).fetchone()[0]
+    conn.close()
+    return n
+
+
+def get_trip_stats(trip_id):
+    """行程统计：点数、媒体数、起止日期、停留总天数"""
+    conn = get_conn()
+    trip = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if not trip:
+        conn.close()
+        return None
+    point_count = conn.execute(
+        "SELECT COUNT(*) FROM points WHERE trip_id=?", (trip_id,)).fetchone()[0]
+    media_count = conn.execute(
+        "SELECT COUNT(*) FROM media m JOIN points p ON m.point_id=p.id "
+        "WHERE p.trip_id=?", (trip_id,)).fetchone()[0]
+    photo_count = conn.execute(
+        "SELECT COUNT(*) FROM media m JOIN points p ON m.point_id=p.id "
+        "WHERE p.trip_id=? AND m.type='photo'", (trip_id,)).fetchone()[0]
+    video_count = conn.execute(
+        "SELECT COUNT(*) FROM media m JOIN points p ON m.point_id=p.id "
+        "WHERE p.trip_id=? AND m.type='video'", (trip_id,)).fetchone()[0]
+    # 轨迹点起止日期（trip 本身无日期时，用轨迹点日期兜底展示）
+    date_row = conn.execute(
+        "SELECT MIN(start_date) AS min_d, "
+        "MAX(COALESCE(NULLIF(end_date,''), start_date)) AS max_d "
+        "FROM points WHERE trip_id=? AND start_date IS NOT NULL AND start_date != ''",
+        (trip_id,)).fetchone()
+    conn.close()
+    return {
+        "trip_id": trip_id,
+        "name": trip["name"],
+        "description": trip["description"],
+        "start_date": trip["start_date"],
+        "end_date": trip["end_date"],
+        "point_start_date": (date_row["min_d"] if date_row else None),
+        "point_end_date": (date_row["max_d"] if date_row else None),
+        "point_count": point_count,
+        "media_count": media_count,
+        "photo_count": photo_count,
+        "video_count": video_count,
+    }
+
+
+# ---------- 媒体 ----------
+def list_media(point_id):
+    conn = get_conn()
+    # 手工排过序的（sort_order > 0）排在前面并按该顺序；没排过的仍按拍摄时间。
+    # 用 COALESCE(NULLIF(sort_order,0), 999999) 让 0 沉底，避免新上传的插到已排序的中间。
+    rows = conn.execute(
+        "SELECT * FROM media WHERE point_id=? "
+        "ORDER BY COALESCE(NULLIF(sort_order, 0), 999999) ASC, "
+        "         COALESCE(exif_time, created_at) ASC, id ASC",
+        (point_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def set_media_order(point_id, ids):
+    """按给定的 id 顺序重排该点的媒体。序号从 1 开始（0 保留给「没排过」）。
+    只认属于这个点的 id，越权/脏数据自动忽略。"""
+    conn = get_conn()
+    own = {r["id"] for r in conn.execute(
+        "SELECT id FROM media WHERE point_id=?", (point_id,))}
+    n = 0
+    for mid in ids:
+        try:
+            mid = int(mid)
+        except (TypeError, ValueError):
+            continue
+        if mid not in own:
+            continue
+        n += 1
+        conn.execute("UPDATE media SET sort_order=? WHERE id=?", (n, mid))
+    conn.commit()
+    conn.close()
+    return n
+
+
+def get_media(media_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM media WHERE id=?", (media_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_media(point_id, mtype, filename, thumb_filename=None,
+              exif_time=None, exif_lat=None, exif_lng=None):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO media(point_id, type, filename, thumb_filename, exif_time, exif_lat, exif_lng) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (point_id, mtype, filename, thumb_filename, exif_time, exif_lat, exif_lng),
+    )
+    conn.commit()
+    mid = cur.lastrowid
+    conn.close()
+    return mid
+
+
+def set_media_caption(media_id, caption):
+    """设置某个媒体的文字描述（空串按 NULL 存，便于「有没有描述」的判断统一）"""
+    conn = get_conn()
+    conn.execute("UPDATE media SET caption=? WHERE id=?", (caption or None, media_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_media(media_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM media WHERE id=?", (media_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---------- 路线缓存 ----------
+def get_route_cache(cache_key):
+    """读取路线缓存（OSRM 规划结果），命中返回 payload dict，否则 None。"""
+    conn = get_conn()
+    row = conn.execute("SELECT payload FROM route_cache WHERE cache_key=?",
+                       (cache_key,)).fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row["payload"])
+    except Exception:
+        return None
+
+
+def get_route_cache_raw(cache_key):
+    """读取路线缓存的**原始 JSON 字节**，命中返回 bytes，否则 None。
+
+    给行政区划这种超大 payload 用（单行最大 3.8MB）。走 get_route_cache 的话要先
+    json.loads 成 dict，再由 FastAPI json.dumps 回去，两趟全量处理都发生在事件循环
+    线程上，实测能把整个进程堵住几百毫秒。直接把库里存的 JSON 文本当响应体发出去，
+    这两趟就都省了。
+
+    text_factory=bytes 是为了连 UTF-8 的 decode/encode 都省掉 —— 库里存的本来就是
+    UTF-8 字节，解成 str 再编回去是纯空转。
+    """
+    conn = get_conn()
+    conn.text_factory = bytes
+    row = conn.execute("SELECT payload FROM route_cache WHERE cache_key=?",
+                       (cache_key,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def set_route_cache(cache_key, payload):
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO route_cache(cache_key, payload) VALUES(?,?)",
+                 (cache_key, json.dumps(payload, ensure_ascii=False)))
+    conn.commit()
+    conn.close()
+
+
+def clear_route_cache():
+    conn = get_conn()
+    conn.execute("DELETE FROM route_cache")
+    conn.commit()
+    conn.close()
+
+
+# ===== 领域 API 层：API Key =====
+def create_api_key(user_id, name, scope, expire_days=None, raw_key=None):
+    """创建 API Key，返回 (raw_key, key_prefix, key_id)。raw_key 仅返回一次，库里只存 hash。"""
+    if raw_key is None:
+        raw_key = "tm_" + secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    key_prefix = raw_key[:12]
+    conn = get_conn()
+    if expire_days:
+        cur = conn.execute(
+            "INSERT INTO api_keys(key_hash, key_prefix, name, user_id, scope, expires_at) "
+            "VALUES(?,?,?,?,?,datetime('now','localtime', ?))",
+            (key_hash, key_prefix, name, user_id, scope, f"+{int(expire_days)} days"),
+        )
+    else:
+        cur = conn.execute(
+            "INSERT INTO api_keys(key_hash, key_prefix, name, user_id, scope) "
+            "VALUES(?,?,?,?,?)",
+            (key_hash, key_prefix, name, user_id, scope),
+        )
+    conn.commit()
+    key_id = cur.lastrowid
+    conn.close()
+    return raw_key, key_prefix, key_id
+
+
+def get_api_key_by_hash(key_hash):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM api_keys WHERE key_hash=? AND revoked=0 "
+        "AND (expires_at IS NULL OR expires_at > datetime('now','localtime'))",
+        (key_hash,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def touch_api_key(key_id):
+    conn = get_conn()
+    conn.execute("UPDATE api_keys SET last_used_at=datetime('now','localtime') WHERE id=?", (key_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_api_keys(user_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, key_prefix, name, scope, expires_at, last_used_at, revoked, created_at "
+        "FROM api_keys WHERE user_id=? ORDER BY created_at DESC", (user_id,)
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def revoke_api_key(key_id, user_id):
+    conn = get_conn()
+    conn.execute("UPDATE api_keys SET revoked=1 WHERE id=? AND user_id=?", (key_id, user_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_api_key(key_id, user_id):
+    """彻底删除 API Key。audit_log 外键为 ON DELETE SET NULL，审计记录保留。"""
+    conn = get_conn()
+    cur = conn.execute("DELETE FROM api_keys WHERE id=? AND user_id=?", (key_id, user_id))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+
+# ===== 领域 API 层：审计 =====
+def add_audit(api_key_id, user_id, action, method, path, scope, status,
+              detail=None, tokens_used=0, latency_ms=None, client_request_id=None):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO audit_log(api_key_id, user_id, action, method, path, scope, status, "
+        "detail, tokens_used, latency_ms, client_request_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (api_key_id, user_id, action, method, path, scope, status, detail,
+         tokens_used, latency_ms, client_request_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ===== 领域 API 层：幂等键（P0-2） =====
+def idempotency_claim(api_key_id, client_request_id, action):
+    """原子抢占幂等键：首次返回 True（可执行），重复返回 False（已存在）。
+
+    用 UNIQUE(api_key_id, client_request_id) 保证同一 key 的同一 request id 只执行一次。
+    """
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO idempotency_keys(api_key_id, client_request_id, action, status) "
+        "VALUES(?,?,?,'pending')",
+        (api_key_id, client_request_id, action),
+    )
+    claimed = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return claimed
+
+
+def idempotency_get(api_key_id, client_request_id):
+    """查已处理的幂等记录。返回 dict 或 None。"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM idempotency_keys WHERE api_key_id=? AND client_request_id=?",
+        (api_key_id, client_request_id),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def idempotency_complete(api_key_id, client_request_id, result_json):
+    """执行成功后：标记 completed 并缓存结果（幂等命中时原样返回）。"""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE idempotency_keys SET status='completed', result=? "
+        "WHERE api_key_id=? AND client_request_id=?",
+        (result_json, api_key_id, client_request_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def idempotency_discard(api_key_id, client_request_id):
+    """执行失败后：删除 pending 记录，允许客户端重试。"""
+    conn = get_conn()
+    conn.execute(
+        "DELETE FROM idempotency_keys WHERE api_key_id=? AND client_request_id=? AND status='pending'",
+        (api_key_id, client_request_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_audit(user_id=None, limit=100):
+    conn = get_conn()
+    if user_id:
+        rows = conn.execute(
+            "SELECT * FROM audit_log WHERE user_id=? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+# ===== 领域 API 层：用户偏好画像 =====
+def upsert_pref(user_id, pref_key, pref_value=None, strength_delta=0.1):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO user_prefs(user_id, pref_key, pref_value, strength, evidence_count) "
+        "VALUES(?,?,?,?,1) "
+        "ON CONFLICT(user_id, pref_key) DO UPDATE SET "
+        "  pref_value=excluded.pref_value, "
+        "  strength=MIN(1.0, user_prefs.strength + ?), "
+        "  evidence_count=user_prefs.evidence_count + 1, "
+        "  updated_at=datetime('now','localtime')",
+        (user_id, pref_key, pref_value, strength_delta, strength_delta),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_prefs(user_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT pref_key, pref_value, strength, evidence_count, updated_at "
+        "FROM user_prefs WHERE user_id=? ORDER BY strength DESC, evidence_count DESC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+# ===== N-7 点级情绪/场景元数据 =====
+def list_point_meta_by_trip(trip_id):
+    """取行程内所有点的情绪元数据（JOIN points 拿地点名），供 LLM 创作引用。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT pm.point_id, p.name AS point_name, pm.mood, pm.scene, "
+            "pm.time_of_day, pm.season "
+            "FROM point_meta pm JOIN points p ON p.id = pm.point_id "
+            "WHERE p.trip_id = ? AND (pm.mood IS NOT NULL OR pm.scene IS NOT NULL)",
+            (trip_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return rows_to_dicts(rows)
+
+
+def upsert_point_meta(point_id, mood=None, weather=None, scene=None,
+                      time_of_day=None, season=None, meta_json=None, source="llm"):
+    """写入/更新某点的情绪·天气·场景·时段·季节元数据（点唯一，增量覆盖）。
+
+    仅非空字段参与更新（避免把已有维度冲成 NULL）。
+    """
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO point_meta(point_id, mood, weather, scene, time_of_day, "
+        "season, meta_json, source) VALUES(?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(point_id) DO UPDATE SET "
+        "  mood=COALESCE(excluded.mood, point_meta.mood), "
+        "  weather=COALESCE(excluded.weather, point_meta.weather), "
+        "  scene=COALESCE(excluded.scene, point_meta.scene), "
+        "  time_of_day=COALESCE(excluded.time_of_day, point_meta.time_of_day), "
+        "  season=COALESCE(excluded.season, point_meta.season), "
+        "  meta_json=COALESCE(excluded.meta_json, point_meta.meta_json), "
+        "  source=excluded.source, "
+        "  updated_at=datetime('now','localtime')",
+        (point_id, mood, weather, scene, time_of_day, season, meta_json, source),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_point_meta(point_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM point_meta WHERE point_id=?", (point_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_trip_meta(trip_id):
+    """某行程下所有点的元数据（JOIN points 带出点名称/坐标），供感官重建查询。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT m.*, p.name AS point_name, p.lat, p.lng, p.start_date "
+        "FROM point_meta m JOIN points p ON p.id = m.point_id "
+        "WHERE p.trip_id=? ORDER BY p.start_date ASC, p.id ASC",
+        (trip_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+# ===== 开放平台 / 开发者控制台：用量统计 =====
+def usage_stats(user_id):
+    """按 API Key 聚合用量（调用次数/成功/失败/token 消耗），供开发者控制台展示。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT k.id, k.key_prefix, k.name, k.scope, k.revoked, "
+        "       k.created_at, k.last_used_at, k.expires_at, "
+        "       COUNT(a.id) AS calls, "
+        "       SUM(CASE WHEN a.status='ok' THEN 1 ELSE 0 END) AS ok_calls, "
+        "       COALESCE(SUM(a.tokens_used), 0) AS tokens "
+        "FROM api_keys k "
+        "LEFT JOIN audit_log a ON a.api_key_id = k.id "
+        "WHERE k.user_id=? "
+        "GROUP BY k.id "
+        "ORDER BY k.created_at DESC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)

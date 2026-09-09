@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <!-- 明确声明只支持浅色：本站主体是高德的浅色地图（canvas/瓦片），
+       浏览器的「强制深色」只会重写我们自己的 CSS 颜色、动不了地图，
+       结果就是浅色地图上出现浅色图标。声明后浏览器不再自动变暗。 -->
+  <meta name="color-scheme" content="light">
+  <title>旅行记忆 · 分享</title>
+  <link rel="icon" href="/static/icon.svg?v=20260911p" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png?v=20260911p" sizes="32x32">
+  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260911p">
+  <link rel="manifest" href="/static/site.webmanifest?v=20260911p">
+  <meta name="theme-color" content="#FF8A00">
+  <link rel="stylesheet" href="/static/style.css?v=20260911p">
+  <script>
+    window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
+  </script>
+  <script src="https://webapi.amap.com/maps?v=__AMAP_VERSION__&key=__AMAP_KEY__&plugin=AMap.Driving,AMap.Geolocation"></script>
+</head>
+<body class="share-page">
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260911p" alt="" width="22" height="22"><span>旅行记忆</span></div>
+      <div class="share-title" id="share-title">载入中…</div>
+    </header>
+    <div class="userbar">
+      <span class="current-user" id="share-meta"></span>
+      <span id="top-stats" class="top-stats" title="点击查看完整统计"></span>
+    </div>
+
+    <main class="layout">
+      <div id="map" class="map">
+        <button id="btn-layers" class="map-fab fab-layers" title="图层控制：景区 / 卫星 / 路况" aria-label="图层控制"></button>
+        <div id="layer-panel" class="layer-panel hidden">
+          <div class="layer-title">图层控制</div>
+          <label class="layer-item"><input type="checkbox" id="lay-poi"> 景区景点</label>
+          <label class="layer-item"><input type="checkbox" id="lay-satellite"> 卫星底图</label>
+          <label class="layer-item"><input type="checkbox" id="lay-traffic"> 路况</label>
+          <label class="layer-item" title="本行程各点的照片和视频，多图重叠"><input type="checkbox" id="lay-photos"> 照片视频</label>
+        </div>
+        <button id="btn-map-fullscreen" class="map-fab fab-fullscreen" title="地图全屏" aria-label="地图全屏">⛶</button>
+        <button id="btn-fit-view" class="map-fab fab-fit" title="全览：把整个行程收进视野" aria-label="全览整个行程">⤢</button>
+        <button id="btn-locate" class="map-fab fab-locate" title="定位到我的位置" aria-label="定位到我的位置"></button>
+        <button id="btn-panel-open" class="map-fab hidden" title="展开详情" aria-label="展开详情">☰</button>
+        <button id="replay-launch" class="replay-launch hidden" title="轨迹回放：沿路线播放旅程动画" aria-label="轨迹回放">▶</button>
+        <div id="replay-bar" class="replay-bar hidden">
+          <button id="replay-toggle" class="replay-btn" title="轨迹回放：播放中点击=暂停，暂停中点击=停止，停止后点击=从头播放">▶</button>
+          <div class="replay-progress"><div id="replay-fill" class="replay-fill"></div><span id="replay-count" class="replay-count"></span></div>
+          <span id="replay-name" class="replay-name"></span>
+          <div class="replay-speed">
+            <button type="button" id="replay-speed" class="spd active" title="点击切换播放速度">1x</button>
+          </div>
+          <button id="replay-close" class="replay-close" title="最小化回放条（不中断播放）">—</button>
+        </div>
+      </div>
+
+      <div class="panel-resizer" title="拖拽调整面板高度" aria-label="拖拽调整面板高度">
+        <button id="btn-panel-toggle" class="panel-toggle" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 8 12 13 17 8"/><line x1="5" y1="17.5" x2="19" y2="17.5"/></svg></button>
+      </div>
+
+      <aside class="panel">
+        <div class="tabs">
+          <button class="tab active" data-tab="points">轨迹点</button>
+          <button class="tab" data-tab="detail">点详情</button>
+        <button class="tab" data-tab="albums">相册</button>
+          <button id="btn-panel-toggle-wide" class="panel-toggle wide-only" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 7 13 12 8 17"/><line x1="17.5" y1="5" x2="17.5" y2="19"/></svg></button>
+          <span class="tab-indicator" aria-hidden="true"></span>
+        </div>
+
+        <!-- 三个 tab 页做成一条横向轨道，切换时整条平移，形成卡片轮播效果 -->
+        <div class="view-track">
+          <section id="points-view" class="view" aria-hidden="false">
+            <ul id="point-list" class="point-list"></ul>
+          </section>
+
+          <section id="detail-view" class="view" aria-hidden="true">
+            <div id="detail-empty" class="empty-hint">点击地图上的点查看详情</div>
+            <div id="detail-body" class="hidden">
+              <!-- 与主页面一致：名字 + 日期并成一行，经纬度收进 title；
+                   来时路/即将去的里程改到地图上显示（见 updateSegLabels）。
+                   分享页只读，所以没有编辑/删除图标。 -->
+              <div class="detail-head">
+                <h3 id="detail-name"></h3>
+                <span id="detail-date" class="detail-date"></span>
+              </div>
+              <p id="detail-desc" class="detail-desc"></p>
+              <div id="media-grid" class="media-grid"></div>
+            </div>
+          </section>
+
+          <section id="albums-view" class="view" aria-hidden="true">
+            <!-- 相册：扁平缩略图网格（与主页面一致）—— 类型筛选 / 时间排序 / 缩放 -->
+            <div class="photo-toolbar">
+              <div id="photo-filter" class="seg">
+                <button class="seg-btn active" data-filter="all">全部</button>
+                <button class="seg-btn" data-filter="photo">照片</button>
+                <button class="seg-btn" data-filter="video">视频</button>
+              </div>
+              <span id="photo-count" class="photo-count"></span>
+              <div class="photo-tools">
+                <button id="btn-photo-sort" class="icon-btn" title="切换时间排序">↓ 新→旧</button>
+                <button id="btn-photo-zoom-out" class="icon-btn" title="缩小（每行更多）">－</button>
+                <button id="btn-photo-zoom-in" class="icon-btn" title="放大（每行更少）">＋</button>
+              </div>
+            </div>
+            <div id="photo-grid" class="photo-grid"></div>
+          </section>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- 媒体灯箱 -->
+  <!-- 行程统计弹窗（点顶部统计条打开），与主页面一致 -->
+  <div id="stats-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="stats-modal-title">行程统计</h2>
+      <div id="stats-modal-body" class="stat-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="stats-modal-close">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="lightbox" class="lightbox hidden">
+    <div class="lightbox-close" id="lightbox-close">×</div>
+    <div class="lightbox-prev" id="lightbox-prev">‹</div>
+    <div class="lightbox-next" id="lightbox-next">›</div>
+    <div class="lightbox-stage" id="lightbox-stage"></div>
+    <div class="lightbox-counter" id="lightbox-counter"></div>
+  </div>
+
+  <script src="/static/share.js?v=20260911p"></script>
+</body>
+</html>

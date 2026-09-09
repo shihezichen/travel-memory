@@ -1,0 +1,9 @@
+# 测试依赖（只在开发/CI 用，生产 requirements.txt 不受影响）
+#   .venv/bin/pip install -r requirements-dev.txt
+#
+# 说明：
+# - httpx 已在生产依赖里（fastapi TestClient 需要），此处不重复声明版本
+# - playwright 只用于 E2E（-m e2e），且通过 channel="chrome" 复用系统已装的
+#   /usr/bin/google-chrome，不需要 `playwright install` 下载浏览器。
+pytest>=8,<10
+playwright>=1.50 ; python_version >= "3.9"

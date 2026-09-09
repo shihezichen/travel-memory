@@ -1,0 +1,4942 @@
+[
+ {
+  "zh": "伊斯坦布尔",
+  "en": "Istanbul",
+  "cc": "TR"
+ },
+ {
+  "zh": "安卡拉",
+  "en": "Ankara",
+  "cc": "TR"
+ },
+ {
+  "zh": "伊兹密尔",
+  "en": "Izmir",
+  "cc": "TR"
+ },
+ {
+  "zh": "安塔利亚",
+  "en": "Antalya",
+  "cc": "TR"
+ },
+ {
+  "zh": "布尔萨",
+  "en": "Bursa",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿达纳",
+  "en": "Adana",
+  "cc": "TR"
+ },
+ {
+  "zh": "加济安泰普",
+  "en": "Gaziantep",
+  "cc": "TR"
+ },
+ {
+  "zh": "科尼亚",
+  "en": "Konya",
+  "cc": "TR"
+ },
+ {
+  "zh": "开塞利",
+  "en": "Kayseri",
+  "cc": "TR"
+ },
+ {
+  "zh": "梅尔辛",
+  "en": "Mersin",
+  "cc": "TR"
+ },
+ {
+  "zh": "埃斯基谢希尔",
+  "en": "Eskisehir",
+  "cc": "TR"
+ },
+ {
+  "zh": "迪亚巴克尔",
+  "en": "Diyarbakir",
+  "cc": "TR"
+ },
+ {
+  "zh": "萨姆松",
+  "en": "Samsun",
+  "cc": "TR"
+ },
+ {
+  "zh": "代尼兹利",
+  "en": "Denizli",
+  "cc": "TR"
+ },
+ {
+  "zh": "尚勒乌尔法",
+  "en": "Sanliurfa",
+  "cc": "TR"
+ },
+ {
+  "zh": "马拉蒂亚",
+  "en": "Malatya",
+  "cc": "TR"
+ },
+ {
+  "zh": "埃尔祖鲁姆",
+  "en": "Erzurum",
+  "cc": "TR"
+ },
+ {
+  "zh": "凡城",
+  "en": "Van",
+  "cc": "TR"
+ },
+ {
+  "zh": "特拉布宗",
+  "en": "Trabzon",
+  "cc": "TR"
+ },
+ {
+  "zh": "里泽",
+  "en": "Rize",
+  "cc": "TR"
+ },
+ {
+  "zh": "恰纳卡莱",
+  "en": "Canakkale",
+  "cc": "TR"
+ },
+ {
+  "zh": "埃迪尔内",
+  "en": "Edirne",
+  "cc": "TR"
+ },
+ {
+  "zh": "博德鲁姆",
+  "en": "Bodrum",
+  "cc": "TR"
+ },
+ {
+  "zh": "费特希耶",
+  "en": "Fethiye",
+  "cc": "TR"
+ },
+ {
+  "zh": "马尔马里斯",
+  "en": "Marmaris",
+  "cc": "TR"
+ },
+ {
+  "zh": "库萨达斯",
+  "en": "Kusadasi",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿拉尼亚",
+  "en": "Alanya",
+  "cc": "TR"
+ },
+ {
+  "zh": "西代",
+  "en": "Side",
+  "cc": "TR"
+ },
+ {
+  "zh": "凯梅尔",
+  "en": "Kemer",
+  "cc": "TR"
+ },
+ {
+  "zh": "贝莱克",
+  "en": "Belek",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡什",
+  "en": "Kas",
+  "cc": "TR"
+ },
+ {
+  "zh": "奥林波斯",
+  "en": "Olympos",
+  "cc": "TR"
+ },
+ {
+  "zh": "切什梅",
+  "en": "Cesme",
+  "cc": "TR"
+ },
+ {
+  "zh": "福恰",
+  "en": "Foca",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿索斯",
+  "en": "Assos",
+  "cc": "TR"
+ },
+ {
+  "zh": "贝尔加马",
+  "en": "Bergama",
+  "cc": "TR"
+ },
+ {
+  "zh": "萨夫兰博卢",
+  "en": "Safranbolu",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿马西亚",
+  "en": "Amasya",
+  "cc": "TR"
+ },
+ {
+  "zh": "锡诺普",
+  "en": "Sinop",
+  "cc": "TR"
+ },
+ {
+  "zh": "内夫谢希尔",
+  "en": "Nevsehir",
+  "cc": "TR"
+ },
+ {
+  "zh": "格雷梅",
+  "en": "Goreme",
+  "cc": "TR"
+ },
+ {
+  "zh": "于尔居普",
+  "en": "Urgup",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿瓦诺斯",
+  "en": "Avanos",
+  "cc": "TR"
+ },
+ {
+  "zh": "穆拉",
+  "en": "Mugla",
+  "cc": "TR"
+ },
+ {
+  "zh": "伊斯帕尔塔",
+  "en": "Isparta",
+  "cc": "TR"
+ },
+ {
+  "zh": "布尔杜尔",
+  "en": "Burdur",
+  "cc": "TR"
+ },
+ {
+  "zh": "屈塔希亚",
+  "en": "Kutahya",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿菲永卡拉希萨尔",
+  "en": "Afyonkarahisar",
+  "cc": "TR"
+ },
+ {
+  "zh": "宗古尔达克",
+  "en": "Zonguldak",
+  "cc": "TR"
+ },
+ {
+  "zh": "巴勒克埃西尔",
+  "en": "Balikesir",
+  "cc": "TR"
+ },
+ {
+  "zh": "马尼萨",
+  "en": "Manisa",
+  "cc": "TR"
+ },
+ {
+  "zh": "艾登",
+  "en": "Aydin",
+  "cc": "TR"
+ },
+ {
+  "zh": "穆什",
+  "en": "Mus",
+  "cc": "TR"
+ },
+ {
+  "zh": "比特利斯",
+  "en": "Bitlis",
+  "cc": "TR"
+ },
+ {
+  "zh": "哈卡里",
+  "en": "Hakkari",
+  "cc": "TR"
+ },
+ {
+  "zh": "锡尔特",
+  "en": "Siirt",
+  "cc": "TR"
+ },
+ {
+  "zh": "舍尔纳克",
+  "en": "Sirnak",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡赫拉曼马拉什",
+  "en": "Kahramanmaras",
+  "cc": "TR"
+ },
+ {
+  "zh": "奥斯曼尼耶",
+  "en": "Osmaniye",
+  "cc": "TR"
+ },
+ {
+  "zh": "基利斯",
+  "en": "Kilis",
+  "cc": "TR"
+ },
+ {
+  "zh": "圣索菲亚大教堂",
+  "en": "Hagia Sophia",
+  "cc": "TR"
+ },
+ {
+  "zh": "蓝色清真寺",
+  "en": "Blue Mosque",
+  "cc": "TR"
+ },
+ {
+  "zh": "托普卡帕宫",
+  "en": "Topkapi Palace",
+  "cc": "TR"
+ },
+ {
+  "zh": "地下水宫",
+  "en": "Basilica Cistern",
+  "cc": "TR"
+ },
+ {
+  "zh": "加拉塔塔",
+  "en": "Galata Tower",
+  "cc": "TR"
+ },
+ {
+  "zh": "大巴扎",
+  "en": "Grand Bazaar",
+  "cc": "TR"
+ },
+ {
+  "zh": "香料市场",
+  "en": "Spice Bazaar",
+  "cc": "TR"
+ },
+ {
+  "zh": "博斯普鲁斯海峡",
+  "en": "Bosphorus Strait",
+  "cc": "TR"
+ },
+ {
+  "zh": "多尔玛巴赫切宫",
+  "en": "Dolmabahce Palace",
+  "cc": "TR"
+ },
+ {
+  "zh": "苏莱曼尼耶清真寺",
+  "en": "Suleymaniye Mosque",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡帕多奇亚",
+  "en": "Cappadocia",
+  "cc": "TR"
+ },
+ {
+  "zh": "格雷梅露天博物馆",
+  "en": "Goreme Open Air Museum",
+  "cc": "TR"
+ },
+ {
+  "zh": "代林库尤地下城",
+  "en": "Derinkuyu Underground City",
+  "cc": "TR"
+ },
+ {
+  "zh": "凯马克勒地下城",
+  "en": "Kaymakli Underground City",
+  "cc": "TR"
+ },
+ {
+  "zh": "乌奇希萨尔城堡",
+  "en": "Uchisar Castle",
+  "cc": "TR"
+ },
+ {
+  "zh": "鸽子谷",
+  "en": "Pigeon Valley",
+  "cc": "TR"
+ },
+ {
+  "zh": "爱情谷",
+  "en": "Love Valley",
+  "cc": "TR"
+ },
+ {
+  "zh": "棉花堡",
+  "en": "Pamukkale",
+  "cc": "TR"
+ },
+ {
+  "zh": "希拉波利斯古城",
+  "en": "Hierapolis",
+  "cc": "TR"
+ },
+ {
+  "zh": "以弗所古城",
+  "en": "Ephesus",
+  "cc": "TR"
+ },
+ {
+  "zh": "塞尔苏斯图书馆",
+  "en": "Library of Celsus",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿尔忒弥斯神庙",
+  "en": "Temple of Artemis",
+  "cc": "TR"
+ },
+ {
+  "zh": "特洛伊古城",
+  "en": "Troy",
+  "cc": "TR"
+ },
+ {
+  "zh": "特穆罗斯",
+  "en": "Termessos",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿斯潘多斯剧场",
+  "en": "Aspendos",
+  "cc": "TR"
+ },
+ {
+  "zh": "佩尔盖古城",
+  "en": "Perge",
+  "cc": "TR"
+ },
+ {
+  "zh": "安塔利亚老城",
+  "en": "Kaleici",
+  "cc": "TR"
+ },
+ {
+  "zh": "杜登瀑布",
+  "en": "Duden Waterfalls",
+  "cc": "TR"
+ },
+ {
+  "zh": "奥林波斯海滩",
+  "en": "Olympos Beach",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡普塔什海滩",
+  "en": "Kaputas Beach",
+  "cc": "TR"
+ },
+ {
+  "zh": "蝴蝶谷",
+  "en": "Butterfly Valley",
+  "cc": "TR"
+ },
+ {
+  "zh": "死海",
+  "en": "Oludeniz",
+  "cc": "TR"
+ },
+ {
+  "zh": "利西亚之路",
+  "en": "Lycian Way",
+  "cc": "TR"
+ },
+ {
+  "zh": "圣尼古拉斯教堂",
+  "en": "Church of Saint Nicholas",
+  "cc": "TR"
+ },
+ {
+  "zh": "米拉古城",
+  "en": "Myra",
+  "cc": "TR"
+ },
+ {
+  "zh": "克桑托斯古城",
+  "en": "Xanthos",
+  "cc": "TR"
+ },
+ {
+  "zh": "莱图恩古城",
+  "en": "Letoon",
+  "cc": "TR"
+ },
+ {
+  "zh": "帕塔拉海滩",
+  "en": "Patara Beach",
+  "cc": "TR"
+ },
+ {
+  "zh": "达利安",
+  "en": "Dalyan",
+  "cc": "TR"
+ },
+ {
+  "zh": "伊兹密尔钟楼",
+  "en": "Izmir Clock Tower",
+  "cc": "TR"
+ },
+ {
+  "zh": "科纳克广场",
+  "en": "Konak Square",
+  "cc": "TR"
+ },
+ {
+  "zh": "萨迪斯古城",
+  "en": "Sardis",
+  "cc": "TR"
+ },
+ {
+  "zh": "佩加蒙卫城",
+  "en": "Acropolis of Pergamon",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿斯克勒庇俄斯神庙",
+  "en": "Asclepieion of Pergamon",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿耳忒弥斯神庙",
+  "en": "Temple of Artemis at Sardis",
+  "cc": "TR"
+ },
+ {
+  "zh": "内姆鲁特山",
+  "en": "Mount Nemrut",
+  "cc": "TR"
+ },
+ {
+  "zh": "哥贝克力石阵",
+  "en": "Gobekli Tepe",
+  "cc": "TR"
+ },
+ {
+  "zh": "哈兰",
+  "en": "Harran",
+  "cc": "TR"
+ },
+ {
+  "zh": "苏美拉修道院",
+  "en": "Sumela Monastery",
+  "cc": "TR"
+ },
+ {
+  "zh": "乌宗湖",
+  "en": "Uzungol",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿亚索菲亚博物馆",
+  "en": "Ayasofya Museum",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡尔斯城堡",
+  "en": "Kars Castle",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿尼古城",
+  "en": "Ani",
+  "cc": "TR"
+ },
+ {
+  "zh": "多乌巴亚泽特",
+  "en": "Dogubeyazit",
+  "cc": "TR"
+ },
+ {
+  "zh": "伊斯哈克帕夏宫",
+  "en": "Ishak Pasha Palace",
+  "cc": "TR"
+ },
+ {
+  "zh": "凡湖",
+  "en": "Lake Van",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿克达玛教堂",
+  "en": "Akdamar Church",
+  "cc": "TR"
+ },
+ {
+  "zh": "切姆谢克",
+  "en": "Cemisgezek",
+  "cc": "TR"
+ },
+ {
+  "zh": "迪夫里伊大清真寺",
+  "en": "Divrigi Great Mosque",
+  "cc": "TR"
+ },
+ {
+  "zh": "萨夫兰博卢老城",
+  "en": "Safranbolu Old Town",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿马西亚城堡",
+  "en": "Amasya Castle",
+  "cc": "TR"
+ },
+ {
+  "zh": "锡诺普城堡",
+  "en": "Sinop Castle",
+  "cc": "TR"
+ },
+ {
+  "zh": "博阿兹卡莱",
+  "en": "Bogazkale",
+  "cc": "TR"
+ },
+ {
+  "zh": "哈图沙",
+  "en": "Hattusa",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿拉贾霍裕克",
+  "en": "Alacahoyuk",
+  "cc": "TR"
+ },
+ {
+  "zh": "尚勒乌尔法城堡",
+  "en": "Sanliurfa Castle",
+  "cc": "TR"
+ },
+ {
+  "zh": "巴尔奇克湖",
+  "en": "Lake Bafa",
+  "cc": "TR"
+ },
+ {
+  "zh": "迪莱克半岛",
+  "en": "Dilek Peninsula",
+  "cc": "TR"
+ },
+ {
+  "zh": "希林杰村",
+  "en": "Sirince",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿拉恰特",
+  "en": "Alacati",
+  "cc": "TR"
+ },
+ {
+  "zh": "乌尔拉",
+  "en": "Urla",
+  "cc": "TR"
+ },
+ {
+  "zh": "塞费里希萨尔",
+  "en": "Seferihisar",
+  "cc": "TR"
+ },
+ {
+  "zh": "特基罗瓦",
+  "en": "Tekirova",
+  "cc": "TR"
+ },
+ {
+  "zh": "奇拉勒",
+  "en": "Cirali",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿德拉桑",
+  "en": "Adrasan",
+  "cc": "TR"
+ },
+ {
+  "zh": "菲尼凯",
+  "en": "Finike",
+  "cc": "TR"
+ },
+ {
+  "zh": "代姆雷",
+  "en": "Demre",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡尔坎",
+  "en": "Kalkan",
+  "cc": "TR"
+ },
+ {
+  "zh": "格杰克",
+  "en": "Gocek",
+  "cc": "TR"
+ },
+ {
+  "zh": "达特恰",
+  "en": "Datca",
+  "cc": "TR"
+ },
+ {
+  "zh": "博兹贾阿达",
+  "en": "Bozcaada",
+  "cc": "TR"
+ },
+ {
+  "zh": "格克切阿达",
+  "en": "Gokceada",
+  "cc": "TR"
+ },
+ {
+  "zh": "马尔丁",
+  "en": "Mardin",
+  "cc": "TR"
+ },
+ {
+  "zh": "米迪亚特",
+  "en": "Midyat",
+  "cc": "TR"
+ },
+ {
+  "zh": "哈桑凯伊夫",
+  "en": "Hasankeyf",
+  "cc": "TR"
+ },
+ {
+  "zh": "巴特曼",
+  "en": "Batman",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿德亚曼",
+  "en": "Adiyaman",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡赫塔",
+  "en": "Kahta",
+  "cc": "TR"
+ },
+ {
+  "zh": "马拉蒂亚老城",
+  "en": "Malatya Old Town",
+  "cc": "TR"
+ },
+ {
+  "zh": "埃拉泽",
+  "en": "Elazig",
+  "cc": "TR"
+ },
+ {
+  "zh": "通杰利",
+  "en": "Tunceli",
+  "cc": "TR"
+ },
+ {
+  "zh": "宾格尔",
+  "en": "Bingol",
+  "cc": "TR"
+ },
+ {
+  "zh": "穆什平原",
+  "en": "Mus Plain",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿勒山",
+  "en": "Mount Ararat",
+  "cc": "TR"
+ },
+ {
+  "zh": "伊格迪尔",
+  "en": "Igdir",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡尔斯",
+  "en": "Kars",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿尔达汉",
+  "en": "Ardahan",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿尔特温",
+  "en": "Artvin",
+  "cc": "TR"
+ },
+ {
+  "zh": "霍帕",
+  "en": "Hopa",
+  "cc": "TR"
+ },
+ {
+  "zh": "吉雷松",
+  "en": "Giresun",
+  "cc": "TR"
+ },
+ {
+  "zh": "奥尔杜",
+  "en": "Ordu",
+  "cc": "TR"
+ },
+ {
+  "zh": "托卡特",
+  "en": "Tokat",
+  "cc": "TR"
+ },
+ {
+  "zh": "乔鲁姆",
+  "en": "Corum",
+  "cc": "TR"
+ },
+ {
+  "zh": "克勒克卡莱",
+  "en": "Kirikkale",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿克萨赖",
+  "en": "Aksaray",
+  "cc": "TR"
+ },
+ {
+  "zh": "尼代",
+  "en": "Nigde",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡拉曼",
+  "en": "Karaman",
+  "cc": "TR"
+ },
+ {
+  "zh": "伊斯肯德伦",
+  "en": "Iskenderun",
+  "cc": "TR"
+ },
+ {
+  "zh": "哈塔伊",
+  "en": "Hatay",
+  "cc": "TR"
+ },
+ {
+  "zh": "安塔基亚",
+  "en": "Antakya",
+  "cc": "TR"
+ },
+ {
+  "zh": "萨曼达",
+  "en": "Samandag",
+  "cc": "TR"
+ },
+ {
+  "zh": "埃尔津詹",
+  "en": "Erzincan",
+  "cc": "TR"
+ },
+ {
+  "zh": "古穆什哈内",
+  "en": "Gumushane",
+  "cc": "TR"
+ },
+ {
+  "zh": "巴伊布尔特",
+  "en": "Bayburt",
+  "cc": "TR"
+ },
+ {
+  "zh": "里泽城堡",
+  "en": "Rize Castle",
+  "cc": "TR"
+ },
+ {
+  "zh": "阿伊德尔",
+  "en": "Ayder",
+  "cc": "TR"
+ },
+ {
+  "zh": "卡奇卡尔山",
+  "en": "Kackar Mountains",
+  "cc": "TR"
+ },
+ {
+  "zh": "帕尔马",
+  "en": "Palma",
+  "cc": "TR"
+ },
+ {
+  "zh": "伦敦",
+  "en": "London",
+  "cc": "GB"
+ },
+ {
+  "zh": "曼彻斯特",
+  "en": "Manchester",
+  "cc": "GB"
+ },
+ {
+  "zh": "伯明翰",
+  "en": "Birmingham",
+  "cc": "GB"
+ },
+ {
+  "zh": "利物浦",
+  "en": "Liverpool",
+  "cc": "GB"
+ },
+ {
+  "zh": "利兹",
+  "en": "Leeds",
+  "cc": "GB"
+ },
+ {
+  "zh": "谢菲尔德",
+  "en": "Sheffield",
+  "cc": "GB"
+ },
+ {
+  "zh": "布里斯托尔",
+  "en": "Bristol",
+  "cc": "GB"
+ },
+ {
+  "zh": "诺丁汉",
+  "en": "Nottingham",
+  "cc": "GB"
+ },
+ {
+  "zh": "纽卡斯尔",
+  "en": "Newcastle upon Tyne",
+  "cc": "GB"
+ },
+ {
+  "zh": "莱斯特",
+  "en": "Leicester",
+  "cc": "GB"
+ },
+ {
+  "zh": "考文垂",
+  "en": "Coventry",
+  "cc": "GB"
+ },
+ {
+  "zh": "朴茨茅斯",
+  "en": "Portsmouth",
+  "cc": "GB"
+ },
+ {
+  "zh": "南安普顿",
+  "en": "Southampton",
+  "cc": "GB"
+ },
+ {
+  "zh": "普利茅斯",
+  "en": "Plymouth",
+  "cc": "GB"
+ },
+ {
+  "zh": "布莱顿",
+  "en": "Brighton",
+  "cc": "GB"
+ },
+ {
+  "zh": "牛津",
+  "en": "Oxford",
+  "cc": "GB"
+ },
+ {
+  "zh": "剑桥",
+  "en": "Cambridge",
+  "cc": "GB"
+ },
+ {
+  "zh": "约克",
+  "en": "York",
+  "cc": "GB"
+ },
+ {
+  "zh": "巴斯",
+  "en": "Bath",
+  "cc": "GB"
+ },
+ {
+  "zh": "爱丁堡",
+  "en": "Edinburgh",
+  "cc": "GB"
+ },
+ {
+  "zh": "格拉斯哥",
+  "en": "Glasgow",
+  "cc": "GB"
+ },
+ {
+  "zh": "阿伯丁",
+  "en": "Aberdeen",
+  "cc": "GB"
+ },
+ {
+  "zh": "邓迪",
+  "en": "Dundee",
+  "cc": "GB"
+ },
+ {
+  "zh": "因弗内斯",
+  "en": "Inverness",
+  "cc": "GB"
+ },
+ {
+  "zh": "贝尔法斯特",
+  "en": "Belfast",
+  "cc": "GB"
+ },
+ {
+  "zh": "加的夫",
+  "en": "Cardiff",
+  "cc": "GB"
+ },
+ {
+  "zh": "斯旺西",
+  "en": "Swansea",
+  "cc": "GB"
+ },
+ {
+  "zh": "纽波特",
+  "en": "Newport",
+  "cc": "GB"
+ },
+ {
+  "zh": "雷克瑟姆",
+  "en": "Wrexham",
+  "cc": "GB"
+ },
+ {
+  "zh": "伯恩茅斯",
+  "en": "Bournemouth",
+  "cc": "GB"
+ },
+ {
+  "zh": "埃克塞特",
+  "en": "Exeter",
+  "cc": "GB"
+ },
+ {
+  "zh": "诺里奇",
+  "en": "Norwich",
+  "cc": "GB"
+ },
+ {
+  "zh": "赫尔",
+  "en": "Kingston upon Hull",
+  "cc": "GB"
+ },
+ {
+  "zh": "桑德兰",
+  "en": "Sunderland",
+  "cc": "GB"
+ },
+ {
+  "zh": "米德尔斯堡",
+  "en": "Middlesbrough",
+  "cc": "GB"
+ },
+ {
+  "zh": "布拉德福德",
+  "en": "Bradford",
+  "cc": "GB"
+ },
+ {
+  "zh": "斯托克",
+  "en": "Stoke-on-Trent",
+  "cc": "GB"
+ },
+ {
+  "zh": "伍尔弗汉普顿",
+  "en": "Wolverhampton",
+  "cc": "GB"
+ },
+ {
+  "zh": "德比",
+  "en": "Derby",
+  "cc": "GB"
+ },
+ {
+  "zh": "兰卡斯特",
+  "en": "Lancaster",
+  "cc": "GB"
+ },
+ {
+  "zh": "坎特伯雷",
+  "en": "Canterbury",
+  "cc": "GB"
+ },
+ {
+  "zh": "索尔兹伯里",
+  "en": "Salisbury",
+  "cc": "GB"
+ },
+ {
+  "zh": "温彻斯特",
+  "en": "Winchester",
+  "cc": "GB"
+ },
+ {
+  "zh": "奇切斯特",
+  "en": "Chichester",
+  "cc": "GB"
+ },
+ {
+  "zh": "格洛斯特",
+  "en": "Gloucester",
+  "cc": "GB"
+ },
+ {
+  "zh": "伍斯特",
+  "en": "Worcester",
+  "cc": "GB"
+ },
+ {
+  "zh": "达勒姆",
+  "en": "Durham",
+  "cc": "GB"
+ },
+ {
+  "zh": "切斯特",
+  "en": "Chester",
+  "cc": "GB"
+ },
+ {
+  "zh": "什鲁斯伯里",
+  "en": "Shrewsbury",
+  "cc": "GB"
+ },
+ {
+  "zh": "圣安德鲁斯",
+  "en": "St Andrews",
+  "cc": "GB"
+ },
+ {
+  "zh": "斯特灵",
+  "en": "Stirling",
+  "cc": "GB"
+ },
+ {
+  "zh": "珀斯",
+  "en": "Perth",
+  "cc": "GB"
+ },
+ {
+  "zh": "奥克尼",
+  "en": "Kirkwall",
+  "cc": "GB"
+ },
+ {
+  "zh": "设得兰",
+  "en": "Lerwick",
+  "cc": "GB"
+ },
+ {
+  "zh": "巨石阵",
+  "en": "Stonehenge",
+  "cc": "GB"
+ },
+ {
+  "zh": "温莎城堡",
+  "en": "Windsor Castle",
+  "cc": "GB"
+ },
+ {
+  "zh": "白金汉宫",
+  "en": "Buckingham Palace",
+  "cc": "GB"
+ },
+ {
+  "zh": "大本钟",
+  "en": "Big Ben",
+  "cc": "GB"
+ },
+ {
+  "zh": "伦敦塔",
+  "en": "Tower of London",
+  "cc": "GB"
+ },
+ {
+  "zh": "伦敦塔桥",
+  "en": "Tower Bridge",
+  "cc": "GB"
+ },
+ {
+  "zh": "威斯敏斯特教堂",
+  "en": "Westminster Abbey",
+  "cc": "GB"
+ },
+ {
+  "zh": "圣保罗大教堂",
+  "en": "St Paul's Cathedral",
+  "cc": "GB"
+ },
+ {
+  "zh": "大英博物馆",
+  "en": "British Museum",
+  "cc": "GB"
+ },
+ {
+  "zh": "国家美术馆",
+  "en": "National Gallery",
+  "cc": "GB"
+ },
+ {
+  "zh": "泰特现代美术馆",
+  "en": "Tate Modern",
+  "cc": "GB"
+ },
+ {
+  "zh": "海德公园",
+  "en": "Hyde Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "摄政公园",
+  "en": "Regent's Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "格林威治",
+  "en": "Greenwich",
+  "cc": "GB"
+ },
+ {
+  "zh": "肯辛顿宫",
+  "en": "Kensington Palace",
+  "cc": "GB"
+ },
+ {
+  "zh": "汉普顿宫",
+  "en": "Hampton Court Palace",
+  "cc": "GB"
+ },
+ {
+  "zh": "牛津大学",
+  "en": "University of Oxford",
+  "cc": "GB"
+ },
+ {
+  "zh": "剑桥大学",
+  "en": "University of Cambridge",
+  "cc": "GB"
+ },
+ {
+  "zh": "罗马浴场",
+  "en": "Roman Baths",
+  "cc": "GB"
+ },
+ {
+  "zh": "皇家新月楼",
+  "en": "Royal Crescent",
+  "cc": "GB"
+ },
+ {
+  "zh": "爱丁堡城堡",
+  "en": "Edinburgh Castle",
+  "cc": "GB"
+ },
+ {
+  "zh": "皇家英里",
+  "en": "Royal Mile",
+  "cc": "GB"
+ },
+ {
+  "zh": "卡尔顿山",
+  "en": "Calton Hill",
+  "cc": "GB"
+ },
+ {
+  "zh": "苏格兰高地",
+  "en": "Scottish Highlands",
+  "cc": "GB"
+ },
+ {
+  "zh": "尼斯湖",
+  "en": "Loch Ness",
+  "cc": "GB"
+ },
+ {
+  "zh": "天空岛",
+  "en": "Isle of Skye",
+  "cc": "GB"
+ },
+ {
+  "zh": "巨人之路",
+  "en": "Giant's Causeway",
+  "cc": "GB"
+ },
+ {
+  "zh": "卡里克索桥",
+  "en": "Carrick-a-Rede Rope Bridge",
+  "cc": "GB"
+ },
+ {
+  "zh": "贝尔法斯特市政厅",
+  "en": "Belfast City Hall",
+  "cc": "GB"
+ },
+ {
+  "zh": "泰坦尼克号博物馆",
+  "en": "Titanic Belfast",
+  "cc": "GB"
+ },
+ {
+  "zh": "卡迪夫城堡",
+  "en": "Cardiff Castle",
+  "cc": "GB"
+ },
+ {
+  "zh": "布雷肯比肯斯国家公园",
+  "en": "Brecon Beacons National Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "斯诺登尼亚国家公园",
+  "en": "Snowdonia National Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "湖区国家公园",
+  "en": "Lake District National Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "峰区国家公园",
+  "en": "Peak District National Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "约克大教堂",
+  "en": "York Minster",
+  "cc": "GB"
+ },
+ {
+  "zh": "肉铺街",
+  "en": "The Shambles",
+  "cc": "GB"
+ },
+ {
+  "zh": "霍华德城堡",
+  "en": "Castle Howard",
+  "cc": "GB"
+ },
+ {
+  "zh": "布莱尼姆宫",
+  "en": "Blenheim Palace",
+  "cc": "GB"
+ },
+ {
+  "zh": "斯特拉特福",
+  "en": "Stratford-upon-Avon",
+  "cc": "GB"
+ },
+ {
+  "zh": "莎士比亚故居",
+  "en": "Shakespeare's Birthplace",
+  "cc": "GB"
+ },
+ {
+  "zh": "科茨沃尔德",
+  "en": "Cotswolds",
+  "cc": "GB"
+ },
+ {
+  "zh": "多佛白崖",
+  "en": "White Cliffs of Dover",
+  "cc": "GB"
+ },
+ {
+  "zh": "七姐妹悬崖",
+  "en": "Seven Sisters Cliffs",
+  "cc": "GB"
+ },
+ {
+  "zh": "康沃尔郡",
+  "en": "Cornwall",
+  "cc": "GB"
+ },
+ {
+  "zh": "圣迈克尔山",
+  "en": "St Michael's Mount",
+  "cc": "GB"
+ },
+ {
+  "zh": "伊甸园项目",
+  "en": "Eden Project",
+  "cc": "GB"
+ },
+ {
+  "zh": "侏罗纪海岸",
+  "en": "Jurassic Coast",
+  "cc": "GB"
+ },
+ {
+  "zh": "索尔兹伯里大教堂",
+  "en": "Salisbury Cathedral",
+  "cc": "GB"
+ },
+ {
+  "zh": "坎特伯雷大教堂",
+  "en": "Canterbury Cathedral",
+  "cc": "GB"
+ },
+ {
+  "zh": "林肯大教堂",
+  "en": "Lincoln Cathedral",
+  "cc": "GB"
+ },
+ {
+  "zh": "达勒姆大教堂",
+  "en": "Durham Cathedral",
+  "cc": "GB"
+ },
+ {
+  "zh": "温德米尔湖",
+  "en": "Lake Windermere",
+  "cc": "GB"
+ },
+ {
+  "zh": "格拉斯米尔湖",
+  "en": "Grasmere",
+  "cc": "GB"
+ },
+ {
+  "zh": "安尼克城堡",
+  "en": "Alnwick Castle",
+  "cc": "GB"
+ },
+ {
+  "zh": "林迪斯法恩",
+  "en": "Lindisfarne",
+  "cc": "GB"
+ },
+ {
+  "zh": "哈德良长城",
+  "en": "Hadrian's Wall",
+  "cc": "GB"
+ },
+ {
+  "zh": "切斯特动物园",
+  "en": "Chester Zoo",
+  "cc": "GB"
+ },
+ {
+  "zh": "布莱克浦塔",
+  "en": "Blackpool Tower",
+  "cc": "GB"
+ },
+ {
+  "zh": "布莱克浦海滩",
+  "en": "Blackpool Pleasure Beach",
+  "cc": "GB"
+ },
+ {
+  "zh": "伯恩茅斯海滩",
+  "en": "Bournemouth Beach",
+  "cc": "GB"
+ },
+ {
+  "zh": "布赖顿码头",
+  "en": "Brighton Pier",
+  "cc": "GB"
+ },
+ {
+  "zh": "皇家穹顶宫",
+  "en": "Royal Pavilion",
+  "cc": "GB"
+ },
+ {
+  "zh": "朴茨茅斯历史船坞",
+  "en": "Portsmouth Historic Dockyard",
+  "cc": "GB"
+ },
+ {
+  "zh": "格林威治皇家天文台",
+  "en": "Royal Observatory Greenwich",
+  "cc": "GB"
+ },
+ {
+  "zh": "伦敦眼",
+  "en": "London Eye",
+  "cc": "GB"
+ },
+ {
+  "zh": "特拉法加广场",
+  "en": "Trafalgar Square",
+  "cc": "GB"
+ },
+ {
+  "zh": "皮卡迪利广场",
+  "en": "Piccadilly Circus",
+  "cc": "GB"
+ },
+ {
+  "zh": "考文特花园",
+  "en": "Covent Garden",
+  "cc": "GB"
+ },
+ {
+  "zh": "博罗市场",
+  "en": "Borough Market",
+  "cc": "GB"
+ },
+ {
+  "zh": "卡姆登市场",
+  "en": "Camden Market",
+  "cc": "GB"
+ },
+ {
+  "zh": "诺丁山",
+  "en": "Notting Hill",
+  "cc": "GB"
+ },
+ {
+  "zh": "肯辛顿花园",
+  "en": "Kensington Gardens",
+  "cc": "GB"
+ },
+ {
+  "zh": "里士满公园",
+  "en": "Richmond Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "温布尔登",
+  "en": "Wimbledon",
+  "cc": "GB"
+ },
+ {
+  "zh": "阿斯科特赛马场",
+  "en": "Ascot Racecourse",
+  "cc": "GB"
+ },
+ {
+  "zh": "银石赛道",
+  "en": "Silverstone Circuit",
+  "cc": "GB"
+ },
+ {
+  "zh": "老特拉福德球场",
+  "en": "Old Trafford",
+  "cc": "GB"
+ },
+ {
+  "zh": "安菲尔德球场",
+  "en": "Anfield",
+  "cc": "GB"
+ },
+ {
+  "zh": "酋长球场",
+  "en": "Emirates Stadium",
+  "cc": "GB"
+ },
+ {
+  "zh": "温布利球场",
+  "en": "Wembley Stadium",
+  "cc": "GB"
+ },
+ {
+  "zh": "圣詹姆斯公园球场",
+  "en": "St James' Park",
+  "cc": "GB"
+ },
+ {
+  "zh": "伊蒂哈德球场",
+  "en": "Etihad Stadium",
+  "cc": "GB"
+ },
+ {
+  "zh": "巴黎",
+  "en": "Paris",
+  "cc": "FR"
+ },
+ {
+  "zh": "马赛",
+  "en": "Marseille",
+  "cc": "FR"
+ },
+ {
+  "zh": "里昂",
+  "en": "Lyon",
+  "cc": "FR"
+ },
+ {
+  "zh": "图卢兹",
+  "en": "Toulouse",
+  "cc": "FR"
+ },
+ {
+  "zh": "尼斯",
+  "en": "Nice",
+  "cc": "FR"
+ },
+ {
+  "zh": "南特",
+  "en": "Nantes",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒙彼利埃",
+  "en": "Montpellier",
+  "cc": "FR"
+ },
+ {
+  "zh": "斯特拉斯堡",
+  "en": "Strasbourg",
+  "cc": "FR"
+ },
+ {
+  "zh": "波尔多",
+  "en": "Bordeaux",
+  "cc": "FR"
+ },
+ {
+  "zh": "里尔",
+  "en": "Lille",
+  "cc": "FR"
+ },
+ {
+  "zh": "雷恩",
+  "en": "Rennes",
+  "cc": "FR"
+ },
+ {
+  "zh": "兰斯",
+  "en": "Reims",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣艾蒂安",
+  "en": "Saint-Étienne",
+  "cc": "FR"
+ },
+ {
+  "zh": "土伦",
+  "en": "Toulon",
+  "cc": "FR"
+ },
+ {
+  "zh": "勒阿弗尔",
+  "en": "Le Havre",
+  "cc": "FR"
+ },
+ {
+  "zh": "格勒诺布尔",
+  "en": "Grenoble",
+  "cc": "FR"
+ },
+ {
+  "zh": "第戎",
+  "en": "Dijon",
+  "cc": "FR"
+ },
+ {
+  "zh": "昂热",
+  "en": "Angers",
+  "cc": "FR"
+ },
+ {
+  "zh": "尼姆",
+  "en": "Nîmes",
+  "cc": "FR"
+ },
+ {
+  "zh": "克莱蒙费朗",
+  "en": "Clermont-Ferrand",
+  "cc": "FR"
+ },
+ {
+  "zh": "艾克斯",
+  "en": "Aix-en-Provence",
+  "cc": "FR"
+ },
+ {
+  "zh": "布雷斯特",
+  "en": "Brest",
+  "cc": "FR"
+ },
+ {
+  "zh": "利摩日",
+  "en": "Limoges",
+  "cc": "FR"
+ },
+ {
+  "zh": "图尔",
+  "en": "Tours",
+  "cc": "FR"
+ },
+ {
+  "zh": "亚眠",
+  "en": "Amiens",
+  "cc": "FR"
+ },
+ {
+  "zh": "佩皮尼昂",
+  "en": "Perpignan",
+  "cc": "FR"
+ },
+ {
+  "zh": "梅斯",
+  "en": "Metz",
+  "cc": "FR"
+ },
+ {
+  "zh": "贝桑松",
+  "en": "Besançon",
+  "cc": "FR"
+ },
+ {
+  "zh": "奥尔良",
+  "en": "Orléans",
+  "cc": "FR"
+ },
+ {
+  "zh": "鲁昂",
+  "en": "Rouen",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒙特勒伊",
+  "en": "Montreuil",
+  "cc": "FR"
+ },
+ {
+  "zh": "卡昂",
+  "en": "Caen",
+  "cc": "FR"
+ },
+ {
+  "zh": "南锡",
+  "en": "Nancy",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿尔勒",
+  "en": "Arles",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿维尼翁",
+  "en": "Avignon",
+  "cc": "FR"
+ },
+ {
+  "zh": "戛纳",
+  "en": "Cannes",
+  "cc": "FR"
+ },
+ {
+  "zh": "安纳西",
+  "en": "Annecy",
+  "cc": "FR"
+ },
+ {
+  "zh": "尚贝里",
+  "en": "Chambéry",
+  "cc": "FR"
+ },
+ {
+  "zh": "瓦朗斯",
+  "en": "Valence",
+  "cc": "FR"
+ },
+ {
+  "zh": "拉罗谢尔",
+  "en": "La Rochelle",
+  "cc": "FR"
+ },
+ {
+  "zh": "比亚里茨",
+  "en": "Biarritz",
+  "cc": "FR"
+ },
+ {
+  "zh": "卡尔卡松",
+  "en": "Carcassonne",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣马洛",
+  "en": "Saint-Malo",
+  "cc": "FR"
+ },
+ {
+  "zh": "科尔马",
+  "en": "Colmar",
+  "cc": "FR"
+ },
+ {
+  "zh": "凡尔赛",
+  "en": "Versailles",
+  "cc": "FR"
+ },
+ {
+  "zh": "枫丹白露",
+  "en": "Fontainebleau",
+  "cc": "FR"
+ },
+ {
+  "zh": "普罗旺斯地区艾克斯",
+  "en": "Aix-en-Provence",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣特罗佩",
+  "en": "Saint-Tropez",
+  "cc": "FR"
+ },
+ {
+  "zh": "翁弗勒尔",
+  "en": "Honfleur",
+  "cc": "FR"
+ },
+ {
+  "zh": "埃特勒塔",
+  "en": "Étretat",
+  "cc": "FR"
+ },
+ {
+  "zh": "吉维尼",
+  "en": "Giverny",
+  "cc": "FR"
+ },
+ {
+  "zh": "卢瓦尔河谷",
+  "en": "Loire Valley",
+  "cc": "FR"
+ },
+ {
+  "zh": "香槟",
+  "en": "Champagne",
+  "cc": "FR"
+ },
+ {
+  "zh": "勃艮第",
+  "en": "Burgundy",
+  "cc": "FR"
+ },
+ {
+  "zh": "普罗旺斯",
+  "en": "Provence",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿尔卑斯山",
+  "en": "French Alps",
+  "cc": "FR"
+ },
+ {
+  "zh": "比利牛斯山",
+  "en": "Pyrenees",
+  "cc": "FR"
+ },
+ {
+  "zh": "科西嘉岛",
+  "en": "Corsica",
+  "cc": "FR"
+ },
+ {
+  "zh": "埃菲尔铁塔",
+  "en": "Eiffel Tower",
+  "cc": "FR"
+ },
+ {
+  "zh": "卢浮宫",
+  "en": "Louvre Museum",
+  "cc": "FR"
+ },
+ {
+  "zh": "巴黎圣母院",
+  "en": "Notre-Dame de Paris",
+  "cc": "FR"
+ },
+ {
+  "zh": "凯旋门",
+  "en": "Arc de Triomphe",
+  "cc": "FR"
+ },
+ {
+  "zh": "香榭丽舍大街",
+  "en": "Champs-Élysées",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒙马特",
+  "en": "Montmartre",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣心大教堂",
+  "en": "Sacré-Cœur Basilica",
+  "cc": "FR"
+ },
+ {
+  "zh": "奥赛博物馆",
+  "en": "Musée d'Orsay",
+  "cc": "FR"
+ },
+ {
+  "zh": "蓬皮杜中心",
+  "en": "Centre Pompidou",
+  "cc": "FR"
+ },
+ {
+  "zh": "凡尔赛宫",
+  "en": "Palace of Versailles",
+  "cc": "FR"
+ },
+ {
+  "zh": "枫丹白露宫",
+  "en": "Château de Fontainebleau",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣米歇尔山",
+  "en": "Mont Saint-Michel",
+  "cc": "FR"
+ },
+ {
+  "zh": "卢瓦尔河城堡群",
+  "en": "Châteaux of the Loire",
+  "cc": "FR"
+ },
+ {
+  "zh": "舍农索城堡",
+  "en": "Château de Chenonceau",
+  "cc": "FR"
+ },
+ {
+  "zh": "香波堡",
+  "en": "Château de Chambord",
+  "cc": "FR"
+ },
+ {
+  "zh": "卡尔卡松城堡",
+  "en": "Cité de Carcassonne",
+  "cc": "FR"
+ },
+ {
+  "zh": "教皇宫殿",
+  "en": "Palais des Papes",
+  "cc": "FR"
+ },
+ {
+  "zh": "加尔桥",
+  "en": "Pont du Gard",
+  "cc": "FR"
+ },
+ {
+  "zh": "蔚蓝海岸",
+  "en": "French Riviera",
+  "cc": "FR"
+ },
+ {
+  "zh": "摩纳哥",
+  "en": "Monaco",
+  "cc": "FR"
+ },
+ {
+  "zh": "安提布",
+  "en": "Antibes",
+  "cc": "FR"
+ },
+ {
+  "zh": "芒通",
+  "en": "Menton",
+  "cc": "FR"
+ },
+ {
+  "zh": "埃兹",
+  "en": "Èze",
+  "cc": "FR"
+ },
+ {
+  "zh": "格拉斯",
+  "en": "Grasse",
+  "cc": "FR"
+ },
+ {
+  "zh": "普罗旺斯薰衣草田",
+  "en": "Lavender Fields of Provence",
+  "cc": "FR"
+ },
+ {
+  "zh": "鲁西永",
+  "en": "Roussillon",
+  "cc": "FR"
+ },
+ {
+  "zh": "戈尔德",
+  "en": "Gordes",
+  "cc": "FR"
+ },
+ {
+  "zh": "博讷",
+  "en": "Beaune",
+  "cc": "FR"
+ },
+ {
+  "zh": "第戎老城",
+  "en": "Dijon Old Town",
+  "cc": "FR"
+ },
+ {
+  "zh": "斯特拉斯堡大教堂",
+  "en": "Strasbourg Cathedral",
+  "cc": "FR"
+ },
+ {
+  "zh": "小法兰西",
+  "en": "Petite France",
+  "cc": "FR"
+ },
+ {
+  "zh": "科尔马老城",
+  "en": "Colmar Old Town",
+  "cc": "FR"
+ },
+ {
+  "zh": "里昂老城",
+  "en": "Vieux Lyon",
+  "cc": "FR"
+ },
+ {
+  "zh": "富维耶山",
+  "en": "Fourvière Hill",
+  "cc": "FR"
+ },
+ {
+  "zh": "波尔多交易所广场",
+  "en": "Place de la Bourse",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣埃米利永",
+  "en": "Saint-Émilion",
+  "cc": "FR"
+ },
+ {
+  "zh": "图卢兹市政厅",
+  "en": "Capitole de Toulouse",
+  "cc": "FR"
+ },
+ {
+  "zh": "马赛旧港",
+  "en": "Vieux-Port de Marseille",
+  "cc": "FR"
+ },
+ {
+  "zh": "卡朗格峡湾",
+  "en": "Calanques",
+  "cc": "FR"
+ },
+ {
+  "zh": "尼斯老城",
+  "en": "Vieux Nice",
+  "cc": "FR"
+ },
+ {
+  "zh": "天使湾",
+  "en": "Baie des Anges",
+  "cc": "FR"
+ },
+ {
+  "zh": "戛纳影节宫",
+  "en": "Palais des Festivals",
+  "cc": "FR"
+ },
+ {
+  "zh": "格勒诺布尔巴士底",
+  "en": "Bastille de Grenoble",
+  "cc": "FR"
+ },
+ {
+  "zh": "安纳西湖",
+  "en": "Lake Annecy",
+  "cc": "FR"
+ },
+ {
+  "zh": "勃朗峰",
+  "en": "Mont Blanc",
+  "cc": "FR"
+ },
+ {
+  "zh": "霞慕尼",
+  "en": "Chamonix",
+  "cc": "FR"
+ },
+ {
+  "zh": "瓦尔贝格",
+  "en": "Valberg",
+  "cc": "FR"
+ },
+ {
+  "zh": "伊泽尔谷",
+  "en": "Val d'Isère",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒂涅",
+  "en": "Tignes",
+  "cc": "FR"
+ },
+ {
+  "zh": "梅里贝尔",
+  "en": "Méribel",
+  "cc": "FR"
+ },
+ {
+  "zh": "库尔舍韦勒",
+  "en": "Courchevel",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿沃里亚兹",
+  "en": "Avoriaz",
+  "cc": "FR"
+ },
+ {
+  "zh": "莱萨尔克",
+  "en": "Les Arcs",
+  "cc": "FR"
+ },
+ {
+  "zh": "拉普拉涅",
+  "en": "La Plagne",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿尔克塞南",
+  "en": "Arc-et-Senans",
+  "cc": "FR"
+ },
+ {
+  "zh": "奥朗日古剧场",
+  "en": "Théâtre Antique d'Orange",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿尔勒竞技场",
+  "en": "Arènes d'Arles",
+  "cc": "FR"
+ },
+ {
+  "zh": "尼姆竞技场",
+  "en": "Arènes de Nîmes",
+  "cc": "FR"
+ },
+ {
+  "zh": "米约高架桥",
+  "en": "Millau Viaduct",
+  "cc": "FR"
+ },
+ {
+  "zh": "罗卡马杜尔",
+  "en": "Rocamadour",
+  "cc": "FR"
+ },
+ {
+  "zh": "拉斯科洞穴",
+  "en": "Lascaux Cave",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣让皮耶德波尔",
+  "en": "Saint-Jean-Pied-de-Port",
+  "cc": "FR"
+ },
+ {
+  "zh": "科利乌尔",
+  "en": "Collioure",
+  "cc": "FR"
+ },
+ {
+  "zh": "塞特",
+  "en": "Sète",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿格德",
+  "en": "Agde",
+  "cc": "FR"
+ },
+ {
+  "zh": "贝济耶",
+  "en": "Béziers",
+  "cc": "FR"
+ },
+ {
+  "zh": "纳博讷",
+  "en": "Narbonne",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒙托邦",
+  "en": "Montauban",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿尔比",
+  "en": "Albi",
+  "cc": "FR"
+ },
+ {
+  "zh": "罗德兹",
+  "en": "Rodez",
+  "cc": "FR"
+ },
+ {
+  "zh": "欧里亚克",
+  "en": "Aurillac",
+  "cc": "FR"
+ },
+ {
+  "zh": "勒皮",
+  "en": "Le Puy-en-Velay",
+  "cc": "FR"
+ },
+ {
+  "zh": "维希",
+  "en": "Vichy",
+  "cc": "FR"
+ },
+ {
+  "zh": "穆兰",
+  "en": "Moulins",
+  "cc": "FR"
+ },
+ {
+  "zh": "讷韦尔",
+  "en": "Nevers",
+  "cc": "FR"
+ },
+ {
+  "zh": "欧塞尔",
+  "en": "Auxerre",
+  "cc": "FR"
+ },
+ {
+  "zh": "特鲁瓦",
+  "en": "Troyes",
+  "cc": "FR"
+ },
+ {
+  "zh": "沙隆",
+  "en": "Châlons-en-Champagne",
+  "cc": "FR"
+ },
+ {
+  "zh": "埃佩尔奈",
+  "en": "Épernay",
+  "cc": "FR"
+ },
+ {
+  "zh": "色当",
+  "en": "Sedan",
+  "cc": "FR"
+ },
+ {
+  "zh": "沙勒维尔-梅济耶尔",
+  "en": "Charleville-Mézières",
+  "cc": "FR"
+ },
+ {
+  "zh": "凡尔登",
+  "en": "Verdun",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒂永维尔",
+  "en": "Thionville",
+  "cc": "FR"
+ },
+ {
+  "zh": "萨尔格米纳",
+  "en": "Sarreguemines",
+  "cc": "FR"
+ },
+ {
+  "zh": "米卢斯",
+  "en": "Mulhouse",
+  "cc": "FR"
+ },
+ {
+  "zh": "贝尔福",
+  "en": "Belfort",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒙贝利亚尔",
+  "en": "Montbéliard",
+  "cc": "FR"
+ },
+ {
+  "zh": "沃苏勒",
+  "en": "Vesoul",
+  "cc": "FR"
+ },
+ {
+  "zh": "隆勒索涅",
+  "en": "Lons-le-Saunier",
+  "cc": "FR"
+ },
+ {
+  "zh": "布雷斯堡",
+  "en": "Bourg-en-Bresse",
+  "cc": "FR"
+ },
+ {
+  "zh": "马孔",
+  "en": "Mâcon",
+  "cc": "FR"
+ },
+ {
+  "zh": "索恩河畔沙隆",
+  "en": "Chalon-sur-Saône",
+  "cc": "FR"
+ },
+ {
+  "zh": "勒克鲁佐",
+  "en": "Le Creusot",
+  "cc": "FR"
+ },
+ {
+  "zh": "布尔日",
+  "en": "Bourges",
+  "cc": "FR"
+ },
+ {
+  "zh": "沙托鲁",
+  "en": "Châteauroux",
+  "cc": "FR"
+ },
+ {
+  "zh": "维耶尔宗",
+  "en": "Vierzon",
+  "cc": "FR"
+ },
+ {
+  "zh": "布卢瓦",
+  "en": "Blois",
+  "cc": "FR"
+ },
+ {
+  "zh": "希农",
+  "en": "Chinon",
+  "cc": "FR"
+ },
+ {
+  "zh": "索米尔",
+  "en": "Saumur",
+  "cc": "FR"
+ },
+ {
+  "zh": "拉瓦勒",
+  "en": "Laval",
+  "cc": "FR"
+ },
+ {
+  "zh": "勒芒",
+  "en": "Le Mans",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿朗松",
+  "en": "Alençon",
+  "cc": "FR"
+ },
+ {
+  "zh": "弗莱尔",
+  "en": "Flers",
+  "cc": "FR"
+ },
+ {
+  "zh": "巴约",
+  "en": "Bayeux",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣洛",
+  "en": "Saint-Lô",
+  "cc": "FR"
+ },
+ {
+  "zh": "库唐斯",
+  "en": "Coutances",
+  "cc": "FR"
+ },
+ {
+  "zh": "瑟堡",
+  "en": "Cherbourg",
+  "cc": "FR"
+ },
+ {
+  "zh": "格朗维尔",
+  "en": "Granville",
+  "cc": "FR"
+ },
+ {
+  "zh": "迪南",
+  "en": "Dinan",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣布里厄",
+  "en": "Saint-Brieuc",
+  "cc": "FR"
+ },
+ {
+  "zh": "坎佩尔",
+  "en": "Quimper",
+  "cc": "FR"
+ },
+ {
+  "zh": "洛里昂",
+  "en": "Lorient",
+  "cc": "FR"
+ },
+ {
+  "zh": "瓦讷",
+  "en": "Vannes",
+  "cc": "FR"
+ },
+ {
+  "zh": "富热尔",
+  "en": "Fougères",
+  "cc": "FR"
+ },
+ {
+  "zh": "维特雷",
+  "en": "Vitré",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣纳泽尔",
+  "en": "Saint-Nazaire",
+  "cc": "FR"
+ },
+ {
+  "zh": "莱萨布勒多洛讷",
+  "en": "Les Sables-d'Olonne",
+  "cc": "FR"
+ },
+ {
+  "zh": "永河畔拉罗什",
+  "en": "La Roche-sur-Yon",
+  "cc": "FR"
+ },
+ {
+  "zh": "尼奥尔",
+  "en": "Niort",
+  "cc": "FR"
+ },
+ {
+  "zh": "普瓦捷",
+  "en": "Poitiers",
+  "cc": "FR"
+ },
+ {
+  "zh": "昂古莱姆",
+  "en": "Angoulême",
+  "cc": "FR"
+ },
+ {
+  "zh": "罗什福尔",
+  "en": "Rochefort",
+  "cc": "FR"
+ },
+ {
+  "zh": "桑特",
+  "en": "Saintes",
+  "cc": "FR"
+ },
+ {
+  "zh": "科涅克",
+  "en": "Cognac",
+  "cc": "FR"
+ },
+ {
+  "zh": "布里夫",
+  "en": "Brive-la-Gaillarde",
+  "cc": "FR"
+ },
+ {
+  "zh": "佩里格",
+  "en": "Périgueux",
+  "cc": "FR"
+ },
+ {
+  "zh": "贝尔热拉克",
+  "en": "Bergerac",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿让",
+  "en": "Agen",
+  "cc": "FR"
+ },
+ {
+  "zh": "蒙德马桑",
+  "en": "Mont-de-Marsan",
+  "cc": "FR"
+ },
+ {
+  "zh": "达克斯",
+  "en": "Dax",
+  "cc": "FR"
+ },
+ {
+  "zh": "波城",
+  "en": "Pau",
+  "cc": "FR"
+ },
+ {
+  "zh": "塔布",
+  "en": "Tarbes",
+  "cc": "FR"
+ },
+ {
+  "zh": "富瓦",
+  "en": "Foix",
+  "cc": "FR"
+ },
+ {
+  "zh": "奥朗日",
+  "en": "Orange",
+  "cc": "FR"
+ },
+ {
+  "zh": "卡庞特拉",
+  "en": "Carpentras",
+  "cc": "FR"
+ },
+ {
+  "zh": "马诺斯克",
+  "en": "Manosque",
+  "cc": "FR"
+ },
+ {
+  "zh": "迪涅莱班",
+  "en": "Digne-les-Bains",
+  "cc": "FR"
+ },
+ {
+  "zh": "加普",
+  "en": "Gap",
+  "cc": "FR"
+ },
+ {
+  "zh": "布里昂松",
+  "en": "Briançon",
+  "cc": "FR"
+ },
+ {
+  "zh": "托农莱班",
+  "en": "Thonon-les-Bains",
+  "cc": "FR"
+ },
+ {
+  "zh": "埃维昂莱班",
+  "en": "Évian-les-Bains",
+  "cc": "FR"
+ },
+ {
+  "zh": "日内瓦",
+  "en": "Geneva",
+  "cc": "FR"
+ },
+ {
+  "zh": "罗阿讷",
+  "en": "Roanne",
+  "cc": "FR"
+ },
+ {
+  "zh": "菲雅克",
+  "en": "Figeac",
+  "cc": "FR"
+ },
+ {
+  "zh": "卡奥尔",
+  "en": "Cahors",
+  "cc": "FR"
+ },
+ {
+  "zh": "卡斯特尔",
+  "en": "Castres",
+  "cc": "FR"
+ },
+ {
+  "zh": "米雷",
+  "en": "Muret",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣戈当",
+  "en": "Saint-Gaudens",
+  "cc": "FR"
+ },
+ {
+  "zh": "利穆",
+  "en": "Limoux",
+  "cc": "FR"
+ },
+ {
+  "zh": "普拉德",
+  "en": "Prades",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣吉龙",
+  "en": "Saint-Girons",
+  "cc": "FR"
+ },
+ {
+  "zh": "米约",
+  "en": "Millau",
+  "cc": "FR"
+ },
+ {
+  "zh": "马扎梅",
+  "en": "Mazamet",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣雷米",
+  "en": "Saint-Rémy-de-Provence",
+  "cc": "FR"
+ },
+ {
+  "zh": "普罗旺斯地区萨隆",
+  "en": "Salon-de-Provence",
+  "cc": "FR"
+ },
+ {
+  "zh": "耶尔",
+  "en": "Hyères",
+  "cc": "FR"
+ },
+ {
+  "zh": "弗雷瑞斯",
+  "en": "Fréjus",
+  "cc": "FR"
+ },
+ {
+  "zh": "圣拉斐尔",
+  "en": "Saint-Raphaël",
+  "cc": "FR"
+ },
+ {
+  "zh": "昂蒂布",
+  "en": "Antibes",
+  "cc": "FR"
+ },
+ {
+  "zh": "瓦洛里斯",
+  "en": "Vallauris",
+  "cc": "FR"
+ },
+ {
+  "zh": "比奥",
+  "en": "Biot",
+  "cc": "FR"
+ },
+ {
+  "zh": "穆然",
+  "en": "Mougins",
+  "cc": "FR"
+ },
+ {
+  "zh": "瓦朗索勒",
+  "en": "Valensole",
+  "cc": "FR"
+ },
+ {
+  "zh": "锡斯特龙",
+  "en": "Sisteron",
+  "cc": "FR"
+ },
+ {
+  "zh": "阿讷马斯",
+  "en": "Annemasse",
+  "cc": "FR"
+ },
+ {
+  "zh": "维勒班",
+  "en": "Villeurbanne",
+  "cc": "FR"
+ },
+ {
+  "zh": "马德里",
+  "en": "Madrid",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴塞罗那",
+  "en": "Barcelona",
+  "cc": "ES"
+ },
+ {
+  "zh": "瓦伦西亚",
+  "en": "Valencia",
+  "cc": "ES"
+ },
+ {
+  "zh": "塞维利亚",
+  "en": "Seville",
+  "cc": "ES"
+ },
+ {
+  "zh": "萨拉戈萨",
+  "en": "Zaragoza",
+  "cc": "ES"
+ },
+ {
+  "zh": "马拉加",
+  "en": "Malaga",
+  "cc": "ES"
+ },
+ {
+  "zh": "穆尔西亚",
+  "en": "Murcia",
+  "cc": "ES"
+ },
+ {
+  "zh": "帕尔马",
+  "en": "Palma",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉斯帕尔马斯",
+  "en": "Las Palmas",
+  "cc": "ES"
+ },
+ {
+  "zh": "毕尔巴鄂",
+  "en": "Bilbao",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿利坎特",
+  "en": "Alicante",
+  "cc": "ES"
+ },
+ {
+  "zh": "科尔多瓦",
+  "en": "Cordoba",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴利亚多利德",
+  "en": "Valladolid",
+  "cc": "ES"
+ },
+ {
+  "zh": "维哥",
+  "en": "Vigo",
+  "cc": "ES"
+ },
+ {
+  "zh": "希洪",
+  "en": "Gijon",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃斯普卢格斯",
+  "en": "L'Hospitalet de Llobregat",
+  "cc": "ES"
+ },
+ {
+  "zh": "格拉纳达",
+  "en": "Granada",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃尔切",
+  "en": "Elche",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥维耶多",
+  "en": "Oviedo",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴达洛纳",
+  "en": "Badalona",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡塔赫纳",
+  "en": "Cartagena",
+  "cc": "ES"
+ },
+ {
+  "zh": "特内里费岛",
+  "en": "Santa Cruz de Tenerife",
+  "cc": "ES"
+ },
+ {
+  "zh": "赫雷斯",
+  "en": "Jerez de la Frontera",
+  "cc": "ES"
+ },
+ {
+  "zh": "萨瓦德尔",
+  "en": "Sabadell",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣塞瓦斯蒂安",
+  "en": "San Sebastian",
+  "cc": "ES"
+ },
+ {
+  "zh": "桑坦德",
+  "en": "Santander",
+  "cc": "ES"
+ },
+ {
+  "zh": "布尔戈斯",
+  "en": "Burgos",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔梅里亚",
+  "en": "Almeria",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡斯特利翁",
+  "en": "Castellon de la Plana",
+  "cc": "ES"
+ },
+ {
+  "zh": "洛格罗尼奥",
+  "en": "Logrono",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴达霍斯",
+  "en": "Badajoz",
+  "cc": "ES"
+ },
+ {
+  "zh": "萨拉曼卡",
+  "en": "Salamanca",
+  "cc": "ES"
+ },
+ {
+  "zh": "韦尔瓦",
+  "en": "Huelva",
+  "cc": "ES"
+ },
+ {
+  "zh": "莱昂",
+  "en": "Leon",
+  "cc": "ES"
+ },
+ {
+  "zh": "塔拉戈纳",
+  "en": "Tarragona",
+  "cc": "ES"
+ },
+ {
+  "zh": "莱里达",
+  "en": "Lleida",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡塞雷斯",
+  "en": "Caceres",
+  "cc": "ES"
+ },
+ {
+  "zh": "托莱多",
+  "en": "Toledo",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔巴塞特",
+  "en": "Albacete",
+  "cc": "ES"
+ },
+ {
+  "zh": "潘普洛纳",
+  "en": "Pamplona",
+  "cc": "ES"
+ },
+ {
+  "zh": "雷乌斯",
+  "en": "Reus",
+  "cc": "ES"
+ },
+ {
+  "zh": "赫罗纳",
+  "en": "Girona",
+  "cc": "ES"
+ },
+ {
+  "zh": "卢戈",
+  "en": "Lugo",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣地亚哥-德孔波斯特拉",
+  "en": "Santiago de Compostela",
+  "cc": "ES"
+ },
+ {
+  "zh": "科鲁尼亚",
+  "en": "A Coruna",
+  "cc": "ES"
+ },
+ {
+  "zh": "费罗尔",
+  "en": "Ferrol",
+  "cc": "ES"
+ },
+ {
+  "zh": "梅利利亚",
+  "en": "Melilla",
+  "cc": "ES"
+ },
+ {
+  "zh": "休达",
+  "en": "Ceuta",
+  "cc": "ES"
+ },
+ {
+  "zh": "马贝拉",
+  "en": "Marbella",
+  "cc": "ES"
+ },
+ {
+  "zh": "托雷维耶哈",
+  "en": "Torrevieja",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝尼多姆",
+  "en": "Benidorm",
+  "cc": "ES"
+ },
+ {
+  "zh": "伊维萨",
+  "en": "Ibiza",
+  "cc": "ES"
+ },
+ {
+  "zh": "马翁",
+  "en": "Mahon",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔赫西拉斯",
+  "en": "Algeciras",
+  "cc": "ES"
+ },
+ {
+  "zh": "加的斯",
+  "en": "Cadiz",
+  "cc": "ES"
+ },
+ {
+  "zh": "哈恩",
+  "en": "Jaen",
+  "cc": "ES"
+ },
+ {
+  "zh": "昆卡",
+  "en": "Cuenca",
+  "cc": "ES"
+ },
+ {
+  "zh": "索里亚",
+  "en": "Soria",
+  "cc": "ES"
+ },
+ {
+  "zh": "塞哥维亚",
+  "en": "Segovia",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿维拉",
+  "en": "Avila",
+  "cc": "ES"
+ },
+ {
+  "zh": "特鲁埃尔",
+  "en": "Teruel",
+  "cc": "ES"
+ },
+ {
+  "zh": "萨莫拉",
+  "en": "Zamora",
+  "cc": "ES"
+ },
+ {
+  "zh": "帕伦西亚",
+  "en": "Palencia",
+  "cc": "ES"
+ },
+ {
+  "zh": "韦斯卡",
+  "en": "Huesca",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥伦塞",
+  "en": "Ourense",
+  "cc": "ES"
+ },
+ {
+  "zh": "蓬特韦德拉",
+  "en": "Pontevedra",
+  "cc": "ES"
+ },
+ {
+  "zh": "梅里达",
+  "en": "Merida",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣塞巴斯蒂安",
+  "en": "San Sebastian",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉科鲁尼亚",
+  "en": "A Coruna",
+  "cc": "ES"
+ },
+ {
+  "zh": "维戈",
+  "en": "Vigo",
+  "cc": "ES"
+ },
+ {
+  "zh": "大加那利岛",
+  "en": "Gran Canaria",
+  "cc": "ES"
+ },
+ {
+  "zh": "兰萨罗特岛",
+  "en": "Lanzarote",
+  "cc": "ES"
+ },
+ {
+  "zh": "富埃特文图拉岛",
+  "en": "Fuerteventura",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉帕尔马岛",
+  "en": "La Palma",
+  "cc": "ES"
+ },
+ {
+  "zh": "戈梅拉岛",
+  "en": "La Gomera",
+  "cc": "ES"
+ },
+ {
+  "zh": "耶罗岛",
+  "en": "El Hierro",
+  "cc": "ES"
+ },
+ {
+  "zh": "直布罗陀",
+  "en": "Gibraltar",
+  "cc": "ES"
+ },
+ {
+  "zh": "龙达",
+  "en": "Ronda",
+  "cc": "ES"
+ },
+ {
+  "zh": "米哈斯",
+  "en": "Mijas",
+  "cc": "ES"
+ },
+ {
+  "zh": "弗里希利亚纳",
+  "en": "Frigiliana",
+  "cc": "ES"
+ },
+ {
+  "zh": "内尔哈",
+  "en": "Nerja",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃斯特波纳",
+  "en": "Estepona",
+  "cc": "ES"
+ },
+ {
+  "zh": "安特克拉",
+  "en": "Antequera",
+  "cc": "ES"
+ },
+ {
+  "zh": "乌韦达",
+  "en": "Ubeda",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴埃萨",
+  "en": "Baeza",
+  "cc": "ES"
+ },
+ {
+  "zh": "佩尼斯科拉",
+  "en": "Peniscola",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡斯特利翁-德拉普拉纳",
+  "en": "Castellon de la Plana",
+  "cc": "ES"
+ },
+ {
+  "zh": "哈卡",
+  "en": "Jaca",
+  "cc": "ES"
+ },
+ {
+  "zh": "安道尔",
+  "en": "Andorra",
+  "cc": "ES"
+ },
+ {
+  "zh": "菲格拉斯",
+  "en": "Figueres",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡达克斯",
+  "en": "Cadaques",
+  "cc": "ES"
+ },
+ {
+  "zh": "滨海托萨",
+  "en": "Tossa de Mar",
+  "cc": "ES"
+ },
+ {
+  "zh": "滨海略雷特",
+  "en": "Lloret de Mar",
+  "cc": "ES"
+ },
+ {
+  "zh": "锡切斯",
+  "en": "Sitges",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿罗",
+  "en": "Haro",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉瓜迪亚",
+  "en": "Laguardia",
+  "cc": "ES"
+ },
+ {
+  "zh": "维多利亚-加斯泰斯",
+  "en": "Vitoria-Gasteiz",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥利特",
+  "en": "Olite",
+  "cc": "ES"
+ },
+ {
+  "zh": "塔法利亚",
+  "en": "Tafalla",
+  "cc": "ES"
+ },
+ {
+  "zh": "桑格萨",
+  "en": "Sanguesa",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝纳斯克",
+  "en": "Benasque",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿兰谷",
+  "en": "Val d'Aran",
+  "cc": "ES"
+ },
+ {
+  "zh": "博伊谷",
+  "en": "Vall de Boi",
+  "cc": "ES"
+ },
+ {
+  "zh": "艾因萨",
+  "en": "Ainsa",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔克萨尔",
+  "en": "Alquezar",
+  "cc": "ES"
+ },
+ {
+  "zh": "托尔拉",
+  "en": "Torla",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥尔德萨",
+  "en": "Ordesa",
+  "cc": "ES"
+ },
+ {
+  "zh": "蒙塞拉特",
+  "en": "Montserrat",
+  "cc": "ES"
+ },
+ {
+  "zh": "波特斯",
+  "en": "Potes",
+  "cc": "ES"
+ },
+ {
+  "zh": "桑蒂利亚纳-德尔马尔",
+  "en": "Santillana del Mar",
+  "cc": "ES"
+ },
+ {
+  "zh": "科米利亚斯",
+  "en": "Comillas",
+  "cc": "ES"
+ },
+ {
+  "zh": "利亚内斯",
+  "en": "Llanes",
+  "cc": "ES"
+ },
+ {
+  "zh": "坎加斯-德奥尼斯",
+  "en": "Cangas de Onis",
+  "cc": "ES"
+ },
+ {
+  "zh": "科瓦东加",
+  "en": "Covadonga",
+  "cc": "ES"
+ },
+ {
+  "zh": "里瓦德塞利亚",
+  "en": "Ribadesella",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿维莱斯",
+  "en": "Aviles",
+  "cc": "ES"
+ },
+ {
+  "zh": "托罗",
+  "en": "Toro",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝纳文特",
+  "en": "Benavente",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿吉拉尔-德坎波奥",
+  "en": "Aguilar de Campoo",
+  "cc": "ES"
+ },
+ {
+  "zh": "弗里亚斯",
+  "en": "Frias",
+  "cc": "ES"
+ },
+ {
+  "zh": "米兰达-德埃布罗",
+  "en": "Miranda de Ebro",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣多明各-德拉卡尔萨达",
+  "en": "Santo Domingo de la Calzada",
+  "cc": "ES"
+ },
+ {
+  "zh": "纳赫拉",
+  "en": "Najera",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣米良德拉科戈利亚",
+  "en": "San Millan de la Cogolla",
+  "cc": "ES"
+ },
+ {
+  "zh": "梅迪纳塞利",
+  "en": "Medinaceli",
+  "cc": "ES"
+ },
+ {
+  "zh": "西贡萨",
+  "en": "Sigüenza",
+  "cc": "ES"
+ },
+ {
+  "zh": "瓜达拉哈拉",
+  "en": "Guadalajara",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔卡拉-德埃纳雷斯",
+  "en": "Alcala de Henares",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃纳雷斯堡",
+  "en": "Alcala de Henares",
+  "cc": "ES"
+ },
+ {
+  "zh": "钦琼",
+  "en": "Chinchon",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿兰胡埃斯",
+  "en": "Aranjuez",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃斯科里亚尔",
+  "en": "El Escorial",
+  "cc": "ES"
+ },
+ {
+  "zh": "孔苏埃格拉",
+  "en": "Consuegra",
+  "cc": "ES"
+ },
+ {
+  "zh": "坎波德克里普塔纳",
+  "en": "Campo de Criptana",
+  "cc": "ES"
+ },
+ {
+  "zh": "雷阿尔城",
+  "en": "Ciudad Real",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔马格罗",
+  "en": "Almagro",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴尔德佩尼亚斯",
+  "en": "Valdepenas",
+  "cc": "ES"
+ },
+ {
+  "zh": "曼萨纳雷斯",
+  "en": "Manzanares",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔瓦塞特",
+  "en": "Albacete",
+  "cc": "ES"
+ },
+ {
+  "zh": "雷克纳",
+  "en": "Requena",
+  "cc": "ES"
+ },
+ {
+  "zh": "乌蒂尔",
+  "en": "Utiel",
+  "cc": "ES"
+ },
+ {
+  "zh": "哈蒂瓦",
+  "en": "Xativa",
+  "cc": "ES"
+ },
+ {
+  "zh": "甘迪亚",
+  "en": "Gandia",
+  "cc": "ES"
+ },
+ {
+  "zh": "德尼亚",
+  "en": "Denia",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡尔佩",
+  "en": "Calpe",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔特亚",
+  "en": "Altea",
+  "cc": "ES"
+ },
+ {
+  "zh": "比利亚霍约萨",
+  "en": "Villajoyosa",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥里韦拉",
+  "en": "Orihuela",
+  "cc": "ES"
+ },
+ {
+  "zh": "洛尔卡",
+  "en": "Lorca",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡拉瓦卡德拉克鲁斯",
+  "en": "Caravaca de la Cruz",
+  "cc": "ES"
+ },
+ {
+  "zh": "塞胡恩",
+  "en": "Cehegin",
+  "cc": "ES"
+ },
+ {
+  "zh": "莫林",
+  "en": "Moratalla",
+  "cc": "ES"
+ },
+ {
+  "zh": "尼哈尔",
+  "en": "Nijar",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡沃德加塔",
+  "en": "Cabo de Gata",
+  "cc": "ES"
+ },
+ {
+  "zh": "莫哈卡尔",
+  "en": "Mojacar",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝莱斯-鲁维奥",
+  "en": "Velez-Rubio",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔穆涅卡尔",
+  "en": "Almunecar",
+  "cc": "ES"
+ },
+ {
+  "zh": "萨各夫雷纳",
+  "en": "Salobrena",
+  "cc": "ES"
+ },
+ {
+  "zh": "莫特里尔",
+  "en": "Motril",
+  "cc": "ES"
+ },
+ {
+  "zh": "瓜迪克斯",
+  "en": "Guadix",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴萨",
+  "en": "Baza",
+  "cc": "ES"
+ },
+ {
+  "zh": "利纳雷斯",
+  "en": "Linares",
+  "cc": "ES"
+ },
+ {
+  "zh": "安杜哈尔",
+  "en": "Andujar",
+  "cc": "ES"
+ },
+ {
+  "zh": "普列戈-德科尔多瓦",
+  "en": "Priego de Cordoba",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡夫拉",
+  "en": "Cabra",
+  "cc": "ES"
+ },
+ {
+  "zh": "卢塞纳",
+  "en": "Lucena",
+  "cc": "ES"
+ },
+ {
+  "zh": "蒙蒂利亚",
+  "en": "Montilla",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡莫纳",
+  "en": "Carmona",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥苏纳",
+  "en": "Osuna",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃西哈",
+  "en": "Ecija",
+  "cc": "ES"
+ },
+ {
+  "zh": "桑卢卡尔-德巴拉梅达",
+  "en": "Sanlucar de Barrameda",
+  "cc": "ES"
+ },
+ {
+  "zh": "赫雷斯-德拉弗龙特拉",
+  "en": "Jerez de la Frontera",
+  "cc": "ES"
+ },
+ {
+  "zh": "塔里法",
+  "en": "Tarifa",
+  "cc": "ES"
+ },
+ {
+  "zh": "科尼尔德拉弗龙特拉",
+  "en": "Conil de la Frontera",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝赫尔-德拉弗龙特拉",
+  "en": "Vejer de la Frontera",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔科斯-德拉弗龙特拉",
+  "en": "Arcos de la Frontera",
+  "cc": "ES"
+ },
+ {
+  "zh": "格拉萨莱马",
+  "en": "Grazalema",
+  "cc": "ES"
+ },
+ {
+  "zh": "塞特尼尔",
+  "en": "Setenil de las Bodegas",
+  "cc": "ES"
+ },
+ {
+  "zh": "帕洛斯-德拉弗龙特拉",
+  "en": "Palos de la Frontera",
+  "cc": "ES"
+ },
+ {
+  "zh": "莫格尔",
+  "en": "Moguer",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉比达",
+  "en": "La Rabida",
+  "cc": "ES"
+ },
+ {
+  "zh": "多尼亚纳",
+  "en": "Donana",
+  "cc": "ES"
+ },
+ {
+  "zh": "特鲁希略",
+  "en": "Trujillo",
+  "cc": "ES"
+ },
+ {
+  "zh": "瓜达卢佩",
+  "en": "Guadalupe",
+  "cc": "ES"
+ },
+ {
+  "zh": "普拉森西亚",
+  "en": "Plasencia",
+  "cc": "ES"
+ },
+ {
+  "zh": "罗德里戈城",
+  "en": "Ciudad Rodrigo",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝哈尔",
+  "en": "Béjar",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿斯托加",
+  "en": "Astorga",
+  "cc": "ES"
+ },
+ {
+  "zh": "蓬费拉达",
+  "en": "Ponferrada",
+  "cc": "ES"
+ },
+ {
+  "zh": "比耶尔索自由镇",
+  "en": "Villafranca del Bierzo",
+  "cc": "ES"
+ },
+ {
+  "zh": "蒙福尔特-德莱莫斯",
+  "en": "Monforte de Lemos",
+  "cc": "ES"
+ },
+ {
+  "zh": "里瓦德奥",
+  "en": "Ribadeo",
+  "cc": "ES"
+ },
+ {
+  "zh": "帕德龙",
+  "en": "Padron",
+  "cc": "ES"
+ },
+ {
+  "zh": "诺亚",
+  "en": "Noia",
+  "cc": "ES"
+ },
+ {
+  "zh": "穆罗斯",
+  "en": "Muros",
+  "cc": "ES"
+ },
+ {
+  "zh": "菲尼斯特雷",
+  "en": "Finisterre",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝坦索斯",
+  "en": "Betanzos",
+  "cc": "ES"
+ },
+ {
+  "zh": "图伊",
+  "en": "Tui",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴约纳",
+  "en": "Baiona",
+  "cc": "ES"
+ },
+ {
+  "zh": "坎巴多斯",
+  "en": "Cambados",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥格罗韦",
+  "en": "O Grove",
+  "cc": "ES"
+ },
+ {
+  "zh": "桑亨霍",
+  "en": "Sanxenxo",
+  "cc": "ES"
+ },
+ {
+  "zh": "里瓦达维亚",
+  "en": "Ribadavia",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿利阿里斯",
+  "en": "Allariz",
+  "cc": "ES"
+ },
+ {
+  "zh": "塞洛瓦",
+  "en": "Celanova",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿斯图里亚斯",
+  "en": "Asturias",
+  "cc": "ES"
+ },
+ {
+  "zh": "塔拉蒙迪",
+  "en": "Taramundi",
+  "cc": "ES"
+ },
+ {
+  "zh": "坎塔布里亚",
+  "en": "Cantabria",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔塔米拉",
+  "en": "Altamira",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣托尼亚",
+  "en": "Santoña",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉雷多",
+  "en": "Laredo",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡斯特罗-乌尔迪亚莱斯",
+  "en": "Castro Urdiales",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴斯克地区",
+  "en": "Basque Country",
+  "cc": "ES"
+ },
+ {
+  "zh": "格尔尼卡",
+  "en": "Guernica",
+  "cc": "ES"
+ },
+ {
+  "zh": "翁达里维亚",
+  "en": "Hondarribia",
+  "cc": "ES"
+ },
+ {
+  "zh": "富恩特拉比亚",
+  "en": "Fuenterrabia",
+  "cc": "ES"
+ },
+ {
+  "zh": "扎劳斯",
+  "en": "Zarautz",
+  "cc": "ES"
+ },
+ {
+  "zh": "格塔里亚",
+  "en": "Getaria",
+  "cc": "ES"
+ },
+ {
+  "zh": "苏马亚",
+  "en": "Zumaia",
+  "cc": "ES"
+ },
+ {
+  "zh": "德巴",
+  "en": "Deba",
+  "cc": "ES"
+ },
+ {
+  "zh": "穆特里库",
+  "en": "Mutriku",
+  "cc": "ES"
+ },
+ {
+  "zh": "奥尼阿蒂",
+  "en": "Onati",
+  "cc": "ES"
+ },
+ {
+  "zh": "托洛萨",
+  "en": "Tolosa",
+  "cc": "ES"
+ },
+ {
+  "zh": "贝亚赛恩",
+  "en": "Beasain",
+  "cc": "ES"
+ },
+ {
+  "zh": "纳瓦拉",
+  "en": "Navarre",
+  "cc": "ES"
+ },
+ {
+  "zh": "哈维尔",
+  "en": "Javier",
+  "cc": "ES"
+ },
+ {
+  "zh": "莱雷",
+  "en": "Leyre",
+  "cc": "ES"
+ },
+ {
+  "zh": "龙塞斯瓦耶斯",
+  "en": "Roncesvalles",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉里奥哈",
+  "en": "La Rioja",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃尔斯",
+  "en": "Elciego",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣维森特-德拉松谢拉",
+  "en": "San Vicente de la Sonsierra",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿拉贡",
+  "en": "Aragon",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿尔瓦拉辛",
+  "en": "Albarracin",
+  "cc": "ES"
+ },
+ {
+  "zh": "莫雷利亚",
+  "en": "Morella",
+  "cc": "ES"
+ },
+ {
+  "zh": "塔拉索纳",
+  "en": "Tarazona",
+  "cc": "ES"
+ },
+ {
+  "zh": "索斯-德尔雷卡托利科",
+  "en": "Sos del Rey Catolico",
+  "cc": "ES"
+ },
+ {
+  "zh": "加泰罗尼亚",
+  "en": "Catalonia",
+  "cc": "ES"
+ },
+ {
+  "zh": "波夫莱特",
+  "en": "Poblet",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣克雷乌斯",
+  "en": "Santes Creus",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴伦西亚自治区",
+  "en": "Valencian Community",
+  "cc": "ES"
+ },
+ {
+  "zh": "穆尔西亚地区",
+  "en": "Region of Murcia",
+  "cc": "ES"
+ },
+ {
+  "zh": "安达卢西亚",
+  "en": "Andalusia",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡索尔拉",
+  "en": "Cazorla",
+  "cc": "ES"
+ },
+ {
+  "zh": "塞古拉和比利亚斯",
+  "en": "Segura y Villas",
+  "cc": "ES"
+ },
+ {
+  "zh": "埃斯特雷马杜拉",
+  "en": "Extremadura",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡斯蒂利亚-莱昂",
+  "en": "Castile and Leon",
+  "cc": "ES"
+ },
+ {
+  "zh": "卡斯蒂利亚-拉曼恰",
+  "en": "Castile-La Mancha",
+  "cc": "ES"
+ },
+ {
+  "zh": "马德里自治区",
+  "en": "Community of Madrid",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴利阿里群岛",
+  "en": "Balearic Islands",
+  "cc": "ES"
+ },
+ {
+  "zh": "福门特拉岛",
+  "en": "Formentera",
+  "cc": "ES"
+ },
+ {
+  "zh": "梅诺卡岛",
+  "en": "Menorca",
+  "cc": "ES"
+ },
+ {
+  "zh": "加那利群岛",
+  "en": "Canary Islands",
+  "cc": "ES"
+ },
+ {
+  "zh": "泰德峰",
+  "en": "Teide",
+  "cc": "ES"
+ },
+ {
+  "zh": "马斯帕洛马斯",
+  "en": "Maspalomas",
+  "cc": "ES"
+ },
+ {
+  "zh": "科斯塔阿德赫",
+  "en": "Costa Adeje",
+  "cc": "ES"
+ },
+ {
+  "zh": "洛斯克里斯蒂亚诺斯",
+  "en": "Los Cristianos",
+  "cc": "ES"
+ },
+ {
+  "zh": "美洲海滩",
+  "en": "Playa de las Americas",
+  "cc": "ES"
+ },
+ {
+  "zh": "拉克鲁斯港",
+  "en": "Puerto de la Cruz",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣克鲁斯-德特内里费",
+  "en": "Santa Cruz de Tenerife",
+  "cc": "ES"
+ },
+ {
+  "zh": "特尔德",
+  "en": "Telde",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿鲁卡斯",
+  "en": "Arucas",
+  "cc": "ES"
+ },
+ {
+  "zh": "莫甘",
+  "en": "Mogan",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣巴托洛梅-德蒂拉哈纳",
+  "en": "San Bartolome de Tirajana",
+  "cc": "ES"
+ },
+ {
+  "zh": "英格莱斯海滩",
+  "en": "Playa del Ingles",
+  "cc": "ES"
+ },
+ {
+  "zh": "阿雷西费",
+  "en": "Arrecife",
+  "cc": "ES"
+ },
+ {
+  "zh": "蒂亚斯",
+  "en": "Tias",
+  "cc": "ES"
+ },
+ {
+  "zh": "特吉塞",
+  "en": "Teguise",
+  "cc": "ES"
+ },
+ {
+  "zh": "哈梅奥斯",
+  "en": "Jameos del Agua",
+  "cc": "ES"
+ },
+ {
+  "zh": "蒂曼法亚",
+  "en": "Timanfaya",
+  "cc": "ES"
+ },
+ {
+  "zh": "罗克塔斯",
+  "en": "Roque de los Muchachos",
+  "cc": "ES"
+ },
+ {
+  "zh": "圣塞瓦斯蒂安-德拉戈梅拉",
+  "en": "San Sebastian de la Gomera",
+  "cc": "ES"
+ },
+ {
+  "zh": "巴尔韦德",
+  "en": "Valverde",
+  "cc": "ES"
+ },
+ {
+  "zh": "富埃特文图拉",
+  "en": "Puerto del Rosario",
+  "cc": "ES"
+ },
+ {
+  "zh": "科拉莱霍",
+  "en": "Corralejo",
+  "cc": "ES"
+ },
+ {
+  "zh": "莫罗哈夫莱",
+  "en": "Morro Jable",
+  "cc": "ES"
+ },
+ {
+  "zh": "帕哈拉",
+  "en": "Pajara",
+  "cc": "ES"
+ },
+ {
+  "zh": "都柏林",
+  "en": "Dublin",
+  "cc": "IE"
+ },
+ {
+  "zh": "科克",
+  "en": "Cork",
+  "cc": "IE"
+ },
+ {
+  "zh": "利默里克",
+  "en": "Limerick",
+  "cc": "IE"
+ },
+ {
+  "zh": "戈尔韦",
+  "en": "Galway",
+  "cc": "IE"
+ },
+ {
+  "zh": "沃特福德",
+  "en": "Waterford",
+  "cc": "IE"
+ },
+ {
+  "zh": "德罗赫达",
+  "en": "Drogheda",
+  "cc": "IE"
+ },
+ {
+  "zh": "邓多克",
+  "en": "Dundalk",
+  "cc": "IE"
+ },
+ {
+  "zh": "斯莱戈",
+  "en": "Sligo",
+  "cc": "IE"
+ },
+ {
+  "zh": "布雷",
+  "en": "Bray",
+  "cc": "IE"
+ },
+ {
+  "zh": "纳斯",
+  "en": "Naas",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿斯隆",
+  "en": "Athlone",
+  "cc": "IE"
+ },
+ {
+  "zh": "波特劳伊斯",
+  "en": "Portlaoise",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡洛",
+  "en": "Carlow",
+  "cc": "IE"
+ },
+ {
+  "zh": "基尔肯尼",
+  "en": "Kilkenny",
+  "cc": "IE"
+ },
+ {
+  "zh": "韦克斯福德",
+  "en": "Wexford",
+  "cc": "IE"
+ },
+ {
+  "zh": "特拉利",
+  "en": "Tralee",
+  "cc": "IE"
+ },
+ {
+  "zh": "恩尼斯",
+  "en": "Ennis",
+  "cc": "IE"
+ },
+ {
+  "zh": "香农",
+  "en": "Shannon",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡斯尔巴",
+  "en": "Castlebar",
+  "cc": "IE"
+ },
+ {
+  "zh": "莱特肯尼",
+  "en": "Letterkenny",
+  "cc": "IE"
+ },
+ {
+  "zh": "莫纳汉",
+  "en": "Monaghan",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡文",
+  "en": "Cavan",
+  "cc": "IE"
+ },
+ {
+  "zh": "朗福德",
+  "en": "Longford",
+  "cc": "IE"
+ },
+ {
+  "zh": "韦斯特波特",
+  "en": "Westport",
+  "cc": "IE"
+ },
+ {
+  "zh": "基拉尼",
+  "en": "Killarney",
+  "cc": "IE"
+ },
+ {
+  "zh": "科布",
+  "en": "Cobh",
+  "cc": "IE"
+ },
+ {
+  "zh": "米德尔顿",
+  "en": "Midleton",
+  "cc": "IE"
+ },
+ {
+  "zh": "马洛",
+  "en": "Mallow",
+  "cc": "IE"
+ },
+ {
+  "zh": "费莫伊",
+  "en": "Fermoy",
+  "cc": "IE"
+ },
+ {
+  "zh": "约尔",
+  "en": "Youghal",
+  "cc": "IE"
+ },
+ {
+  "zh": "班顿",
+  "en": "Bandon",
+  "cc": "IE"
+ },
+ {
+  "zh": "克洛纳基尔蒂",
+  "en": "Clonakilty",
+  "cc": "IE"
+ },
+ {
+  "zh": "斯基伯林",
+  "en": "Skibbereen",
+  "cc": "IE"
+ },
+ {
+  "zh": "基尔代尔",
+  "en": "Kildare",
+  "cc": "IE"
+ },
+ {
+  "zh": "梅努斯",
+  "en": "Maynooth",
+  "cc": "IE"
+ },
+ {
+  "zh": "塞尔斯",
+  "en": "Celbridge",
+  "cc": "IE"
+ },
+ {
+  "zh": "莱克斯利普",
+  "en": "Leixlip",
+  "cc": "IE"
+ },
+ {
+  "zh": "格雷斯通斯",
+  "en": "Greystones",
+  "cc": "IE"
+ },
+ {
+  "zh": "威克洛",
+  "en": "Wicklow",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿克洛",
+  "en": "Arklow",
+  "cc": "IE"
+ },
+ {
+  "zh": "戈尔米恩",
+  "en": "Gorey",
+  "cc": "IE"
+ },
+ {
+  "zh": "恩尼斯科西",
+  "en": "Enniscorthy",
+  "cc": "IE"
+ },
+ {
+  "zh": "新罗斯",
+  "en": "New Ross",
+  "cc": "IE"
+ },
+ {
+  "zh": "沃特福德郡特拉莫尔",
+  "en": "Tramore",
+  "cc": "IE"
+ },
+ {
+  "zh": "邓加文",
+  "en": "Dungarvan",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡里克苏尔",
+  "en": "Carrick-on-Suir",
+  "cc": "IE"
+ },
+ {
+  "zh": "克朗梅尔",
+  "en": "Clonmel",
+  "cc": "IE"
+ },
+ {
+  "zh": "蒂珀雷里",
+  "en": "Tipperary",
+  "cc": "IE"
+ },
+ {
+  "zh": "尼纳",
+  "en": "Nenagh",
+  "cc": "IE"
+ },
+ {
+  "zh": "瑟勒斯",
+  "en": "Thurles",
+  "cc": "IE"
+ },
+ {
+  "zh": "罗斯克雷",
+  "en": "Roscrea",
+  "cc": "IE"
+ },
+ {
+  "zh": "比尔",
+  "en": "Birr",
+  "cc": "IE"
+ },
+ {
+  "zh": "塔拉莫尔",
+  "en": "Tullamore",
+  "cc": "IE"
+ },
+ {
+  "zh": "埃奇沃思镇",
+  "en": "Edgeworthstown",
+  "cc": "IE"
+ },
+ {
+  "zh": "穆林加尔",
+  "en": "Mullingar",
+  "cc": "IE"
+ },
+ {
+  "zh": "基尔贝根",
+  "en": "Kilbeggan",
+  "cc": "IE"
+ },
+ {
+  "zh": "罗斯康芒",
+  "en": "Roscommon",
+  "cc": "IE"
+ },
+ {
+  "zh": "博伊尔",
+  "en": "Boyle",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡斯尔雷",
+  "en": "Castlerea",
+  "cc": "IE"
+ },
+ {
+  "zh": "巴利纳",
+  "en": "Ballina",
+  "cc": "IE"
+ },
+ {
+  "zh": "巴利莫特",
+  "en": "Ballymote",
+  "cc": "IE"
+ },
+ {
+  "zh": "图厄姆",
+  "en": "Tuam",
+  "cc": "IE"
+ },
+ {
+  "zh": "洛赫雷",
+  "en": "Loughrea",
+  "cc": "IE"
+ },
+ {
+  "zh": "奥兰莫尔",
+  "en": "Oranmore",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿森赖",
+  "en": "Athenry",
+  "cc": "IE"
+ },
+ {
+  "zh": "巴利纳斯洛",
+  "en": "Ballinasloe",
+  "cc": "IE"
+ },
+ {
+  "zh": "波特姆纳",
+  "en": "Portumna",
+  "cc": "IE"
+ },
+ {
+  "zh": "基尔拉什",
+  "en": "Kilrush",
+  "cc": "IE"
+ },
+ {
+  "zh": "基尔基",
+  "en": "Kilkee",
+  "cc": "IE"
+ },
+ {
+  "zh": "利斯敦瓦纳",
+  "en": "Listowel",
+  "cc": "IE"
+ },
+ {
+  "zh": "凯尔西温",
+  "en": "Cahersiveen",
+  "cc": "IE"
+ },
+ {
+  "zh": "肯梅尔",
+  "en": "Kenmare",
+  "cc": "IE"
+ },
+ {
+  "zh": "班特里",
+  "en": "Bantry",
+  "cc": "IE"
+ },
+ {
+  "zh": "麦克鲁姆",
+  "en": "Macroom",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡里克马科罗斯",
+  "en": "Carrickmacross",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡斯尔布莱尼",
+  "en": "Castleblayney",
+  "cc": "IE"
+ },
+ {
+  "zh": "克朗斯",
+  "en": "Clones",
+  "cc": "IE"
+ },
+ {
+  "zh": "巴利香农",
+  "en": "Ballyshannon",
+  "cc": "IE"
+ },
+ {
+  "zh": "班多伦",
+  "en": "Bundoran",
+  "cc": "IE"
+ },
+ {
+  "zh": "多尼戈尔",
+  "en": "Donegal",
+  "cc": "IE"
+ },
+ {
+  "zh": "基利贝格斯",
+  "en": "Killybegs",
+  "cc": "IE"
+ },
+ {
+  "zh": "格伦蒂斯",
+  "en": "Glenties",
+  "cc": "IE"
+ },
+ {
+  "zh": "斯特兰纳",
+  "en": "Stranorlar",
+  "cc": "IE"
+ },
+ {
+  "zh": "利福德",
+  "en": "Lifford",
+  "cc": "IE"
+ },
+ {
+  "zh": "拉梅尔顿",
+  "en": "Ramelton",
+  "cc": "IE"
+ },
+ {
+  "zh": "米尔福德",
+  "en": "Milford",
+  "cc": "IE"
+ },
+ {
+  "zh": "班克拉纳",
+  "en": "Buncrana",
+  "cc": "IE"
+ },
+ {
+  "zh": "莫维尔",
+  "en": "Moville",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡恩多纳",
+  "en": "Carndonagh",
+  "cc": "IE"
+ },
+ {
+  "zh": "巴利博菲",
+  "en": "Ballybofey",
+  "cc": "IE"
+ },
+ {
+  "zh": "斯特拉班",
+  "en": "Strabane",
+  "cc": "IE"
+ },
+ {
+  "zh": "高威",
+  "en": "Galway",
+  "cc": "IE"
+ },
+ {
+  "zh": "贝尔法斯特",
+  "en": "Belfast",
+  "cc": "IE"
+ },
+ {
+  "zh": "德里",
+  "en": "Derry",
+  "cc": "IE"
+ },
+ {
+  "zh": "马拉海德",
+  "en": "Malahide",
+  "cc": "IE"
+ },
+ {
+  "zh": "霍斯",
+  "en": "Howth",
+  "cc": "IE"
+ },
+ {
+  "zh": "丹莱里",
+  "en": "Dun Laoghaire",
+  "cc": "IE"
+ },
+ {
+  "zh": "丁格尔",
+  "en": "Dingle",
+  "cc": "IE"
+ },
+ {
+  "zh": "克利夫登",
+  "en": "Clifden",
+  "cc": "IE"
+ },
+ {
+  "zh": "康尼马拉",
+  "en": "Connemara",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿兰群岛",
+  "en": "Aran Islands",
+  "cc": "IE"
+ },
+ {
+  "zh": "莫赫悬崖",
+  "en": "Cliffs of Moher",
+  "cc": "IE"
+ },
+ {
+  "zh": "巨人堤道",
+  "en": "Giant's Causeway",
+  "cc": "IE"
+ },
+ {
+  "zh": "布拉尼城堡",
+  "en": "Blarney Castle",
+  "cc": "IE"
+ },
+ {
+  "zh": "凯袖宫",
+  "en": "Rock of Cashel",
+  "cc": "IE"
+ },
+ {
+  "zh": "圣三一学院",
+  "en": "Trinity College Dublin",
+  "cc": "IE"
+ },
+ {
+  "zh": "都柏林城堡",
+  "en": "Dublin Castle",
+  "cc": "IE"
+ },
+ {
+  "zh": "圣帕特里克大教堂",
+  "en": "St Patrick's Cathedral",
+  "cc": "IE"
+ },
+ {
+  "zh": "基督教堂座",
+  "en": "Christ Church Cathedral",
+  "cc": "IE"
+ },
+ {
+  "zh": "凤凰公园",
+  "en": "Phoenix Park",
+  "cc": "IE"
+ },
+ {
+  "zh": "健力士啤酒厂",
+  "en": "Guinness Storehouse",
+  "cc": "IE"
+ },
+ {
+  "zh": "爱尔兰国家博物馆",
+  "en": "National Museum of Ireland",
+  "cc": "IE"
+ },
+ {
+  "zh": "爱尔兰国家美术馆",
+  "en": "National Gallery of Ireland",
+  "cc": "IE"
+ },
+ {
+  "zh": "格拉夫顿街",
+  "en": "Grafton Street",
+  "cc": "IE"
+ },
+ {
+  "zh": "坦普尔酒吧区",
+  "en": "Temple Bar",
+  "cc": "IE"
+ },
+ {
+  "zh": "圣斯蒂芬绿地",
+  "en": "St Stephen's Green",
+  "cc": "IE"
+ },
+ {
+  "zh": "梅瑞恩广场",
+  "en": "Merrion Square",
+  "cc": "IE"
+ },
+ {
+  "zh": "凯勒梅恩监狱",
+  "en": "Kilmainham Gaol",
+  "cc": "IE"
+ },
+ {
+  "zh": "爱尔兰现代艺术博物馆",
+  "en": "Irish Museum of Modern Art",
+  "cc": "IE"
+ },
+ {
+  "zh": "都柏林动物园",
+  "en": "Dublin Zoo",
+  "cc": "IE"
+ },
+ {
+  "zh": "博因宫",
+  "en": "Brú na Bóinne",
+  "cc": "IE"
+ },
+ {
+  "zh": "纽格莱奇墓",
+  "en": "Newgrange",
+  "cc": "IE"
+ },
+ {
+  "zh": "塔拉山",
+  "en": "Hill of Tara",
+  "cc": "IE"
+ },
+ {
+  "zh": "格伦达洛",
+  "en": "Glendalough",
+  "cc": "IE"
+ },
+ {
+  "zh": "威克洛山国家公园",
+  "en": "Wicklow Mountains National Park",
+  "cc": "IE"
+ },
+ {
+  "zh": "鲍尔斯考特庄园",
+  "en": "Powerscourt Estate",
+  "cc": "IE"
+ },
+ {
+  "zh": "基尔肯尼城堡",
+  "en": "Kilkenny Castle",
+  "cc": "IE"
+ },
+ {
+  "zh": "杰罗姆修道院",
+  "en": "Jerpoint Abbey",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡舍尔岩",
+  "en": "Rock of Cashel",
+  "cc": "IE"
+ },
+ {
+  "zh": "科克监狱",
+  "en": "Cork City Gaol",
+  "cc": "IE"
+ },
+ {
+  "zh": "英国市场",
+  "en": "English Market",
+  "cc": "IE"
+ },
+ {
+  "zh": "圣芬巴尔大教堂",
+  "en": "Saint Fin Barre's Cathedral",
+  "cc": "IE"
+ },
+ {
+  "zh": "布拉尼石",
+  "en": "Blarney Stone",
+  "cc": "IE"
+ },
+ {
+  "zh": "金塞尔",
+  "en": "Kinsale",
+  "cc": "IE"
+ },
+ {
+  "zh": "查尔斯堡",
+  "en": "Charles Fort",
+  "cc": "IE"
+ },
+ {
+  "zh": "老米德尔顿威士忌酒厂",
+  "en": "Old Midleton Distillery",
+  "cc": "IE"
+ },
+ {
+  "zh": "科夫",
+  "en": "Cobh",
+  "cc": "IE"
+ },
+ {
+  "zh": "泰坦尼克号体验馆",
+  "en": "Titanic Belfast",
+  "cc": "IE"
+ },
+ {
+  "zh": "贝尔法斯特市政厅",
+  "en": "Belfast City Hall",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿尔斯特博物馆",
+  "en": "Ulster Museum",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡里克弗格斯城堡",
+  "en": "Carrickfergus Castle",
+  "cc": "IE"
+ },
+ {
+  "zh": "黑暗树篱",
+  "en": "Dark Hedges",
+  "cc": "IE"
+ },
+ {
+  "zh": "邓路斯城堡",
+  "en": "Dunluce Castle",
+  "cc": "IE"
+ },
+ {
+  "zh": "布什米尔斯威士忌酒厂",
+  "en": "Bushmills Distillery",
+  "cc": "IE"
+ },
+ {
+  "zh": "卡里克索桥",
+  "en": "Carrick-a-Rede Rope Bridge",
+  "cc": "IE"
+ },
+ {
+  "zh": "莫恩山脉",
+  "en": "Mourne Mountains",
+  "cc": "IE"
+ },
+ {
+  "zh": "斯特兰福德湾",
+  "en": "Strangford Lough",
+  "cc": "IE"
+ },
+ {
+  "zh": "唐帕特里克",
+  "en": "Downpatrick",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿马",
+  "en": "Armagh",
+  "cc": "IE"
+ },
+ {
+  "zh": "恩尼斯基林",
+  "en": "Enniskillen",
+  "cc": "IE"
+ },
+ {
+  "zh": "弗马纳湖区",
+  "en": "Fermanagh Lakelands",
+  "cc": "IE"
+ },
+ {
+  "zh": "斯佩林山脉",
+  "en": "Sperrin Mountains",
+  "cc": "IE"
+ },
+ {
+  "zh": "伦敦德里城墙",
+  "en": "Derry City Walls",
+  "cc": "IE"
+ },
+ {
+  "zh": "圣哥伦布大教堂",
+  "en": "St Columb's Cathedral",
+  "cc": "IE"
+ },
+ {
+  "zh": "格伦维国家公园",
+  "en": "Glenveagh National Park",
+  "cc": "IE"
+ },
+ {
+  "zh": "斯利夫利格",
+  "en": "Slieve League",
+  "cc": "IE"
+ },
+ {
+  "zh": "马林角",
+  "en": "Malin Head",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿基尔岛",
+  "en": "Achill Island",
+  "cc": "IE"
+ },
+ {
+  "zh": "克罗帕特里克山",
+  "en": "Croagh Patrick",
+  "cc": "IE"
+ },
+ {
+  "zh": "凯尔莫尔修道院",
+  "en": "Kylemore Abbey",
+  "cc": "IE"
+ },
+ {
+  "zh": "康格",
+  "en": "Cong",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿什福德城堡",
+  "en": "Ashford Castle",
+  "cc": "IE"
+ },
+ {
+  "zh": "戈尔韦大教堂",
+  "en": "Galway Cathedral",
+  "cc": "IE"
+ },
+ {
+  "zh": "西班牙拱门",
+  "en": "Spanish Arch",
+  "cc": "IE"
+ },
+ {
+  "zh": "索尔特希尔",
+  "en": "Salthill",
+  "cc": "IE"
+ },
+ {
+  "zh": "伯伦国家公园",
+  "en": "Burren National Park",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿利维洞穴",
+  "en": "Aillwee Cave",
+  "cc": "IE"
+ },
+ {
+  "zh": "杜林",
+  "en": "Doolin",
+  "cc": "IE"
+ },
+ {
+  "zh": "利斯坎诺",
+  "en": "Lisdoonvarna",
+  "cc": "IE"
+ },
+ {
+  "zh": "阿代尔",
+  "en": "Adare",
+  "cc": "IE"
+ },
+ {
+  "zh": "本拉提城堡",
+  "en": "Bunratty Castle",
+  "cc": "IE"
+ },
+ {
+  "zh": "金瓦拉",
+  "en": "Kinvarra",
+  "cc": "IE"
+ },
+ {
+  "zh": "奥赫特拉德",
+  "en": "Oughterard",
+  "cc": "IE"
+ }
+]

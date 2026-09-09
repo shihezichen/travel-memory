@@ -1,0 +1,1877 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* 与 <meta name="color-scheme" content="light"> 配套：同时挡住浏览器的强制深色，
+     也让原生表单控件（输入框/复选框/滚动条）保持浅色，不会和地图撞色。 */
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --panel: #fff;
+  --border: #e5e7eb;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --primary: #2563eb;
+  --danger: #dc2626;
+}
+
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100%;
+}
+
+/* overflow-x: clip —— 切换行程时统计条会横向滑出去，顶栏这层要把溢出裁掉，
+   否则整页会多出一条横向滚动条。用 clip 而不是 hidden：clip 不会创建滚动容器，
+   纵向仍保持 visible。 */
+.app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow-x: clip; }
+
+/* 顶栏 */
+.topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+.brand {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 700; font-size: 16px; white-space: nowrap;
+}
+/* 顶栏这枚小图标和桌面/收藏夹里的应用图标是同一张 SVG —— 品牌得对得上 */
+.brand-logo { display: block; width: 22px; height: 22px; flex: none; }
+.trip-select { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: #fff; }
+/* 切换行程时的过渡，分「出场 → 入场」两段：
+   出场——当前行程的名字/序号/统计条/面板内容朝按键的**反**方向被推出去并淡出，
+         动画用 forwards 停在末态（透明），等新数据到位；
+   入场——从按键方向推回来。
+   「按了哪边 → 内容从哪边来」由此有了明确反馈，不再是内容凭空跳变。
+   位移量走 --trip-dx，各元素按自身尺寸单独给：顶栏行程名整块推出屏幕外
+   （靠 .trip-picker 的 overflow 裁剪），统计条/面板用固定像素，够看见又不晃眼。 */
+@keyframes trip-out-l { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(calc(-1 * var(--trip-dx))); } }
+@keyframes trip-in-l  { from { opacity: 0; transform: translateX(var(--trip-dx)); } to { opacity: 1; transform: none; } }
+@keyframes trip-out-r { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(var(--trip-dx)); } }
+@keyframes trip-in-r  { from { opacity: 0; transform: translateX(calc(-1 * var(--trip-dx))); } to { opacity: 1; transform: none; } }
+
+.trip-out-l, .trip-out-r, .trip-in-l, .trip-in-r { --trip-dx: 40px; }
+/* 出场用加速曲线（东西被甩出去），入场用减速曲线（稳稳落位） */
+.trip-out-l { animation: trip-out-l .18s cubic-bezier(.4, 0, 1, 1) forwards; }
+.trip-out-r { animation: trip-out-r .18s cubic-bezier(.4, 0, 1, 1) forwards; }
+.trip-in-l  { animation: trip-in-l  .34s cubic-bezier(.22, .61, .36, 1); }
+.trip-in-r  { animation: trip-in-r  .34s cubic-bezier(.22, .61, .36, 1); }
+/* 行程名和序号整块滑出/滑入——位移按自身宽度算，才真的像一张卡片被推走 */
+.trip-picker-name.trip-out-l, .trip-picker-name.trip-out-r,
+.trip-picker-name.trip-in-l,  .trip-picker-name.trip-in-r,
+.trip-picker-pos.trip-out-l,  .trip-picker-pos.trip-out-r,
+.trip-picker-pos.trip-in-l,   .trip-picker-pos.trip-in-r { --trip-dx: 120%; }
+/* 面板本身有 overflow-x: clip，外层 .layout 也 hidden，横向滑动不会撑出滚动条 */
+.panel.trip-out-l, .panel.trip-out-r,
+.panel.trip-in-l,  .panel.trip-in-r { --trip-dx: 56px; }
+
+/* 切换进行中给胶囊一层高亮，让「正在换」这件事在顶栏立刻可见 */
+.trip-picker.switching { border-color: var(--primary); background: #f0f6ff; }
+
+/* 按下箭头的即时反馈：数据还没回来时先让箭头朝自己的方向弹一下 */
+@keyframes trip-nudge-next { 45% { transform: translateX(4px); } }
+@keyframes trip-nudge-prev { 45% { transform: translateX(-4px); } }
+.trip-nav-arrow.nudge-next { animation: trip-nudge-next .3s ease; }
+.trip-nav-arrow.nudge-prev { animation: trip-nudge-prev .3s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .trip-out-l, .trip-out-r, .trip-in-l, .trip-in-r,
+  .trip-nav-arrow.nudge-next, .trip-nav-arrow.nudge-prev { animation: none; }
+  .trip-picker.switching { border-color: var(--border); background: #fff; }
+}
+
+/* 手机端的行程切换条（‹ 当前行程 ›）。宽屏不显示，仍用原来的下拉。 */
+.trip-nav { display: none; }
+.trip-nav-arrow {
+  flex: none; width: 30px; height: 34px; padding: 0;
+  border: 1px solid var(--border); border-radius: 8px; background: #fff;
+  color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.trip-nav-arrow:disabled { opacity: .35; }
+.trip-picker {
+  flex: 1; min-width: 0; height: 34px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: #fff; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  overflow: hidden;   /* 切换时行程名整块滑出，超出部分要裁掉 */
+  transition: background .18s ease, border-color .18s ease;
+}
+.trip-picker-name {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trip-picker-pos { flex: none; font-size: 11px; color: var(--muted); }
+
+/* 行程选择的底部卡片抽屉 */
+.trip-sheet-card {
+  display: block; width: 100%; text-align: left;
+  padding: 12px 14px; margin-bottom: 8px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: #fff; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.trip-sheet-card:active { transform: scale(.985); }
+.trip-sheet-card.current { border-color: var(--primary); background: #eff6ff; }
+.trip-sheet-head { display: flex; align-items: center; gap: 8px; }
+.trip-sheet-name {
+  flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trip-sheet-card.current .trip-sheet-name { color: var(--primary); }
+.trip-sheet-tag {
+  flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  background: #f1f5f9; color: var(--muted);
+}
+.trip-sheet-tag.done { background: #dcfce7; color: #15803d; }
+.trip-sheet-tag.traveling { background: #ffedd5; color: #c2410c; }
+.trip-sheet-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.trip-sheet-check { flex: none; color: var(--primary); font-size: 15px; }
+.more-btn { display: none; }  /* 桌面端不显示「更多」按钮，操作按钮直接平铺在顶栏 */
+.share-title { flex: 1; font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 主布局 */
+.layout { flex: 1; display: flex; overflow: hidden; position: relative; }
+.map { flex: 1; min-width: 0; position: relative; }
+.panel { width: 360px; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; position: relative; }
+
+/* 面板收起/展开（移动端地图最大化） */
+.panel-toggle {
+  margin-left: auto; background: none; border: none; cursor: pointer;
+  padding: 0 14px; font-size: 15px; color: var(--muted); flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.panel-toggle:hover { color: var(--primary); }
+/* 图标改成内联 SVG：原来的 ▾ 在多数界面里表示「展开下拉」，和这里「把面板收起」
+   的语义正好相反。手机端用「人字箭头压向底线」＝收进屏幕底部；宽屏端面板是右侧栏，
+   用「人字箭头压向右边线」＝收进右边缘。 */
+.panel-toggle svg { width: 18px; height: 18px; display: block; }
+/* 收起按钮有两处：手机端在面板顶部的拖拽手柄行里（见移动端媒体查询），
+   宽屏端手柄不显示，仍留在 tab 行。两者各自只在对应断点出现。 */
+.wide-only { display: inline-flex; }
+.map-fab {
+  position: absolute; right: 12px; bottom: 12px; z-index: 120;
+  padding: 9px 16px; border-radius: 20px; border: 1px solid var(--border);
+  background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+  font-size: 14px; cursor: pointer; color: var(--text);
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.map-fab:hover { color: var(--primary); border-color: var(--primary); }
+/* 图层控制按钮：地图左上角，仅图标 */
+.fab-layers { left: 12px; right: auto; top: 12px; bottom: auto; padding: 9px 12px; }
+/* 全屏按钮：地图最右上角。轨迹回放入口/控制条相应往左让出 46px（见 .replay-launch / .replay-bar） */
+.fab-fullscreen { right: 12px; top: 12px; left: auto; bottom: auto; padding: 9px 12px; font-size: 15px; }
+/* 全览按钮：放在全屏钮正下方。不并排是因为展开的回放控制条正好会占到旁边那个位置。 */
+.fab-fit { right: 12px; top: 59px; left: auto; bottom: auto; padding: 9px 12px; }
+.fab-fullscreen.active { color: var(--primary); border-color: var(--primary); }
+/* ---------- 我的位置 ---------- */
+/* 按钮排在「全览」正下方，跟其它地图按钮同一列 */
+.fab-locate { right: 12px; top: 106px; left: auto; bottom: auto; padding: 9px 12px; }
+/* 已经定到位：图标变主题蓝，一眼看出「蓝点在图上」 */
+/* 定位中：图标转起来，别让人以为按了没反应（定位可能要好几秒） */
+.fab-locate.locating { animation: locate-spin 1s linear infinite; opacity: .8; }
+@keyframes locate-spin { to { transform: rotate(360deg); } }
+.fab-locate:disabled { cursor: default; }
+
+/* 蓝点本体：白圈包蓝芯 + 外扩呼吸波，和各家地图一个套路 */
+.my-loc { position: relative; width: 22px; height: 22px; pointer-events: none; }
+.my-loc-dot {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #1a73e8; border: 2.5px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+}
+.my-loc-pulse {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(26, 115, 232, .28);
+  animation: my-loc-breathe 2s ease-out infinite;
+}
+@keyframes my-loc-breathe {
+  0%   { transform: translate(-50%, -50%) scale(.6); opacity: .9; }
+  100% { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .my-loc-pulse { animation: none; opacity: .35; }
+  .fab-locate.locating { animation: none; }
+}
+
+
+/* 地图全屏：用 fixed 铺满视口（不是元素级 Fullscreen API），这样灯箱/模态框/更多菜单
+   等仍在同一文档流里正常显示；z-index 150 = 高于顶栏(10)与面板，低于模态框(200)、
+   更多菜单(300)、灯箱(2000)、登录层(9999)。另外会顺带请求一次浏览器原生全屏来隐藏
+   地址栏，失败也不影响（iOS Safari 不支持，就只是没有隐藏浏览器工具栏）。 */
+.map.map-fullscreen {
+  position: fixed; inset: 0; z-index: 150;
+  width: 100%; height: 100% !important; flex: none;
+}
+body.map-fullscreen-on { overflow: hidden; }
+/* 全屏时「☰ 列表」没有意义（面板在地图底下），先藏起来，退出用 ✕ */
+.map.map-fullscreen #btn-panel-open { display: none !important; }
+/* 图层面板 */
+.layer-panel {
+  position: absolute; left: 12px; top: 54px; z-index: 121;
+  width: 172px; padding: 10px 12px; border-radius: 10px;
+  background: #fff; border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0,0,0,.18);
+  font-size: 13px; color: var(--text);
+}
+.layer-panel .layer-title { font-weight: 600; margin-bottom: 6px; }
+.layer-item { display: flex; align-items: center; gap: 6px; padding: 5px 0; cursor: pointer; }
+.layer-item input { accent-color: var(--primary); margin: 0; }
+.layer-sub { margin: 2px 0 4px 24px; display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
+.layer-sub label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+/* 景区 POI 标签 */
+.poi-label {
+  background: rgba(255,255,255,.93); border: 1px solid #e8c96a; color: #7a5c00;
+  font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0,0,0,.15); cursor: pointer; line-height: 1.6;
+  transform: translate(-50%, -100%);
+}
+.poi-label::after {
+  content: ''; position: absolute; left: 50%; bottom: -4px; margin-left: -4px;
+  border: 4px solid transparent; border-top-color: #fff; border-bottom: none;
+}
+.panel.collapsed { display: none; }
+.layout.panel-collapsed .map { flex: 1; height: auto; }
+
+/* 面板收起/展开的过渡。.panel-animating 只在动画期间挂着——平时不留 transition，
+   否则拖手柄调高度会变成「手指停了地图还在追」，跟手感全没了。
+   手机端动的是地图高度（面板被挤没＝抽屉关上），宽屏端动的是右侧栏的滑出。 */
+.layout.panel-animating .map {
+  transition: height .3s cubic-bezier(.22, .61, .36, 1);
+}
+.layout.panel-animating .panel,
+.layout.panel-animating .panel-resizer {
+  transition: margin-right .3s cubic-bezier(.22, .61, .36, 1),
+              transform .3s cubic-bezier(.22, .61, .36, 1),
+              opacity .24s ease;
+}
+/* 宽屏：向右滑出并把外框宽度收拢，内容不会被压扁成一条 */
+.panel.sliding-out {
+  margin-right: -360px;
+  transform: translateX(100%);
+  opacity: .35;
+}
+@media (max-width: 768px) {
+  /* 手机端面板在底部，靠地图高度做抽屉，这里不参与横向滑动 */
+  .panel.sliding-out { margin-right: 0; transform: none; opacity: 1; }
+}
+/* 右下角那个「展开」图标弹出来，和面板的收起衔接上，不是凭空出现 */
+#btn-panel-open:not(.hidden) { animation: panel-fab-pop .26s cubic-bezier(.22, .61, .36, 1); }
+@keyframes panel-fab-pop {
+  from { opacity: 0; transform: scale(.55); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .layout.panel-animating .map,
+  .layout.panel-animating .panel,
+  .layout.panel-animating .panel-resizer { transition: none; }
+  #btn-panel-open:not(.hidden) { animation: none; }
+}
+
+/* 面板拖拽手柄（仅移动端生效）：地图与面板之间的分隔条，可上下拖动调整面板高度 */
+.panel-resizer { display: none; }
+
+/* 标签页 */
+.tabs { display: flex; border-bottom: 1px solid var(--border); position: relative; }
+.tab {
+  flex: 1; padding: 12px; border: none; background: none; font-size: 14px;
+  cursor: pointer; color: var(--muted);
+  transition: color .22s ease, opacity .12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.tab.active { color: var(--primary); font-weight: 600; }
+.tab:active { opacity: .55; }
+
+/* 底部高亮条：由一个共享元素在 tab 之间滑动，代替过去每个 tab 各自的 border-bottom
+   （瞬时切换看着很硬）。位置/宽度由 JS 量出后写进 CSS 变量。 */
+.tab-indicator {
+  position: absolute; left: 0; bottom: -1px;   /* -1px 压住 .tabs 自己的下边框 */
+  height: 2px; border-radius: 2px;
+  background: var(--primary);
+  width: var(--tab-w, 0px);
+  transform: translateX(var(--tab-x, 0px));
+  opacity: 0;                                   /* 首次量到位置前不显示，避免从最左边飞出来 */
+  pointer-events: none;
+}
+.tabs.ready .tab-indicator {
+  opacity: 1;
+  transition: transform .28s cubic-bezier(.4, 0, .2, 1),
+              width .28s cubic-bezier(.4, 0, .2, 1);
+}
+
+/* 三个 tab 页排成一条横向轨道：第 i 页固定摆在 i*100% 的位置，切换/拖动时
+   整条轨道平移。这样切换过程中「上一页往左出、下一页从右进」是同一次位移，
+   而不是旧页消失、新页淡入。 */
+.view-track {
+  position: relative; flex: 1; min-height: 0; min-width: 0;
+  overflow: hidden;
+}
+.view {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  overflow-y: auto; padding: 12px;
+  /* pan-y：纵向滚动交给浏览器，双指全归我们自己处理。
+     必须声明在 .view 这一层而不是网格上——网格只到最后一行缩略图为止，
+     下面那片空白也要能捏合，浏览器在那儿不能抢走双指手势。 */
+  touch-action: pan-y;
+  transform: translateX(var(--vx, 0%));
+  will-change: transform;
+}
+/* 非当前页不接收点击/滚动，也不参与读屏 */
+.view[aria-hidden="true"] { pointer-events: none; }
+.view-track.animating .view { transition: transform .3s cubic-bezier(.22, .61, .36, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .view-track.animating .view { transition: none; }
+}
+.hidden { display: none !important; }
+
+.panel { overflow-x: clip; }
+
+/* 尊重系统「减弱动态效果」设置 */
+@media (prefers-reduced-motion: reduce) {
+  .tabs.ready .tab-indicator { transition: none; }
+  .tab { transition: none; }
+}
+
+/* 添加地点：面板内浮动加号按钮（右下角，不占一行） */
+#add-point-bar {
+  position: absolute;
+  right: 16px; bottom: 16px;
+  z-index: 60;
+}
+.btn-fab {
+  width: 50px; height: 50px;
+  border-radius: 50%;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .25);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.btn-fab:hover { background: #1d4ed8; }
+
+/* 按钮 */
+.btn { padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer; font-size: 14px; color: var(--text); }
+.btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-block { display: block; width: 100%; text-align: center; }
+
+/* 点列表 */
+.point-list { list-style: none; margin-top: 10px; }
+.point-list li {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 8px; cursor: pointer; transition: background .15s;
+}
+.point-list li:hover { background: #f3f4f6; }
+.point-list li.active { border-color: var(--primary); background: #eff6ff; }
+.move-arrows { flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; }
+.move-arrow {
+  width: 22px; height: 22px; border: 1px solid var(--border); border-radius: 5px;
+  background: #fff; color: var(--muted); font-size: 13px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; padding: 0; transition: background .15s, color .15s, border-color .15s;
+}
+.move-arrow:hover { border-color: var(--primary); background: #eff6ff; color: var(--primary); }
+.move-arrow:active { background: #dbeafe; }
+.point-list li.swap-flash { background: #fef3c7 !important; border-color: #f59e0b !important; }
+.point-index { width: 22px; height: 22px; border-radius: 50%; background: var(--primary); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.point-info { flex: 1; min-width: 0; }
+.point-name { font-size: 14px; font-weight: 600; }
+.point-date { font-size: 12px; color: var(--muted); }
+.point-media { font-size: 11px; color: var(--muted); margin-top: 2px; opacity: .85; }
+
+/* 详情 */
+.empty-hint { color: var(--muted); text-align: center; padding: 30px 0; }
+#detail-name { font-size: 17px; margin-bottom: 4px; }
+.detail-desc { font-size: 14px; color: var(--text); margin-bottom: 12px; white-space: pre-wrap; }
+/* ---------- 点详情：标题行 ---------- */
+/* 名字 / 日期 / 编辑 / 删除 并成一行。原来这三样各占一行（名字、日期+经纬度、
+   底部两个按钮），三行都是在跟照片抢地方。经纬度移到名字的 title 里。 */
+.detail-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 8px;
+}
+.detail-head h3 {
+  font-size: 15px; font-weight: 700; line-height: 1.35;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.detail-date {
+  flex: none; font-size: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;                 /* 把后面两个图标顶到最右 */
+}
+/* 编辑 / 删除：改成图标按钮。原来是两个实心按钮独占一行，视觉上比这里的其它内容都重，
+   而这两件事都是低频操作，不该抢主视线。 */
+.detail-act {
+  flex: none; align-self: center;
+  width: 30px; height: 30px; padding: 0;
+  border: none; background: none; cursor: pointer;
+  border-radius: 50%;
+  background-repeat: no-repeat; background-position: center;
+  background-size: 17px 17px;
+  -webkit-tap-highlight-color: transparent;
+  opacity: .62;
+  transition: opacity .15s ease, background-color .15s ease;
+}
+.detail-act:hover, .detail-act:active { opacity: 1; background-color: rgba(0, 0, 0, .06); }
+#btn-edit-point { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M17%203a2.83%202.83%200%201%201%204%204L7.5%2020.5%202%2022l1.5-5.5z%27%2F%3E%3C%2Fsvg%3E"); }
+#btn-del-point  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M3%206h18M8%206V4a1%201%200%200%201%201-1h6a1%201%200%200%201%201%201v2%27%2F%3E%3Cpath%20d%3D%27M19%206l-1%2014a2%202%200%200%201-2%202H8a2%202%200%200%201-2-2L5%206%27%2F%3E%3Cpath%20d%3D%27M10%2011v6M14%2011v6%27%2F%3E%3C%2Fsvg%3E"); }
+#btn-del-point:hover, #btn-del-point:active { background-color: rgba(220, 38, 38, .1); }
+@media (max-width: 768px) {
+  /* 手机上热区放大到 36，图标本身不变 */
+  .detail-act { width: 36px; height: 36px; }
+}
+
+/* ---------- 地图上的里程标签 ---------- */
+/* 每一段路线都常驻一个里程数字，骑在这段路线的中点上（沿路走一半，不是取中间顶点）。
+   零尺寸锚点 + translate(-50%,-50%)：标签宽度随文字变化（12 km / 980 m），
+   靠 marker 的 offset 去凑永远会偏，只有自己居中才稳。
+   选中某个点时来时路变绿、即将去变橙——颜色已经说清归属，所以不再写
+   「来时路 / 即将去」几个字，只留数字。 */
+.seg-label-anchor { position: relative; width: 0; height: 0; }
+.seg-label {
+  position: absolute; left: 0; top: 0;
+  transform: translate(-50%, -50%);
+  display: inline-block; white-space: nowrap;
+  padding: 1px 6px; border-radius: 9px;
+  font-size: 11px; line-height: 1.5; font-weight: 600;
+  color: #fff; letter-spacing: .2px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(37, 99, 235, .9);          /* 默认蓝，与未高亮的路线同色 */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+  pointer-events: none;
+  forced-color-adjust: none;                  /* 强制深色模式下不被改色 */
+  transition: background-color .18s ease, opacity .18s ease;
+}
+.seg-label.in  { background: rgba(22, 163, 74, .94); }   /* 绿：来时路，与线同色 */
+.seg-label.out { background: rgba(249, 115, 22, .95); }  /* 橙：即将去 */
+
+
+/* ---------- 轨迹点旁的海拔小标 ---------- */
+.marker-wrap { position: relative; width: 28px; height: 28px; }
+/* 圆点下方的小标：一行里放「地名 + 海拔」。
+   挂在**下方**而不是上方：照片图层开着时点的上方/右上方被照片堆占满，
+   放上面会被压住；下方基本是空的。
+   地名是必须的——圆点里只有序号，而它又正好盖住底图原有的地名，
+   不标出来就不知道这个点是哪儿。 */
+.marker-label {
+  position: absolute; left: 50%; top: 32px;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 地名和海拔各自一个小胶囊，而不是共用一个底。
+   这样任意一个被藏起来时（低缩放收地名、海拔还没查回来），剩下的那个照样好看，
+   也不会留下一个空的圆角块——用 :has() 判空在老内核（微信 webview）上不生效。 */
+.marker-name, .marker-elev {
+  padding: 1px 6px; border-radius: 9px;
+  background: rgba(28, 32, 38, .72); color: #fff;
+  font-size: 10px; line-height: 1.6; font-weight: 600;
+  forced-color-adjust: none;
+}
+.marker-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.marker-elev { font-variant-numeric: tabular-nums; }
+.marker-elev:empty { display: none; }                    /* 还没查到海拔就不占位 */
+/* 缩得太小时分级收起：先收地名（更占地方），再收整条标签 */
+.map.hide-pname .marker-name { display: none; }
+.map.hide-elev .marker-label { display: none; }
+/* ---------- 上传中的占位格 ---------- */
+/* 选完文件立刻出现，压着一圈环形进度；传完换成真正的格子。
+   视频和图片外观分开：视频底是深色胶片纹 + 「▶ 视频」角标，抽到第一帧就当封面。 */
+.media-uploading {
+  position: relative; overflow: hidden;
+  background: #0f172a;
+}
+.media-uploading.is-video {
+  /* 抽不到封面时露出来的胶片纹，一眼看出这格是个视频 */
+  background:
+    repeating-linear-gradient(90deg, #1e293b 0 6px, #0f172a 6px 12px) top / 100% 9px no-repeat,
+    repeating-linear-gradient(90deg, #1e293b 0 6px, #0f172a 6px 12px) bottom / 100% 9px no-repeat,
+    #111827;
+}
+.media-uploading .up-prev {
+  width: 100%; height: 100%; object-fit: cover;
+  filter: brightness(.5) saturate(.75);        /* 压暗，好让白色进度圈读得出来 */
+}
+.media-uploading .up-prev.hidden { display: none; }
+.up-kind {
+  position: absolute; left: 4px; top: 4px; z-index: 2;
+  padding: 1px 5px; border-radius: 6px;
+  background: rgba(0, 0, 0, .55); color: #fff;
+  font-size: 10px; line-height: 1.6; font-weight: 600;
+}
+.media-grid[data-cols="5"] .up-kind { display: none; }   /* 排得太密就别挤了 */
+.up-ring {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+}
+.up-ring svg { width: 42px; height: 42px; transform: rotate(-90deg); }
+.media-grid[data-cols="5"] .up-ring svg { width: 30px; height: 30px; }
+.up-bg { stroke: rgba(255, 255, 255, .25); }
+.up-fg { stroke: #fff; stroke-linecap: round; transition: stroke-dashoffset .18s linear; }
+.up-pct {
+  position: absolute; color: #fff; font-size: 10px; font-weight: 700;
+  font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+}
+/* 字节都发完了、服务端还在生成缩略图/读 EXIF 的那一段：进度未知，改成转圈 */
+.media-uploading.processing .up-ring svg { animation: up-spin 1s linear infinite; }
+.media-uploading.processing .up-fg {
+  stroke-dashoffset: 28;                       /* 留一个缺口，转起来才看得出在动 */
+  transition: none;
+}
+@keyframes up-spin { to { transform: rotate(310deg); } }
+/* 失败：留在原地，点 ↻ 重来，点 × 放弃 */
+.media-item.up-failed { background: #7f1d1d; }
+.media-item.up-failed .up-prev { filter: brightness(.35) saturate(.4); }
+.up-err {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: rgba(255, 255, 255, .92); color: #b91c1c;
+  font-size: 18px; font-weight: 700; cursor: pointer;
+  pointer-events: auto;
+}
+.up-cancel {
+  position: absolute; right: 2px; top: 2px; z-index: 4;
+  width: 18px; height: 18px; padding: 0; line-height: 16px;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, .6); color: #fff; font-size: 13px;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .media-uploading.processing .up-ring svg { animation: none; }
+}
+
+/* ---------- 点详情九宫格 ---------- */
+/* 「＋」格：替代原来独占一行的「上传照片/视频」按钮，参考发朋友圈的九宫格。 */
+.media-add {
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--border); background: var(--bg);
+  cursor: pointer; color: var(--muted);
+  transition: border-color .15s ease, color .15s ease;
+}
+.media-add:hover, .media-add:active { border-color: var(--primary); color: var(--primary); }
+.media-add-plus { font-size: 26px; line-height: 1; font-weight: 300; }
+.media-grid[data-cols="5"] .media-add-plus { font-size: 20px; }
+
+/* ✎ 改描述：占了原来拍摄日期的位置。日期在灯箱和相册里都能看到，
+   这里换成直接可用的编辑入口更值。写过描述的高亮一档，一眼看出哪些写过。 */
+/* 和相册里的 .photo-cap-badge 完全同一套外观：裸 ✎ + 深色投影，不套底片。
+   两处网格的这个按钮做的是同一件事，样式不该有两种。
+   区别只用透明度表达：已经写过描述的实心白，还没写的淡一档（提示「可以写」）。 */
+.media-cap {
+  position: absolute; left: 0; bottom: 0;
+  width: 22px; height: 22px; padding: 0;
+  border: none; background: none;
+  color: #fff; font-size: 11px; line-height: 22px; text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
+  opacity: .58;                       /* 还没写描述：淡一档 */
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.media-cap.has { opacity: 1; }        /* 写过描述：实心白，一眼分得出 */
+.media-cap:active { color: #cfe0ff; }
+
+/* 拖拽排序：被拖的那一格浮起来跟手，其余格子靠 flipGrid 平滑让位 */
+.media-item.dragging {
+  z-index: 5; opacity: .92;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .3);
+  transition: none;               /* 跟手，不能有过渡 */
+  /* 关键：被拖的格子跟着手指走，正好压在指针下面。不关掉命中测试的话，
+     elementFromPoint 每次都只能拿到它自己，永远找不到要换位的那一格。 */
+  pointer-events: none;
+}
+.media-grid.reordering { cursor: grabbing; }
+/* 拖拽期间别让鼠标顺带把页面上的文字选中（桌面端按下就拖，很容易框选） */
+.media-grid.reordering, .media-grid.reordering * { user-select: none; -webkit-user-select: none; }
+/* 桌面端给个「可以拖」的提示：指针悬在格子上是抓手 */
+@media (hover: hover) and (pointer: fine) {
+  .media-grid .media-item:not(.media-add) { cursor: grab; }
+  .media-grid .media-item .del,
+  .media-grid .media-item .media-cap { cursor: pointer; }
+}
+/* 拖拽期间禁掉整个网格的浏览器手势：横滑切 tab、纵向滚动都由 JS 的 preventDefault
+   接管；这条主要是给后续手势兜底（touch-action 中途改不影响当前这一次手势）。 */
+.media-grid.reordering { touch-action: none; }
+/* 拖完那一下的合成 click 要吃掉，否则松手会顺带打开灯箱 */
+.media-item.just-dragged { pointer-events: none; }
+/* 注意：**不能**给其它格子关掉 pointer-events。moveDrag 靠 elementFromPoint
+   找手指下面那一格，关掉之后就永远找不到目标，拖了等于没拖。 */
+/* 拖拽期间禁掉长按选中/系统菜单，否则手机上会弹「保存图片」 */
+.media-item { -webkit-touch-callout: none; user-select: none; }
+/* 列数由 --media-cols 决定，和相册一样支持双指捏合缩放重排（见 initMediaGridZoom）。
+   touch-action: pan-y —— 纵向滚动交给浏览器，双指留给我们自己处理，
+   否则浏览器会把双指当成整页缩放，我们的 preventDefault 就来不及了。 */
+.media-grid {
+  display: grid; grid-template-columns: repeat(var(--media-cols, 3), 1fr);
+  gap: 6px; margin-bottom: 12px;
+  touch-action: pan-y;
+}
+.media-item { position: relative; aspect-ratio: 1; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+.media-item img { width: 100%; height: 100%; object-fit: cover; }
+.media-item .del { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 20px; text-align: center; }
+.media-item .video-badge { position: absolute; bottom: 3px; left: 3px; font-size: 16px; }
+
+/* 模态框 */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 16px; }
+.modal-box { background: #fff; border-radius: 12px; padding: 20px; width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; }
+.modal-box h2 { font-size: 17px; margin-bottom: 16px; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+.field input, .field textarea { width: 100%; padding: 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+.field textarea { resize: vertical; min-height: 60px; }
+.field-row { display: flex; gap: 10px; }
+.field-row .field { flex: 1; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+
+/* 地名联想下拉 */
+.suggest { position: relative; z-index: 10; }
+.suggest-item {
+  padding: 9px 10px; border: 1px solid var(--border); border-top: none;
+  background: #fff; font-size: 13px; cursor: pointer;
+}
+.suggest-item:hover { background: #eff6ff; }
+.suggest-loading, .suggest-empty { color: #9ca3af; cursor: default; pointer-events: none; }
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .layout { flex-direction: column; }
+  /* overflow:hidden：地图被拖到很矮甚至归零时，图层按钮/回放按钮等浮层不会溢出到下面板上 */
+  .map { height: 55vh; flex: none; overflow: hidden; }
+  /* 分享页（只读）列表更重要：地图让出更多空间给轨迹点列表 */
+  body.share-page .map { height: 45vh; }
+  .panel { width: 100%; flex: 1; border-left: none; border-top: 1px solid var(--border); }
+  /* 拖拽手柄：点击区域 32px（手机命中率），视觉 4px 圆点条 */
+  .panel-resizer {
+    display: flex; align-items: center; justify-content: center;
+    height: 32px; flex-shrink: 0; cursor: row-resize;
+    background: var(--panel); border-top: 1px solid var(--border);
+    touch-action: none; user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    position: relative;   /* 收起按钮绝对定位在右端，抓手圆点仍居中 */
+  }
+  /* 收起按钮移到面板顶部这一行的右端；tab 行里那个宽屏版本隐藏 */
+  .wide-only { display: none !important; }
+  .panel-resizer .panel-toggle {
+    position: absolute; right: 0; top: 0;
+    height: 100%; margin: 0; padding: 0 16px;
+    display: flex; align-items: center;
+    font-size: 16px;
+  }
+  .panel-resizer::before {
+    content: ''; width: 44px; height: 4px; border-radius: 2px;
+    background: var(--border); opacity: .9;
+  }
+  .panel-resizer:active::before { background: var(--primary); }
+  /* 面板收起时手柄隐藏（地图全屏） */
+  .layout.panel-collapsed .panel-resizer { display: none; }
+  .media-grid { grid-template-columns: repeat(var(--media-cols, 3), 1fr); }
+
+  /* 相册的 － / ＋ 缩放按钮在手机上没必要：双指捏合就能缩放，按钮只是占地方。
+     元素保留在 DOM 里（JS 里 syncPhotoToolbar 还会读写它们的 disabled），只是不显示。 */
+  #btn-photo-zoom-out, #btn-photo-zoom-in { display: none; }
+
+  /* 顶栏：仅保留品牌 + 行程选择 + 「更多」菜单，其余操作按钮收纳进底部菜单 */
+  .topbar { gap: 8px; padding: 8px 10px; overflow: hidden; }
+  .brand { font-size: 15px; }
+  /* 手机端：藏掉原生下拉，换成 ‹ 行程名 › 这一条 */
+  .trip-select { display: none; }
+  .trip-nav { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+  .topbtn { display: none; }            /* 收纳所有顶栏操作按钮 */
+  .more-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0; width: 38px; height: 38px; padding: 0;
+    font-size: 20px; font-weight: 700; line-height: 1;
+    border-radius: 9px;
+  }
+
+  /* 表单双列字段在窄屏改为纵向堆叠，避免日期输入框溢出 */
+  .field-row { flex-direction: column; gap: 0; }
+
+  /* 分享卡片：二维码 + 信息在窄屏纵向堆叠 */
+
+  /* 路线选择浮层：手机端左右撑满 + 底部安全区 */
+  .route-chooser {
+    left: 12px; right: 12px; width: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* 点击目标加大到接近移动端推荐值，降低误触 */
+  .move-arrow { width: 30px; height: 30px; font-size: 15px; }
+  .rm-seg { width: 30px; height: 30px; font-size: 15px; }
+
+  /* 灯箱左右切换箭头在窄屏缩小，避免遮挡图片 */
+  .lightbox-prev, .lightbox-next { font-size: 32px; padding: 0 8px; }
+
+  /* 详情页单张照片删除按钮加大，避免误触 */
+  .media-item .del { width: 28px; height: 28px; font-size: 15px; line-height: 28px; }
+
+  /* iOS Safari：input 字号 <16px 聚焦时会自动放大页面，统一提到 16px 规避 */
+  .field input, .field textarea, .login-input { font-size: 16px; }
+}
+
+/* 更多操作菜单（底部抽屉，参考高德/Google Maps 手机端的「更多」交互） */
+.more-sheet-mask {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(0,0,0,.45);
+  display: flex; align-items: flex-end;
+}
+.more-sheet {
+  width: 100%; max-height: 78vh; overflow-y: auto;
+  background: #fff; border-radius: 16px 16px 0 0;
+  padding: 6px 12px calc(14px + env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 28px rgba(0,0,0,.22);
+  animation: sheetUp .22s ease;
+}
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.more-sheet-handle {
+  width: 40px; height: 4px; border-radius: 2px;
+  background: #d1d5db; margin: 8px auto 12px;
+}
+.more-sheet-title {
+  font-size: 13px; color: var(--muted); padding: 2px 10px 6px;
+}
+/* 操作项改成 4 列宫格（微信/支付宝分享面板那种），比竖排列表省一半高度，
+   拇指也更容易够到；每格 = 圆形图标底 + 底下一行小字。 */
+/* 「撤销分享链接」成功后，按钮原地换成的状态提示 */
+.revoke-done { font-size: 13px; color: var(--muted); align-self: center; }
+
+/* 菜单底部的版本号：排查「是不是浏览器缓存」用的，做小做淡，不抢视线 */
+.more-sheet-ver {
+  text-align: center; padding: 10px 0 2px;
+  font-size: 11px; color: var(--muted); opacity: .7;
+  font-variant-numeric: tabular-nums;
+}
+.more-sheet-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 2px; padding: 4px 0 2px;
+}
+.more-sheet-item {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 12px 2px 10px;
+  border: none; background: none; color: var(--text);
+  cursor: pointer; border-radius: 12px;
+}
+.more-sheet-item:active { background: #f3f4f6; }
+.more-sheet-item .ico {
+  width: 46px; height: 46px; border-radius: 50%;
+  background: #f1f3f5; color: #374151;
+  display: flex; align-items: center; justify-content: center;
+}
+.more-sheet-item .ico svg { width: 21px; height: 21px; display: block; }
+.more-sheet-item .lbl {
+  font-size: 11px; line-height: 1.25; color: var(--muted);
+  text-align: center; word-break: keep-all;
+}
+.more-sheet-item.danger .ico { background: #fee2e2; color: var(--danger); }
+.more-sheet-item.danger .lbl { color: var(--danger); }
+/* 320~360px 的小屏（iPhone SE 一类）：4 列后每格只剩 ~70px，
+   「编辑行程信息」这种 6 字标签会顶到边，字号再收一点保证不折行 */
+@media (max-width: 360px) {
+  .more-sheet-item .lbl { font-size: 10px; }
+  .more-sheet-item .ico { width: 42px; height: 42px; }
+  .more-sheet-item .ico svg { width: 19px; height: 19px; }
+}
+
+/* ---------- 行程状态：分段按钮 ---------- */
+/* 用分段按钮而不是 <select>：手机上原生下拉会弹出系统滚轮，要多一次「确定」，
+   而状态只有四个值，一行摆开点一下最快。 */
+.status-seg {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+}
+.status-seg-btn {
+  padding: 8px 2px; font-size: 13px; line-height: 1.3;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: #fff; color: var(--muted); cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .15s, background .15s, color .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.status-seg-btn:active { transform: scale(.96); }
+.status-seg-btn.active {
+  border-color: var(--primary); background: #eff6ff;
+  color: var(--primary); font-weight: 600;
+}
+@media (max-width: 360px) { .status-seg-btn { font-size: 12px; padding: 8px 0; } }
+
+/* 卡片选择器里「已归档」的标签配色 */
+.trip-sheet-tag.archived { background: #e5e7eb; color: #4b5563; }
+
+/* ---------- 分享有效期：宫格卡片选择（替代竖排按钮列表） ---------- */
+.expiry-hint {
+  font-size: 13px; line-height: 1.5; color: var(--muted);
+  margin-bottom: 12px;
+}
+.expiry-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.expiry-card {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 14px 4px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: #fff; cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, transform .1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.expiry-card:hover { border-color: var(--primary); }
+.expiry-card:active { transform: scale(.96); }
+/* 选中态：合并弹窗后卡片是「选择」而不是「立即执行」，需要一直显示当前选了哪个 */
+.expiry-card.selected {
+  border-color: var(--primary); background: #eff6ff;
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+.expiry-card.selected .expiry-label { color: var(--primary); }
+.expiry-label { font-size: 16px; font-weight: 700; color: var(--text); line-height: 1.2; }
+.expiry-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+/* 分享设置弹窗里的分组小标题 / 密码框 / 说明 */
+.share-opt-title {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  margin: 16px 0 8px;
+}
+.share-opt-title:first-of-type { margin-top: 4px; }
+.share-pwd-input {
+  width: 100%; padding: 10px 12px;
+  font-size: 16px;                      /* 16px：iOS 聚焦时不自动放大页面 */
+  border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); background: #fff;
+}
+.share-opt-note {
+  font-size: 12px; line-height: 1.5; color: var(--muted); margin-top: 6px;
+}
+
+/* ---------- 长按保存图片兜底层（微信内置浏览器等不支持 Web Share 时） ---------- */
+.longpress-mask {
+  position: fixed; inset: 0; z-index: 9997;
+  background: rgba(0, 0, 0, .88);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 20px;
+}
+.longpress-img {
+  max-width: 88vw; max-height: 68vh;
+  object-fit: contain; border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
+  /* 允许长按弹出系统「保存图片」菜单：不要禁用长按回调、不要拦截触摸 */
+  -webkit-touch-callout: default;
+  user-select: auto; -webkit-user-select: auto;
+}
+.longpress-tip { font-size: 14px; color: #fff; opacity: .9; text-align: center; }
+.longpress-close { min-width: 140px; }
+
+/* ---------- 体验账号一键登录 ---------- */
+.demo-login {
+  margin-top: 16px; padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+/* 第一次来的人最该点的就是这个按钮，原来却做成了最不起眼的浅灰次要按钮。
+   改成品牌渐变实心按钮：颜色与应用图标同源，在一屏里一眼就能找到。
+   下面那行「账号 test · 演示数据…」删掉了 —— 按钮自己已经说清楚了。 */
+.demo-btn {
+  border: none;
+  background: linear-gradient(135deg, #FF8A00, #F5296E);
+  color: #fff; font-weight: 700; font-size: 15px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 16px rgba(245, 41, 110, .28);
+  transition: transform .12s ease, box-shadow .18s ease, filter .18s ease;
+}
+.demo-btn:hover:not(:disabled) { filter: brightness(1.05); box-shadow: 0 8px 22px rgba(245, 41, 110, .36); }
+.demo-btn:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 4px 12px rgba(245, 41, 110, .3); }
+.demo-btn:disabled { opacity: .6; cursor: default; box-shadow: none; }
+
+/* ---------- 轻提示 toast ---------- */
+.tm-toast {
+  position: fixed; left: 50%; bottom: calc(64px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 9999;
+  max-width: 80vw;
+  padding: 10px 18px; border-radius: 999px;
+  background: rgba(17, 24, 39, .88);
+  color: #fff; font-size: 13px; line-height: 1.5;
+  text-align: center; white-space: nowrap;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .3);
+  pointer-events: none;
+  animation: tm-toast-in .18s ease-out;
+}
+@keyframes tm-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.tm-toast.out { opacity: 0; transition: opacity .25s ease; }
+
+/* ---------- 自绘对话框（替代原生 alert/confirm/prompt） ----------
+   原生弹窗标题栏被浏览器写死成「<域名/IP> 显示」，只能自绘才能换掉。
+   z-index 9998：高于灯箱(2000)与各类弹窗，低于登录层(9999)。 */
+.tm-dialog-mask {
+  position: fixed; inset: 0; z-index: 9998;
+  background: rgba(15, 23, 42, .5);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  animation: tm-dialog-fade .15s ease;
+}
+@keyframes tm-dialog-fade { from { opacity: 0; } to { opacity: 1; } }
+.tm-dialog {
+  width: 100%; max-width: 320px;
+  background: var(--panel); border-radius: 14px;
+  padding: 20px 18px 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .28);
+  animation: tm-dialog-pop .18s ease-out;
+}
+@keyframes tm-dialog-pop { from { transform: scale(.94); opacity: .6; } to { transform: none; opacity: 1; } }
+.tm-dialog-title {
+  font-size: 16px; font-weight: 700; color: var(--text);
+  text-align: center; margin-bottom: 10px;
+}
+.tm-dialog-msg {
+  font-size: 14px; line-height: 1.6; color: var(--muted);
+  text-align: center; white-space: pre-wrap; word-break: break-word;
+}
+.tm-dialog-msg.left { text-align: left; }
+.tm-dialog-textarea { resize: vertical; min-height: 76px; font-family: inherit; line-height: 1.6; }
+.tm-dialog-input {
+  width: 100%; margin-top: 12px;
+  padding: 9px 11px; font-size: 16px;   /* 16px：iOS 聚焦时不自动放大页面 */
+  border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); background: #fff;
+}
+.tm-dialog-actions {
+  display: flex; gap: 10px; margin-top: 18px;
+}
+.tm-dialog-actions .btn { flex: 1; padding: 10px 12px; font-size: 15px; }
+/* 桌面端把对话框放大。320px 是照着手机屏定的，放到大屏上写 500 字的描述实在局促。
+   宽度改成跟着内容走（textarea 给了具体尺寸），所以拖大文本框时整个框会一起长大。 */
+@media (min-width: 769px) {
+  .tm-dialog {
+    width: auto; min-width: 340px; max-width: min(92vw, 900px);
+    padding: 24px 22px 16px; border-radius: 16px;
+  }
+  .tm-dialog-title { font-size: 17px; margin-bottom: 12px; }
+  .tm-dialog-msg { font-size: 14.5px; }
+  .tm-dialog-input { font-size: 15px; padding: 10px 12px; }
+  /* 双向可拖：横着拖到 856px、竖着随便拉。max-width 卡在对话框的上限内，
+     免得拖出屏幕。 */
+  .tm-dialog-textarea {
+    width: 540px; min-width: 320px; max-width: min(86vw, 856px);
+    height: 280px; min-height: 120px;
+    resize: both;
+  }
+  .tm-dialog-actions .btn { flex: 0 0 auto; min-width: 104px; }
+  .tm-dialog-actions { justify-content: flex-end; }
+}
+
+/* 登录覆盖层 */
+.login-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+}
+.login-box {
+  width: 320px; max-width: 90vw;
+  max-height: 90vh; overflow-y: auto;
+  background: #fff; border-radius: 14px;
+  padding: 28px 24px; text-align: center;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.login-box h2 { margin: 0 0 6px; font-size: 20px; color: #1e293b; }
+/* 登录页顶部：应用图标 + 名字，竖排居中。原来是个 🔐 emoji，
+   和应用本身没关系，各平台渲染还不一样。 */
+.login-brand {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  margin: 0 0 16px !important;
+}
+.login-brand img { display: block; border-radius: 10px; }
+.login-hint { margin: 0 0 16px; font-size: 13px; color: #64748b; }
+.login-input {
+  width: 100%; padding: 10px 12px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+  box-sizing: border-box;
+}
+.login-error { margin: 12px 0 0; font-size: 13px; color: #dc2626; }
+
+/* 认证 tab */
+.auth-tabs { display: flex; margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.auth-tab { flex: 1; padding: 9px; border: none; background: #f3f4f6; font-size: 14px; cursor: pointer; color: var(--muted); }
+.auth-tab.active { background: var(--primary); color: #fff; font-weight: 600; }
+.btn-link {
+  display: block; margin: 12px auto 0; background: none; border: none;
+  color: var(--muted); font-size: 13px; cursor: pointer; text-decoration: underline;
+}
+.btn-link:hover { color: var(--primary); }
+
+/* 用户条 */
+.userbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 14px; background: #fafafa; border-bottom: 1px solid var(--border);
+}
+.current-user {
+  flex: none; font-size: 13px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+/* 顶部全局统计（总里程/天数/城市/地点/媒体/日期）——不占用底部面板空间；点击查看完整统计 */
+.top-stats {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--muted);
+  text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+.top-stats:hover { color: var(--primary); text-decoration: underline; }
+.current-user { font-size: 12px; color: var(--muted); }
+
+/* 完整统计弹窗 */
+.stat-body { max-height: 55vh; overflow-y: auto; margin-bottom: 12px; }
+/* 手机端：全站都不画滚动条。
+   桌面端滚动条是常驻、占位的，是有用的位置提示；手机端是覆盖式的，
+   内容一变就先闪一下再淡出——纯干扰，还会压住右边一列内容。
+   用 * 一次性覆盖所有滚动容器（弹层、面板三个 tab 页、相册、说明栏展开后…），
+   免得以后新加一个滚动区又漏掉。只藏外观，滚动和惯性都不受影响。 */
+@media (max-width: 768px) {
+  * {
+    scrollbar-width: none;          /* Firefox / 新版 Chrome */
+    -ms-overflow-style: none;       /* 旧 Edge */
+  }
+  *::-webkit-scrollbar { width: 0; height: 0; display: none; }
+}
+.stat-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 7px 2px; font-size: 13px; border-bottom: 1px dashed var(--border);
+}
+.stat-row b { font-weight: 600; color: var(--text); white-space: nowrap; }
+.stat-sub {
+  margin: 12px 0 4px; font-size: 12px; font-weight: 700;
+  color: var(--muted); letter-spacing: 1px;
+}
+.stat-point b { font-weight: 400; color: var(--muted); font-size: 12px; }
+.stat-desc { align-items: flex-start; }
+.stat-desc span { flex-shrink: 0; }
+.stat-desc b { white-space: normal; text-align: right; max-width: 72%; line-height: 1.5; }
+
+/* 地图序号点 */
+.marker-dot {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35);
+  cursor: pointer;
+}
+
+/* 环线多次经过同一地点：合并为胶囊形，序号全部并列显示 */
+.marker-dot.multi {
+  width: auto; min-width: 28px; height: 28px;
+  padding: 0 9px; border-radius: 14px;
+  font-size: 12px; white-space: nowrap;
+  letter-spacing: 1px;
+}
+
+/* 多次经过选择弹窗条目 */
+.point-pick { display: flex; align-items: center; gap: 10px; width: 100%; }
+.point-pick .pick-num {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--primary); color: #fff; font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.point-pick .pick-name { flex: 1; font-weight: 600; }
+.point-pick .pick-date { flex: none; font-size: 12px; color: var(--muted); }
+
+/* 媒体日期标签 */
+.media-date {
+  position: absolute; bottom: 3px; left: 3px;
+  font-size: 10px; color: #fff; background: rgba(0,0,0,.55);
+  padding: 1px 5px; border-radius: 4px;
+}
+/* 缩到 5 列时格子只有 60~70px，日期条按原尺寸几乎占满整格，删除钮也显得笨重，
+   两个一起缩一号。data-cols 由 applyMediaCols() 打上。 */
+.media-grid[data-cols="5"] .media-date {
+  font-size: 8px; padding: 0 3px; bottom: 2px; left: 2px; border-radius: 3px;
+}
+.media-grid[data-cols="5"] .del,
+.media-grid[data-cols="5"] .media-item .del {
+  width: 20px; height: 20px; font-size: 12px; line-height: 20px;
+}
+
+/* 媒体灯箱 */
+.lightbox {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,.92);
+  display: flex; align-items: center; justify-content: center;
+}
+/* 灯箱轮播：舞台是个视口，里面一条 .lb-track 承载「上一张/当前/下一张」三格。
+   拖动时整条轨道跟着手指走，相邻那张会被一起推进视野——而不是当前这张自己动、
+   松手才换图。松手后轨道要么继续滑满一屏（翻页），要么滑回 0（取消）。 */
+.lightbox-stage {
+  position: absolute; inset: 0;
+  overflow: hidden;
+  display: block;
+}
+.lb-track {
+  position: absolute; inset: 0;
+  will-change: transform;
+}
+.lb-track.settling {
+  transition: transform .3s cubic-bezier(.22, .61, .36, 1);
+}
+.lb-slide {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4vh 4vw;
+}
+/* 每张图自带一条文字说明，跟着图一起在轨道上滑动；放大态下也保留（半透明，不挡图） */
+.lb-caption {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 46px 18px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(0,0,0,.78), rgba(0,0,0,.5) 55%, transparent);
+  color: #fff; font-size: 14px; line-height: 1.6;
+  display: block;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+/* 「地点 · 时间」小字：相册是整条行程的，这一行说明当前图属于哪个轨迹点 */
+.lb-caption-meta {
+  font-size: 12px; color: rgba(255, 255, 255, .72);
+  margin-bottom: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lb-caption-row { display: flex; align-items: flex-end; gap: 10px; }
+.lb-caption.readonly { cursor: default; }
+.lb-caption-text {
+  flex: 1; min-width: 0;
+  white-space: pre-wrap; word-break: break-word;
+  /* 默认最多 3 行，超出省略号收住，不让长文把整张图糊死 */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.lb-caption.expanded .lb-caption-text {
+  display: block; -webkit-line-clamp: unset;
+  max-height: 42vh; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* 「展开 / 收起」：只有文字真的超过 3 行时才出现 */
+.lb-caption-more {
+  flex: none; align-self: flex-end;
+  border: none; background: none; padding: 2px 2px;
+  color: #cfe0ff; font-size: 13px; line-height: 1.6;
+  cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.lb-caption-more[hidden] { display: none; }
+.lb-caption.empty .lb-caption-text { color: rgba(255,255,255,.55); }
+/* 说明文字渲染成 Markdown 后是块级结构，pre-wrap 会把缩进和多余空白也照抄出来 */
+.lb-caption-text.md { white-space: normal; }
+/* 说明栏只有巴掌大，所有块级元素的外边距都收紧，首尾贴边，
+   这样 -webkit-line-clamp 的 3 行折叠仍然量得准 */
+.lb-caption-text.md > :first-child { margin-top: 0; }
+.lb-caption-text.md > :last-child { margin-bottom: 0; }
+.lb-caption-text.md p { margin: 0 0 .4em; }
+.lb-caption-text.md ul, .lb-caption-text.md ol { margin: .2em 0 .4em; padding-left: 1.35em; }
+.lb-caption-text.md li { margin: .1em 0; }
+.lb-caption-text.md h3, .lb-caption-text.md h4,
+.lb-caption-text.md h5, .lb-caption-text.md h6 {
+  margin: .35em 0 .2em; font-size: 15px; font-weight: 700; line-height: 1.4;
+}
+.lb-caption-text.md h5, .lb-caption-text.md h6 { font-size: 14px; }
+.lb-caption-text.md a { color: #9ec5ff; text-decoration: underline; }
+.lb-caption-text.md code {
+  background: rgba(255, 255, 255, .16); border-radius: 3px;
+  padding: 0 4px; font-size: .92em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.lb-caption-text.md blockquote {
+  margin: .25em 0; padding-left: 8px;
+  border-left: 2px solid rgba(255, 255, 255, .38);
+  color: rgba(255, 255, 255, .85);
+}
+.lb-caption-text.md hr { border: none; border-top: 1px solid rgba(255, 255, 255, .3); margin: .45em 0; }
+.lb-caption-text.md del { opacity: .68; }
+.lb-caption-text.md strong { font-weight: 700; }
+.lb-caption-edit {
+  flex: none; font-size: 15px; opacity: .75;
+  padding: 2px 4px;
+}
+.lb-caption.readonly .lb-caption-edit { display: none; }
+/* 放大态：说明栏淡下去但不消失，既不挡图也还能看见 */
+.lightbox.zoomed .lb-caption { opacity: .45; }
+.lb-caption { transition: opacity .2s ease; }
+/* 相邻两格按当前手势轴向摆到屏幕外，轴向由 .axis-x / .axis-y 决定 */
+.lb-track.axis-x .lb-slide.prev { transform: translateX(-100%); }
+.lb-track.axis-x .lb-slide.next { transform: translateX(100%); }
+.lb-track.axis-y .lb-slide.prev { transform: translateY(-100%); }
+.lb-track.axis-y .lb-slide.next { transform: translateY(100%); }
+@media (prefers-reduced-motion: reduce) {
+  .lb-track.settling { transition: none; }
+}
+/* 相邻格里的视频占位：只是一张缩略图 + 播放角标，不是真的 <video> */
+.lb-video-poster {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.lb-video-poster img {
+  max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px;
+}
+.lb-video-poster-play {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px; height: 56px; border-radius: 50%;
+  background: rgba(0, 0, 0, .55);
+  color: #fff; font-size: 22px; line-height: 56px; text-align: center;
+  text-indent: 3px;
+}
+.lightbox-media {
+  max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px;
+  transform-origin: center center;
+  -webkit-tap-highlight-color: transparent;
+}
+/* 双指捏合完全由 JS 接管，告诉浏览器别在图片上做自己的整页缩放/滚动手势。
+   不然浏览器会把双指当成页面缩放交给合成器，连说明文字和关闭按钮一起放大。
+   只给图片和视频占位图，不给 <video>——那上面要留着原生控件的触摸操作；
+   也不给 .lb-slide，否则说明文字展开后那块的滚动会被一并禁掉。 */
+img.lightbox-media, .lb-video-poster { touch-action: none; }
+/* 进/出全屏放大态的动画。手势进行中会去掉这个类，保证缩放跟手不延迟 */
+.lightbox-media.zoom-anim {
+  transition: transform .28s cubic-bezier(.22, .61, .36, 1);
+}
+/* 放大态：翻页箭头和计数先让开；关闭按钮保留。
+   注意不要在这里再去掉 .lb-slide 的内边距——「铺满屏幕」已经由 JS 算出的
+   scale(fit) 负责了，两边都改会叠加成过度放大。 */
+.lightbox.zoomed .lightbox-prev,
+.lightbox.zoomed .lightbox-next,
+.lightbox.zoomed .lightbox-counter { opacity: 0; pointer-events: none; }
+.lightbox-prev, .lightbox-next, .lightbox-counter { transition: opacity .2s ease; }
+.lightbox.zoomed .lightbox-media { border-radius: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .lightbox-media.zoom-anim { transition: none; }
+}
+.lightbox-close {
+  position: absolute; top: 16px; right: 20px; z-index: 10;
+  font-size: 36px; color: #fff; cursor: pointer; line-height: 1;
+  opacity: .8; padding: 6px;
+}
+.lightbox-close:hover { opacity: 1; }
+.lightbox-prev, .lightbox-next {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  font-size: 48px; color: #fff; cursor: pointer; opacity: .7;
+  padding: 0 16px; user-select: none; z-index: 10;
+}
+.lightbox-prev { left: 8px; }
+.lightbox-next { right: 8px; }
+.lightbox-prev:hover, .lightbox-next:hover { opacity: 1; }
+/* 两点之间的切换按钮：浮动在两个点之间，不独占一行、不撑开间距 */
+.seg-divider {
+  position: relative;
+  height: 0;
+  margin: 0;
+  z-index: 6;
+}
+.rm-seg {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid var(--border); background: #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.18);
+  font-size: 13px; line-height: 1; cursor: pointer; color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, border-color .15s;
+}
+.rm-seg:hover { border-color: var(--primary); background: #eff6ff; }
+.rm-seg:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 路线选择浮层（右下角浮动卡片，不遮挡地图，方便查看彩色路线） */
+.route-chooser {
+  position: fixed; right: 16px; bottom: 16px; z-index: 200;
+  width: 320px; max-width: calc(100vw - 32px);
+}
+.route-chooser-box {
+  background: #fff; border-radius: 12px; padding: 16px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.28);
+  max-height: 70vh; overflow-y: auto;
+}
+.route-chooser-box h3 { font-size: 16px; margin-bottom: 4px; }
+.route-chooser-sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.route-chooser-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.route-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: #fff; cursor: pointer; text-align: left; width: 100%;
+  transition: border-color .15s, background .15s;
+}
+.route-option:hover { border-color: var(--primary); }
+.route-option.active { border-color: var(--primary); background: #eff6ff; }
+.route-dot { flex-shrink: 0; width: 12px; height: 12px; border-radius: 50%; }
+.route-option-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.route-option-label { font-size: 14px; font-weight: 600; color: var(--text); }
+.route-option-meta { font-size: 12px; color: var(--muted); }
+.route-chooser-actions { display: flex; gap: 10px; margin-top: 4px; }
+.route-chooser-actions .btn { flex: 1; }
+
+/* 计数放顶部居中：底部整条留给图片说明，两者不再挤在一行。
+   顶部左右分别是关闭按钮和空白，中间正好空着。 */
+.lightbox-counter {
+  position: absolute; top: 22px; left: 50%; transform: translateX(-50%);
+  bottom: auto; z-index: 10;
+  color: #fff; font-size: 13px; opacity: .85;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+  pointer-events: none;
+}
+
+/* ---------- 分享卡片 ---------- */
+.modal-box.share-card { max-width: 480px; }
+/* 「分享已生效」状态条：到这一步链接其实已经创建好并可访问了，
+   之前页面上没有任何提示，容易让人以为还要再点一下才算完成。 */
+.share-live {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; margin-bottom: 12px;
+  background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px;
+}
+.share-live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #10b981;
+  flex-shrink: 0; margin-top: 6px;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, .18);
+}
+.share-live-text { min-width: 0; }
+.share-live-title { font-size: 14px; font-weight: 600; color: #047857; line-height: 1.4; }
+.share-live-sub { font-size: 12px; color: #059669; line-height: 1.5; margin-top: 2px; }
+.share-card-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.share-card-meta { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.share-card-thumb {
+  width: 100%; height: 220px; object-fit: contain; border-radius: 10px;
+  background: #f7f9fc; border: 1px solid var(--border); margin-bottom: 14px;
+}
+.share-card-bottom { display: flex; gap: 14px; align-items: flex-start; }
+.share-card-qrbox { flex-shrink: 0; text-align: center; }
+.share-card-qr { width: 140px; height: 140px; border: 1px solid var(--border); border-radius: 8px; display: block; }
+.share-card-qrhint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.share-card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.share-card-link {
+  font-size: 12px; color: var(--primary); word-break: break-all;
+  background: #f5f8ff; padding: 8px 10px; border-radius: 8px; line-height: 1.5;
+}
+.share-card-hint { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+/* 手机端：原来是「二维码居中占一行 + 说明文字另起一行」，二维码右侧整片留白、
+   说明又单独吃掉一行，很浪费竖向空间。改成二维码在左，链接和说明在右并排。
+   注意这段必须放在上面的基础规则之后——前面那个移动端媒体查询在源码里更靠前，
+   同权重下会被后面的基础规则覆盖掉。 */
+@media (max-width: 768px) {
+  .share-card-bottom { flex-direction: row; align-items: flex-start; gap: 12px; }
+  .share-card-qrbox { flex-shrink: 0; text-align: center; }
+  .share-card-qr { width: 118px; height: 118px; }
+  .share-card-info { padding-top: 0; gap: 6px; }
+  .share-card-hint { font-size: 11px; line-height: 1.5; }
+}
+
+/* 路径段操作面板 */
+.seg-panel-title { font-weight: 600; margin-bottom: 14px; font-size: 15px; }
+.seg-mode-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.seg-mode-row .btn { flex: 1; }
+.seg-panel-title + .seg-mode-row { margin-top: 4px; }
+.modal-box button[data-choose] { width: 100%; margin-bottom: 8px; }
+.modal-box button[data-cancel] { width: 100%; }
+
+/* 辅助点（途经点）：灰色、地图上不可点击 */
+.marker-dot.waypoint {
+  background: #9ca3af; color: #fff; cursor: default;
+  border-color: #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,.22);
+}
+
+/* 点详情对应的高亮：放大 + 橙色 + 脉冲光晕（覆盖正式点/环线胶囊/辅助点） */
+/* 选中点：橙色 + 轻微放大。放大倍数刻意压得小（1.45 → 1.18），外圈脉冲也收窄
+   （14px → 8px），否则选中点会盖住周围的地名。 */
+.marker-dot.highlight {
+  background: #f59e0b !important;
+  transform: scale(1.18);
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(245,158,11,.4), 0 2px 7px rgba(0,0,0,.4);
+  animation: marker-pulse 1.6s ease-out infinite;
+  cursor: pointer;
+}
+@keyframes marker-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(245,158,11,.5), 0 2px 7px rgba(0,0,0,.4); }
+  70%  { box-shadow: 0 0 0 8px rgba(245,158,11,0), 0 2px 7px rgba(0,0,0,.4); }
+  100% { box-shadow: 0 0 0 0 rgba(245,158,11,0), 0 2px 7px rgba(0,0,0,.4); }
+}
+.point-list li.waypoint { opacity: .62; }
+.point-list li.waypoint .point-index { background: #9ca3af; }
+.waypoint-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 6px;
+  font-size: 11px; font-weight: 500; color: #6b7280;
+  background: #f3f4f6; border-radius: 4px; vertical-align: 1px;
+}
+.checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.checkbox-label input { width: auto; margin: 0; flex-shrink: 0; }
+
+/* ---------- 轨迹回放栏（地图右上角浮层，按需出现：播放时显示，平时只显示入口按钮） ---------- */
+.replay-launch {
+  position: absolute;
+  right: 59px; top: 12px;   /* 12px 边距 + 全屏按钮 38px + 9px 间隔 */
+  left: auto;
+  transform: none;
+  z-index: 95;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 8px 16px; border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .22);
+  font-size: 13px; font-weight: 600; color: var(--text);
+  cursor: pointer;
+}
+.replay-launch:hover { color: var(--primary); border-color: var(--primary); }
+
+/* 地图上三个纯图标按钮统一成同一尺寸的正圆：图层(左上) / 轨迹回放 / 全屏(右上)。
+   原来回放是横向胶囊(47x37)、全屏是圆角方(37x38)，并排看着一个横一个竖、不齐。
+   放在 .replay-launch / .fab-* 之后，靠源码顺序覆盖前面的 padding 与圆角。 */
+.fab-layers, .fab-fullscreen, .fab-fit, .fab-locate, .replay-launch, #btn-panel-open {
+  width: 38px; height: 38px;        /* 视觉上没有底片了，但点击热区仍保留 38x38 */
+  padding: 0; gap: 0;
+  border: none; background: none; box-shadow: none;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 20px; line-height: 1;
+  color: #2c3138;
+  /* Windows 高对比度模式下也不参与系统改色 */
+  forced-color-adjust: none;
+  /* 去掉白色底片后，用「白色描边光晕 + 深色投影」保证在浅色底图、卫星图、
+     深色水域上都看得清——这是底片原本承担的作用，不能一起丢掉。 */
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, .95))
+          drop-shadow(0 1px 3px rgba(0, 0, 0, .5));
+}
+.fab-layers:hover, .fab-fullscreen:hover, .fab-fit:hover, .fab-locate:hover, .replay-launch:hover,
+#btn-panel-open:hover { color: var(--primary); }
+
+/* 图标一律用 SVG 背景图，不用文字字形。
+   原因：浏览器的「强制深色」会在绘制阶段重写文字颜色，但**不会动图片**——
+   地图瓦片是图片所以不变暗，文字图标却被改成浅色，于是浅色地图上出现浅色图标。
+   换成背景图后，图标颜色由我们完全掌控，深浅色模式下都不会被改。 */
+.fab-layers, .fab-fullscreen, .fab-fit, .fab-locate, .replay-launch, #btn-panel-open {
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 21px 21px;
+  font-size: 0;            /* 隐藏原来的文字字形，aria-label 仍在 */
+  text-indent: 0;
+}
+.fab-layers { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M12%202%202%207l10%205%2010-5-10-5z%27%2F%3E%3Cpath%20d%3D%27M2%2017l10%205%2010-5%27%2F%3E%3Cpath%20d%3D%27M2%2012l10%205%2010-5%27%2F%3E%3C%2Fsvg%3E"); }
+.replay-launch { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27%232c3138%27%3E%3Cpath%20d%3D%27M8%205v14l11-7z%27%2F%3E%3C%2Fsvg%3E"); }
+.fab-fit { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M4.4%2020c4.4%200%203.6-6.2%207.4-6.2%202.2%200%203.2-1.4%204.2-2.6%27%2F%3E%3Ccircle%20cx%3D%274.3%27%20cy%3D%2720.1%27%20r%3D%272.4%27%20fill%3D%27%232c3138%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M16.6%202.4A4.4%204.4%200%200%201%2021%206.8c0%203.1-4.4%207-4.4%207s-4.4-3.9-4.4-7a4.4%204.4%200%200%201%204.4-4.4z%27%2F%3E%3Ccircle%20cx%3D%2716.6%27%20cy%3D%276.7%27%20r%3D%271.5%27%20fill%3D%27%232c3138%27%20stroke%3D%27none%27%2F%3E%3C%2Fsvg%3E"); }
+.fab-fullscreen { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M8%203H5a2%202%200%200%200-2%202v3M16%203h3a2%202%200%200%201%202%202v3M8%2021H5a2%202%200%200%201-2-2v-3M16%2021h3a2%202%200%200%200%202-2v-3%27%2F%3E%3C%2Fsvg%3E"); }
+.fab-fullscreen.active { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M18%206%206%2018M6%206l12%2012%27%2F%3E%3C%2Fsvg%3E"); }
+#btn-panel-open { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M4%207h16M4%2012h16M4%2017h16%27%2F%3E%3C%2Fsvg%3E"); }
+/* 卫星底图下换成白色图标 */
+.map.satellite .fab-layers { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M12%202%202%207l10%205%2010-5-10-5z%27%2F%3E%3Cpath%20d%3D%27M2%2017l10%205%2010-5%27%2F%3E%3Cpath%20d%3D%27M2%2012l10%205%2010-5%27%2F%3E%3C%2Fsvg%3E"); }
+.map.satellite .replay-launch { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27%23ffffff%27%3E%3Cpath%20d%3D%27M8%205v14l11-7z%27%2F%3E%3C%2Fsvg%3E"); }
+.fab-locate { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%277%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.4%27%20fill%3D%27%232c3138%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M12%201.6V5M12%2019v3.4M22.4%2012H19M5%2012H1.6%27%2F%3E%3C%2Fsvg%3E"); }
+.map.satellite .fab-locate { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%277%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.4%27%20fill%3D%27%23ffffff%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M12%201.6V5M12%2019v3.4M22.4%2012H19M5%2012H1.6%27%2F%3E%3C%2Fsvg%3E"); }
+.fab-locate.located { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%231a73e8%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%277%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.4%27%20fill%3D%27%231a73e8%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M12%201.6V5M12%2019v3.4M22.4%2012H19M5%2012H1.6%27%2F%3E%3C%2Fsvg%3E"); }
+.map.satellite .fab-locate.located { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%231a73e8%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%277%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.4%27%20fill%3D%27%231a73e8%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M12%201.6V5M12%2019v3.4M22.4%2012H19M5%2012H1.6%27%2F%3E%3C%2Fsvg%3E"); }
+.map.satellite .fab-fit { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M4.4%2020c4.4%200%203.6-6.2%207.4-6.2%202.2%200%203.2-1.4%204.2-2.6%27%2F%3E%3Ccircle%20cx%3D%274.3%27%20cy%3D%2720.1%27%20r%3D%272.4%27%20fill%3D%27%23ffffff%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M16.6%202.4A4.4%204.4%200%200%201%2021%206.8c0%203.1-4.4%207-4.4%207s-4.4-3.9-4.4-7a4.4%204.4%200%200%201%204.4-4.4z%27%2F%3E%3Ccircle%20cx%3D%2716.6%27%20cy%3D%276.7%27%20r%3D%271.5%27%20fill%3D%27%23ffffff%27%20stroke%3D%27none%27%2F%3E%3C%2Fsvg%3E"); }
+.map.satellite .fab-fullscreen { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M8%203H5a2%202%200%200%200-2%202v3M16%203h3a2%202%200%200%201%202%202v3M8%2021H5a2%202%200%200%201-2-2v-3M16%2021h3a2%202%200%200%200%202-2v-3%27%2F%3E%3C%2Fsvg%3E"); }
+.map.satellite .fab-fullscreen.active { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M18%206%206%2018M6%206l12%2012%27%2F%3E%3C%2Fsvg%3E"); }
+.map.satellite #btn-panel-open { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M4%207h16M4%2012h16M4%2017h16%27%2F%3E%3C%2Fsvg%3E"); }
+
+/* ——— 系统深色偏好下的兜底 ———
+   浏览器的「强制深色」会重写我们所有的 CSS 颜色，甚至会反转图标类 SVG，
+   但**动不了高德的地图瓦片**（那是照片类图片，不在反转范围内）。
+   所以「裸图标 + 浅色地图」这个组合在强制深色下必然翻车：图标被改浅，地图还是浅的。
+
+   解法是让对比度自成一体——系统偏好深色时给这几个图标加一层半透明底片。
+   底片和图标都是我们自己的颜色，强制深色要翻一起翻，两者的相对对比度不变，
+   所以无论浏览器是否真的把页面变暗，图标都始终清晰。 */
+@media (prefers-color-scheme: dark) {
+  .fab-layers, .fab-fullscreen, .fab-fit, .fab-locate, .replay-launch, #btn-panel-open {
+    background-color: rgba(28, 32, 38, .55);
+    border-radius: 50%;
+    filter: none;                       /* 有底片就不需要描边光晕了 */
+  }
+  .fab-layers { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M12%202%202%207l10%205%2010-5-10-5z%27%2F%3E%3Cpath%20d%3D%27M2%2017l10%205%2010-5%27%2F%3E%3Cpath%20d%3D%27M2%2012l10%205%2010-5%27%2F%3E%3C%2Fsvg%3E"); }
+  .fab-fit { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M4.4%2020c4.4%200%203.6-6.2%207.4-6.2%202.2%200%203.2-1.4%204.2-2.6%27%2F%3E%3Ccircle%20cx%3D%274.3%27%20cy%3D%2720.1%27%20r%3D%272.4%27%20fill%3D%27%23ffffff%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M16.6%202.4A4.4%204.4%200%200%201%2021%206.8c0%203.1-4.4%207-4.4%207s-4.4-3.9-4.4-7a4.4%204.4%200%200%201%204.4-4.4z%27%2F%3E%3Ccircle%20cx%3D%2716.6%27%20cy%3D%276.7%27%20r%3D%271.5%27%20fill%3D%27%23ffffff%27%20stroke%3D%27none%27%2F%3E%3C%2Fsvg%3E"); }
+  .fab-fullscreen { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M8%203H5a2%202%200%200%200-2%202v3M16%203h3a2%202%200%200%201%202%202v3M8%2021H5a2%202%200%200%201-2-2v-3M16%2021h3a2%202%200%200%200%202-2v-3%27/%3E%3C/svg%3E"); }
+  .fab-locate { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%277%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.4%27%20fill%3D%27%23ffffff%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M12%201.6V5M12%2019v3.4M22.4%2012H19M5%2012H1.6%27%2F%3E%3C%2Fsvg%3E"); }
+  /* 已定位时仍用主题蓝，深色底片上蓝色依然醒目 */
+  .fab-locate.located { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%235b9dff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%277%27%2F%3E%3Ccircle%20cx%3D%2712%27%20cy%3D%2712%27%20r%3D%272.4%27%20fill%3D%27%235b9dff%27%20stroke%3D%27none%27%2F%3E%3Cpath%20d%3D%27M12%201.6V5M12%2019v3.4M22.4%2012H19M5%2012H1.6%27%2F%3E%3C%2Fsvg%3E"); }
+  .fab-fullscreen.active { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M18%206%206%2018M6%206l12%2012%27/%3E%3C/svg%3E"); }
+  .replay-launch { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27%23ffffff%27%3E%3Cpath%20d%3D%27M8%205v14l11-7z%27/%3E%3C/svg%3E"); }
+  #btn-panel-open { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M4%207h16M4%2012h16M4%2017h16%27/%3E%3C/svg%3E"); }
+}
+
+/* 叠加卫星底图时底图变深色，无底片的图标反过来：亮色图标 + 深色描边光晕。
+   .satellite 这个类由 toggleLayerSatellite() 打在 #map 上。 */
+.map.satellite .fab-layers,
+.map.satellite .fab-fullscreen,
+.map.satellite .fab-fit,
+.map.satellite .fab-locate,
+.map.satellite .replay-launch,
+.map.satellite #btn-panel-open {
+  color: #ffffff;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, .9))
+          drop-shadow(0 1px 3px rgba(0, 0, 0, .7));
+}
+.map.satellite .fab-layers:hover,
+.map.satellite .fab-fullscreen:hover,
+.map.satellite .fab-fit:hover,
+.map.satellite .fab-locate:hover,
+.map.satellite .replay-launch:hover,
+.map.satellite #btn-panel-open:hover { color: #cfe0ff; }
+/* 展开的回放条同理：半透明白玻璃压在深色卫星图上会糊，底色调实一点保证可读 */
+.map.satellite .replay-bar {
+  background: rgba(255, 255, 255, .3);
+  border-color: rgba(255, 255, 255, .4);
+}
+.replay-bar {
+  position: absolute;
+  right: 59px; top: 12px;   /* 同上：给最右上角的全屏按钮让位 */
+  left: auto;
+  transform: none;
+  z-index: 90; /* 低于弹窗 modal(100)，分享卡片/弹窗不会被播放条遮挡 */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 毛玻璃：半透明白 + 背景模糊，底下的地图能透出来。
+     saturate 把被模糊掉的地图色彩提回来一点，不然会发灰。 */
+  /* 要能透过它读清底下的地图文字，关键不是白底多淡，而是**别模糊背景**——
+     22px 的高斯模糊会把地图上的地名糊成一团，白底调到 0 也读不出来。
+     所以这里去掉 blur，只留一点提亮和饱和度，白底压到很薄的一层。 */
+  background: rgba(255, 255, 255, .14);
+  -webkit-backdrop-filter: saturate(140%) brightness(1.04);
+  backdrop-filter: saturate(140%) brightness(1.04);
+  border: 1px solid rgba(255, 255, 255, .4);
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .14);
+  padding: 4px 8px;
+  max-width: calc(100% - 24px);
+  font-size: 12px;
+}
+/* 不支持 backdrop-filter 的内核（部分安卓定制浏览器）退回接近不透明的底，
+   否则半透明白叠在地图上会糊成一片、文字读不清 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .replay-bar { background: rgba(255, 255, 255, .72); }
+}
+/* 条内几个小控件也跟着半透明，否则玻璃上贴着几块实心色，割裂 */
+.replay-bar .replay-progress { background: rgba(0, 0, 0, .3); }
+.replay-bar .replay-close { background: rgba(0, 0, 0, .12); color: #374151; }
+.replay-bar .replay-close:hover { background: rgba(0, 0, 0, .14); }
+.replay-bar .replay-speed .spd {
+  background: rgba(255, 255, 255, .65);
+  border-color: rgba(0, 0, 0, .18);
+}
+/* 地名和计数在半透明底上加一点白色描边，压在深色地图（水域/卫星图）上也读得清 */
+.replay-bar .replay-name {
+  color: #111827; font-weight: 700;
+  /* 底几乎全透了，靠一圈白描边把地名从地图底纹里拎出来 */
+  text-shadow: 0 0 3px #fff, 0 0 5px #fff, 0 1px 2px rgba(255, 255, 255, .95);
+}
+.replay-close {
+  width: 20px; height: 20px;
+  border: none; border-radius: 50%;
+  background: #f3f4f6; color: #6b7280;
+  font-size: 12px; line-height: 1;
+  cursor: pointer; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.replay-close:hover { background: #e5e7eb; color: #374151; }
+.replay-btn {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  flex: none;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.replay-btn:hover { background: #1d4ed8; }
+.replay-btn svg { display: block; }
+.replay-progress {
+  width: 62px; height: 16px;
+  background: #e5e7eb;
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+  flex: none;
+}
+.replay-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #16a34a, #f97316);
+  border-radius: 9px;
+}
+/* 「4/17」计数叠加在进度条上，省出空间给地名 */
+.replay-count {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff; line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .75);
+  pointer-events: none;
+}
+.replay-name {
+  color: #374151;
+  width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+}
+.replay-speed { display: flex; gap: 2px; flex: none; }
+.replay-speed .spd {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #6b7280;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.replay-speed .spd.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+@media (max-width: 560px) {
+  .replay-progress { width: 46px; }
+  .replay-name { width: 72px; }
+}
+
+/* 回放移动小圆点 */
+.replay-dot {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 2.5px solid #fff;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, .35), 0 2px 8px rgba(0, 0, 0, .4);
+}
+
+/* ---------- 照片地图打点（有照片/视频的地点旁 📷 角标） ---------- */
+.photo-marker {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .95);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .35);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform .15s;
+}
+.photo-marker:hover { transform: scale(1.18); }
+/* 开了「照片图层」时，轨迹点旁边的 📷 角标是重复信息（同一批照片、同一个入口），
+   整个藏掉。类由 syncPhotoMarkersVisibility() 打在 #map 上。 */
+.map.photo-layer-on .photo-marker { display: none; }
+/* 数量角标：贴在 📷 右上角，超过 99 显示 99+ */
+.photo-marker { position: relative; }
+.photo-marker-icon { line-height: 1; }
+.photo-marker-badge {
+  position: absolute; top: -6px; right: -7px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; box-sizing: border-box;
+  background: var(--danger); color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 13px;
+  text-align: center; white-space: nowrap;
+  border: 1.5px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  pointer-events: none;   /* 点击穿透给 📷 本身 */
+}
+
+/* ---------- 照片图层（各点照片缩略图，多图重叠堆叠） ---------- */
+/* 照片堆的自建图层：插在高德的瓦片层(z=2)和矢量覆盖物层(z=110)之间。
+   高德把所有 DOM marker 塞进同一个 z-index:300 的容器，那个容器整体压在折线之上，
+   marker 自己的 zIndex 只在容器内排序，所以照片堆怎么调都会盖住路线 —— 只能自己开一层。 */
+/* 自绘路线层：压在照片堆(100)之上、轨迹点(300)之下。
+   这两层都是我自己插的，顺序由这里的 z-index 决定，不依赖高德内部结构。 */
+.route-svg-layer {
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  z-index: 105;
+  pointer-events: none;      /* 点击仍交给高德那条（透明的）线，路段选择不受影响 */
+  overflow: visible;
+}
+
+.photo-stack-layer {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  z-index: 100;
+  pointer-events: none;      /* 容器不挡地图拖动 */
+  overflow: hidden;
+}
+/* 堆本身要能点（打开该点的照片），所以单独放开命中测试 */
+.photo-stack-layer .photo-stack {
+  position: absolute;
+  /* 位置由 JS 写 left/top（见 positionPhotoStacks）。
+     不能用 transform 定位——transform 已经被「跟随缩放级别缩放」占着了。 */
+  pointer-events: auto;
+  will-change: left, top;
+}
+/* 显隐要分开控制：照片堆和 📷 角标现在同住这一层，但它们的显示条件正好相反 ——
+   图层【开】显示照片堆、隐藏角标；图层【关】隐藏照片堆、显示角标。
+   所以不能整层 display:none（那样角标永远出不来，我一开始就是这么搞错的）。 */
+.map:not(.photo-layer-on) .photo-stack-layer .photo-stack { display: none; }
+.map.photo-layer-on .photo-stack-layer .photo-marker { display: none; }
+/* 📷 角标也搬进这一层了（原来是高德 marker，会把路线截断）。
+   位置由 JS 写 left/top，命中测试要单独放开。 */
+.photo-stack-layer .photo-marker.on-stack-layer {
+  position: absolute;
+  pointer-events: auto;
+  will-change: left, top;
+}
+
+.photo-stack {
+  position: relative;
+  width: 56px; height: 56px;
+  /* 大小跟随地图缩放级别，变量由 syncPhotoStackScale() 写在 #map 上。
+     以底边中点为原点缩放，这样贴地的那个「落点」不会跑偏。 */
+  transform: scale(var(--photo-stack-scale, 1));
+  transform-origin: 50% 100%;
+  transition: transform .18s ease-out;
+}
+.photo-stack img {
+  position: absolute;
+  top: 0; left: 0;
+  width: 48px; height: 48px;
+  object-fit: cover;
+  border-radius: 5px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, .42);
+  background: #fff;
+  cursor: pointer;
+  transition: transform .16s, box-shadow .16s;
+}
+.photo-stack:hover img { transform: translateY(-3px); box-shadow: 0 5px 12px rgba(0, 0, 0, .5); }
+.photo-stack-badge {
+  position: absolute;
+  right: -5px; top: -5px;
+  min-width: 19px; height: 19px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 19px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+  z-index: 20;
+}
+
+/* 高德地图版权/logo：压到最底层，避免遮挡弹窗（路径段对话框、模态框等）。
+   注意：高德 JS API 的服务条款要求保留 logo 与审图号 GS(2025)xxxx 号（审图号是自然资源部
+   对公开地图的硬性要求），所以这里只是缩小 + 淡化降低存在感，没有 display:none 隐藏。 */
+.amap-logo, .amap-copyright {
+  z-index: 1 !important; pointer-events: none;
+  opacity: .3; transform: scale(.6); transform-origin: left bottom;
+}
+
+/* 2026-08-26: AMap 2.0 的 vector 层（路线折线 z-index 110/120）在部分渲染下会盖住
+   marker 容器（.amap-markers 若未定位则 z-index 不生效），导致路线经过 marker
+   附近时点击被折线拦截（点不开照片/详情）。强制 marker 容器置顶。 */
+.amap-layers > .amap-markers,
+.amap-layers > .amap-marker-layer {
+  position: absolute;
+  z-index: 300 !important;
+}
+
+/* ---------- 相册：扁平缩略图网格（类 iOS 照片） ---------- */
+/* 相册页去掉 .view 的内边距，让网格贴边（iOS 相册那样） */
+#albums-view { padding: 0; }
+.photo-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  background: var(--panel); position: sticky; top: 0; z-index: 2;
+}
+.photo-tools { margin-left: auto; display: flex; gap: 6px; }
+.photo-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* 分段控件：全部 / 照片 / 视频 */
+.seg {
+  display: inline-flex; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.seg-btn {
+  border: none; background: transparent; color: var(--muted);
+  padding: 5px 12px; font-size: 12px; cursor: pointer; line-height: 1.4;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.active { background: var(--primary); color: #fff; font-weight: 600; }
+
+.icon-btn {
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  border-radius: 8px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  white-space: nowrap; line-height: 1.4;
+}
+.icon-btn:hover:not(:disabled) { background: var(--bg); }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+
+.photo-grid {
+  --photo-cols: 4;
+  display: grid; grid-template-columns: repeat(var(--photo-cols), 1fr);
+  gap: 2px; padding: 2px; align-content: start;
+  touch-action: pan-y;   /* 留出双指捏合给相册自己处理 */
+}
+.photo-grid .empty-hint { grid-column: 1 / -1; }
+.photo-cell {
+  position: relative; aspect-ratio: 1; overflow: hidden;
+  background: var(--bg); cursor: pointer;
+}
+.photo-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 缩放换列数时的 FLIP 过渡：格子从旧位置滑/缩到新位置，而不是整片瞬间跳过去。
+   这个类由 flipGrid() 临时加上，动画结束就摘掉，平时不留 transition 免得干扰滚动。 */
+.photo-cell.flipping, .media-item.flipping {
+  transition: transform .32s cubic-bezier(.22, .61, .36, 1);
+  will-change: transform;
+  z-index: 1;                 /* 动画中的格子压在静止格子之上，交叉移动时不被裁 */
+}
+@media (prefers-reduced-motion: reduce) {
+  .photo-cell.flipping, .media-item.flipping { transition: none; }
+}
+.photo-cell:active img { opacity: .7; }
+.photo-cell-blank {
+  width: 100%; height: 100%; display: flex; align-items: center;
+  justify-content: center; font-size: 20px; opacity: .45;
+}
+/* 缩略图左下角的「写过描述」标记，同时是编辑入口，所以要能点（原来是 pointer-events: none，
+   看着像按钮却没反应）。热区放大到 22×22，图形本身还是那个小 ✎。 */
+.photo-cap-badge {
+  position: absolute; left: 0; bottom: 0;
+  width: 22px; height: 22px; padding: 0;
+  border: none; background: none;
+  color: #fff; font-size: 11px; line-height: 22px; text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.photo-cap-badge:active { color: #cfe0ff; }
+.photo-video-badge {
+  position: absolute; right: 3px; bottom: 2px;
+  color: #fff; font-size: 11px; line-height: 1;
+  text-shadow: 0 1px 3px rgba(0,0,0,.9);
+  pointer-events: none;
+}
+
+/* ICP 备案号页脚（工信部要求：首页底部展示备案号并链接 beian.miit.gov.cn）。
+   主界面是全屏地图，用固定定位贴底居中；登录框里那处走静态流式布局。 */
+.icp-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  z-index: 400;              /* 高于地图，低于登录层(见下)与各类弹窗 */
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: none;      /* 不挡地图拖拽，只有链接本身可点 */
+}
+.icp-footer a {
+  pointer-events: auto;
+  color: var(--muted);
+  text-decoration: none;
+  background: rgba(255, 255, 255, .78);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.icp-footer a:hover { text-decoration: underline; }
+
+/* 登录框内的那份：跟随内容流，不固定 */
+.login-box .icp-footer {
+  position: static;
+  margin-top: 14px;
+  pointer-events: auto;
+}
+.login-box .icp-footer a { background: none; padding: 0; }

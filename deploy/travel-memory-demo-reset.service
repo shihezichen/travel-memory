@@ -1,0 +1,10 @@
+[Unit]
+Description=Travel Memory — 演示账号每日重置（当天改动一律不保留）
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/travel-memory
+# 换成你自己的路径；用虚拟环境里的 python，保证依赖齐全
+ExecStart=%h/travel-memory/.venv/bin/python %h/travel-memory/scripts/reset_demo.py
+# 想换个演示账号名就改这里
+Environment=DEMO_USER=test

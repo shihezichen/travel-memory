@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# 提交后回声 —— 唯一职责：让「绕过检查」这件事看得见。
+#
+# git commit --no-verify 会跳过 pre-commit，但**不会**跳过 post-commit。
+# 所以 pre-commit 每次跑完会留一个时间戳文件，这里检查它在不在：
+# 不在 = 刚才那次提交绕过了检查，明确打一行醒目提示，别让它悄无声息地过去。
+set -uo pipefail
+GITDIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+STAMP="$GITDIR/tm-precommit-stamp"
+
+if [ -t 1 ]; then Y=$'\033[33m'; G=$'\033[32m'; B=$'\033[1m'; N=$'\033[0m'
+else Y=''; G=''; B=''; N=''; fi
+
+# 合并 / cherry-pick / rebase 产生的提交本来就不跑 pre-commit，不算「绕过」
+if [ -e "$GITDIR/MERGE_HEAD" ] || [ -e "$GITDIR/CHERRY_PICK_HEAD" ] \
+   || [ -d "$GITDIR/rebase-merge" ] || [ -d "$GITDIR/rebase-apply" ]; then
+  rm -f "$STAMP"; exit 0
+fi
+
+if [ ! -f "$STAMP" ]; then
+  echo ""
+  echo "${Y}${B}⚠ 这次提交绕过了提交前检查（--no-verify）。${N}"
+  echo "${Y}  没有跑：密钥扫描 + 快速测试套件。${N}"
+  echo "${Y}  推之前请补一次：  ./test.sh  &&  scripts/scan-secrets.sh --staged${N}"
+  echo "${Y}  （提交： $(git rev-parse --short HEAD)  $(git log -1 --pretty=%s)）${N}"
+  echo ""
+  exit 0
+fi
+
+AGE=$(( $(date +%s) - $(head -n1 "$STAMP" 2>/dev/null || echo 0) ))
+WHAT=$(sed -n 2p "$STAMP" 2>/dev/null)
+rm -f "$STAMP"
+if [ "$AGE" -gt 900 ]; then
+  echo "${Y}⚠ 提交前检查的结果已经是 $((AGE/60)) 分钟前的了，可能不反映当前代码。${N}"
+elif [ "$WHAT" = "skipped-by-env" ]; then
+  echo "${Y}⚠ 本次提交用 TM_SKIP_TESTS=1 跳过了测试（密钥扫描已跑）。记得补 ./test.sh${N}"
+fi
+exit 0

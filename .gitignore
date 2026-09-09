@@ -1,0 +1,55 @@
+# ---- 凭证 / 密钥（绝不入库）----
+amap_key.txt
+amap_security.txt
+token.txt
+icp.txt
+*.pem
+*.key
+*.crt
+*.csr
+.env
+.env.*
+
+# ---- 证书签发工具与私钥 ----
+# acme/ 里有 TLS 私钥、Let's Encrypt 账户私钥，还有 64MB 的 lego 二进制
+acme/
+
+# ---- 用户数据（含密码哈希、行程、照片）----
+data.db
+data.db-journal
+data.db-wal
+data.db-shm
+uploads/
+
+# ---- 运行时产物 ----
+logs/
+*.log
+backups/
+ops/.alert-state/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+
+# ---- 编辑器 / 系统 ----
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ---- 开发过程留下的源码快照 ----
+*.bak
+*.bak-*
+*.orig
+
+# ---- Agent / 本机运维专用，不属于项目本体 ----
+# 这些是把代码和数据同步到另一台机器、发飞书告警、切域名之类的私有基建脚本，
+# 里面是特定机器的路径和主机名，对别人没有意义。文件仍留在本地磁盘上。
+ops/
+backup.sh
+switch-to-domain.sh
+sync-to-top001.sh
+set-icp.sh
+TRAVEL-MEMORY-HANDOFF.md
+*.deprecated-*

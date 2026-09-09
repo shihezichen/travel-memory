@@ -1,0 +1,11 @@
+[Unit]
+Description=Travel Memory — 每天 03:00 重置演示账号
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# 机器当时没开机的话，开机后补跑一次
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

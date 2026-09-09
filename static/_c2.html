@@ -1,0 +1,36 @@
+<!doctype html><meta charset="utf-8"><style>html,body{margin:0}iframe{border:0}</style><body>
+<iframe id="fr" style="width:390px;height:844px"></iframe>
+<div id="out" style="font:12px monospace;white-space:pre"></div>
+<script>document.cookie='tm_token=rDW4ouyHsqgLGnA7ATN6Pmhnd-_Elgn3Rz23Ak4OCnA; path=/';
+const log=[];const f=document.getElementById('fr');f.src='/';const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+f.onload=async()=>{const d=f.contentDocument,w=f.contentWindow;
+w.onerror=(m,s,l)=>log.push('JS-ERROR: '+m+' @'+l);
+// 拦住下载，改成读 blob 尺寸
+let blobInfo=null;
+const origCreate=w.URL.createObjectURL.bind(w.URL);
+w.URL.createObjectURL=(b)=>{ blobInfo=b; return origCreate(b); };
+await sleep(5000);
+d.getElementById('btn-more').click(); await sleep(600);
+[...d.querySelectorAll('.more-sheet-item')].find(b=>b.textContent.includes('分享当前行程')).click(); await sleep(1200);
+d.querySelector('[data-ok]').click(); await sleep(5000);
+// —— 状态提示 ——
+log.push('弹窗标题「'+d.querySelector('.modal-box.share-card h2').textContent+'」');
+const live=d.querySelector('.share-live');
+log.push('状态条存在: '+!!live);
+if(live){
+  log.push('  主文案「'+d.querySelector('.share-live-title').textContent+'」');
+  log.push('  副文案「'+d.querySelector('.share-live-sub').textContent+'」');
+  log.push('  背景色 '+w.getComputedStyle(live).backgroundColor);
+}
+// —— 卡片图片比例 ——
+d.querySelector('#share-card-download').click(); await sleep(2500);
+if(blobInfo){
+  const bmp=await createImageBitmap(blobInfo);
+  log.push('导出图片: '+bmp.width+'x'+bmp.height+'  比例 '+(bmp.width/bmp.height).toFixed(3)+' （3:4=0.750）');
+  log.push('  逻辑尺寸 '+(bmp.width/2)+'x'+(bmp.height/2)+' @2x');
+  window.__bmp=blobInfo;
+  const u=URL.createObjectURL(blobInfo);
+  const im=document.createElement('img'); im.src=u; im.style.width='300px'; document.body.appendChild(im);
+} else log.push('没抓到导出的图片');
+document.getElementById('out').textContent=log.join('\n');};
+</script></body>

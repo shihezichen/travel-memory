@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>开发者控制台 · Travel Memory</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel2: #1d212b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8a919e;
+    --accent: #6366f1;
+    --accent2: #818cf8;
+    --green: #34d399;
+    --red: #f87171;
+    --amber: #fbbf24;
+    --mono: "SFMono-Regular", "JetBrains Mono", "Consolas", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+  header .brand { display: flex; align-items: baseline; gap: 10px; }
+  header .brand h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+  header .brand span { color: var(--muted); font-size: 13px; }
+  header .user { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+  header .user b { color: var(--text); font-weight: 500; }
+
+  /* Tab 导航 */
+  .tabs { display: flex; gap: 4px; margin-top: 20px; border-bottom: 1px solid var(--border); }
+  .tab {
+    padding: 9px 18px; border: 1px solid transparent; border-bottom: none;
+    border-radius: 8px 8px 0 0; color: var(--muted); font-size: 13.5px; cursor: pointer;
+    background: transparent; transition: all .15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); background: var(--panel); border-color: var(--border); font-weight: 500; }
+  .tab.active::after { content: ''; display: block; height: 2px; background: var(--accent); border-radius: 2px; margin-top: 6px; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  section { margin-top: 28px; }
+  section > h2 {
+    font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin-bottom: 12px;
+  }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .card.pad { padding: 20px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; background: var(--panel2); }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .muted { color: var(--muted); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); font-size: 13px; cursor: pointer;
+    transition: all .15s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent2); }
+  .btn.danger { color: var(--red); }
+  .btn.danger:hover { border-color: var(--red); background: rgba(248,113,113,.08); }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11.5px; font-weight: 500; }
+  .tag.read { background: rgba(99,102,241,.15); color: var(--accent2); }
+  .tag.write { background: rgba(251,191,36,.15); color: var(--amber); }
+  .tag.share { background: rgba(52,211,153,.15); color: var(--green); }
+  .tag.admin { background: rgba(248,113,113,.15); color: var(--red); }
+  .tag.revoked { background: rgba(138,145,158,.15); color: var(--muted); text-decoration: line-through; }
+  .tag.expired { background: rgba(138,145,158,.15); color: var(--muted); }
+
+  .scope-row { display: flex; flex-wrap: wrap; gap: 14px; margin: 12px 0; }
+  .scope-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+  .scope-row input { accent-color: var(--accent); }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 9px 12px; color: var(--text); font-size: 13px; outline: none;
+  }
+  .field input:focus { border-color: var(--accent); }
+
+  /* 提示词区块 */
+  .prompt-box {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; font-family: var(--mono); font-size: 12.5px; line-height: 1.75;
+    white-space: pre-wrap; word-break: break-all; color: var(--text); margin: 12px 0;
+    max-height: 320px; overflow-y: auto;
+  }
+  .prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .prompt-head .sel { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .prompt-head select { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text); font-size: 13px; outline: none; }
+
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal.show { display: flex; }
+  .modal .box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: 560px; width: 92%; max-height: 88vh; overflow-y: auto; }
+  .modal h3 { font-size: 15px; margin-bottom: 6px; }
+  .modal .warn { color: var(--amber); font-size: 13px; margin-bottom: 14px; }
+  .modal .keybox { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: var(--mono); font-size: 13px; word-break: break-all; margin-bottom: 16px; }
+  .modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; font-size: 13px; display: none; z-index: 200; }
+  .toast.show { display: block; }
+  .toast.err { border-color: var(--red); color: var(--red); }
+  .empty { color: var(--muted); text-align: center; padding: 28px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>开发者控制台</h1>
+      <span>Travel Memory · API 接入管理</span>
+    </div>
+    <div class="user">
+      <span>登录为 <b id="who">…</b></span>
+      <button class="btn" onclick="logout()">退出</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-page="keys" onclick="switchTab('keys')">🔑 API Keys</button>
+    <button class="tab" data-page="usage" onclick="switchTab('usage')">📊 用量统计</button>
+    <button class="tab" data-page="audit" onclick="switchTab('audit')">📜 审计日志</button>
+  </nav>
+
+  <!-- ============ 页 1：API Keys（Key 管理 + Agent 接入） ============ -->
+  <div class="page active" id="page-keys">
+
+    <!-- Key 生成与管理放在接入方式之前：先有 Key，才能生成提示词 -->
+    <section>
+      <h2>创建 API Key</h2>
+      <div class="card pad">
+        <div class="field">
+          <label>Key 名称（备注用途，如「爱马仕总控」）</label>
+          <input id="key-name" type="text" placeholder="例如：Cursor 接入 / 爱马仕总控">
+        </div>
+        <label style="font-size:12px;color:var(--muted)">权限范围（scope）</label>
+        <div class="scope-row">
+          <label><input type="checkbox" id="sc-read" checked> read 只读</label>
+          <label><input type="checkbox" id="sc-write"> write 写入</label>
+          <label><input type="checkbox" id="sc-share"> share 分享</label>
+          <label id="sc-admin-wrap" style="display:none"><input type="checkbox" id="sc-admin"> admin 管理员</label>
+        </div>
+        <div class="field" style="max-width:220px">
+          <label>有效期（天，留空 = 永久）</label>
+          <input id="key-expire" type="number" min="1" placeholder="永久">
+        </div>
+        <button class="btn primary" id="btn-create" onclick="createKey()">生成 API Key</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>我的 API Keys</h2>
+      <div class="card">
+        <table>
+          <thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>创建时间</th><th>最后使用</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="keys-body"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 接入方式：只保留 Agent 接入一种，下面直接是发给 agent 的提示词（自动拼入所选 Key） -->
+    <section>
+      <h2>Agent 接入</h2>
+      <div class="card pad">
+        <p class="muted" style="font-size:13px;margin-bottom:6px">
+          把下面的提示词整段复制发给你的 Agent（爱马仕总控 / Claude / Cursor / 自研 Agent 等），
+          它会自动通过 MCP 协议接入你的旅行记忆。选择要授权的 Key：
+        </p>
+        <div class="prompt-head">
+          <div class="sel">
+            <span>使用 Key：</span>
+            <select id="prompt-key" onchange="updatePrompt()">
+              <option value="">（暂无 Key，请先在上方创建）</option>
+            </select>
+          </div>
+          <button class="btn primary" id="btn-copy-prompt" onclick="copyPrompt()">📋 复制提示词</button>
+        </div>
+        <div class="prompt-box" id="prompt-box">创建 API Key 后，这里会自动生成可直接发给 Agent 的接入提示词。</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ 页 2：用量统计 ============ -->
+  <div class="page" id="page-usage">
+    <section>
+      <h2>用量统计</h2>
+      <div class="card">
+        <table>
+          <thead><tr><th>Key</th><th>调用次数</th><th>成功</th><th>Token 消耗</th><th>最后使用</th></tr></thead>
+          <tbody id="usage-body"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ 页 3：审计日志 ============ -->
+  <div class="page" id="page-audit">
+    <section>
+      <h2>审计日志</h2>
+      <div class="card">
+        <table>
+          <thead><tr><th>时间</th><th>动作</th><th>scope</th><th>状态</th><th>详情</th></tr></thead>
+          <tbody id="audit-body"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- 生成 key 结果弹窗：raw key + 自动拼好的提示词 -->
+<div class="modal" id="key-modal">
+  <div class="box">
+    <h3>API Key 已生成</h3>
+    <p class="warn">⚠️ 完整 Key 仅显示这一次，关闭后无法再次查看。请立即复制保存。</p>
+    <div class="keybox" id="key-full"></div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:6px">发给 Agent 的接入提示词（已自动拼入 Key）：</p>
+    <div class="prompt-box" id="key-modal-prompt" style="max-height:200px"></div>
+    <div class="actions">
+      <button class="btn" onclick="copyKey()">复制 Key</button>
+      <button class="btn" onclick="copyPromptModal()">复制提示词</button>
+      <button class="btn primary" onclick="closeModal()">我已保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 查看某 Key 的提示词弹窗（预留） -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let isAdmin = false;
+let keysCache = [];
+/* 刚创建的 key 的 raw 值（仅本次会话内存暂存，用于自动生成完整提示词，刷新即失） */
+let pendingRaw = null;
+
+function toast(msg, err) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (err ? ' err' : '');
+  setTimeout(() => t.className = 'toast', 2600);
+}
+
+async function api(method, path, form) {
+  const opts = { method, headers: {} };
+  if (form) {
+    opts.body = new URLSearchParams(form);
+    opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  }
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || data.detail || ('HTTP ' + r.status));
+  return data;
+}
+
+/* ---------- Tab 切换 ---------- */
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.page === name));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
+  if (name === 'usage') loadUsage();
+  if (name === 'audit') loadAudit();
+}
+
+/* ---------- 提示词模板（唯一接入方式） ---------- */
+const PROMPT_TEMPLATE = (key, scope, name) => `你可以通过标准 MCP 协议接入我的旅行记忆平台（Travel Memory），帮我管理旅行行程和回忆。
+
+【接入信息】
+• 端点：${location.origin}/mcp
+• API Key：${key}
+• 认证方式：请求头 Authorization: Bearer ${key}（或 URL 参数 ?api_key=${key}）
+• 权限范围：${scope || 'read'}
+
+【你的能力】
+- 查询/创建/修改/删除我的旅行行程和地点
+- 读取行程记忆、生成旅行内容（总结 / 路书 / 明信片 / 日记等）
+- 上传/查看行程照片视频、导出行程数据、创建分享链接
+
+【使用步骤】
+1. 接入后先调用 tools/list 查看全部可用工具
+2. 按需调用工具读写我的旅行数据
+3. 回答我的问题时基于真实数据，不要编造`;
+
+/* 真实提示词（含完整 key）。key 只在生成弹窗 / 创建后暂存期可见。 */
+function buildPromptWithKey(keyObj) {
+  if (!keyObj || !keyObj.raw) return '该 Key 的完整值已不可见（仅生成时显示一次）。请重新创建 Key。';
+  return PROMPT_TEMPLATE(keyObj.raw, keyObj.scope || 'read', keyObj.name);
+}
+/* 预览版：有暂存 raw 就显示完整 key，否则显示前缀占位 */
+function buildPromptPreview(keyObj) {
+  if (!keyObj) return '创建 API Key 后，这里会自动生成可直接发给 Agent 的接入提示词。';
+  if (pendingRaw && String(pendingRaw.id) === String(keyObj.id)) {
+    return buildPromptWithKey({ ...keyObj, raw: pendingRaw.raw });
+  }
+  const scope = keyObj.scope || 'read';
+  return PROMPT_TEMPLATE(keyObj.key_prefix + '…（完整 Key 仅生成时可见）', scope, keyObj.name);
+}
+
+/* ---------- 加载 ---------- */
+async function load() {
+  try {
+    const me = await api('GET', '/api/console/me');
+    isAdmin = !!me.is_admin;
+    $('who').textContent = me.display_name || me.username;
+    if (isAdmin) $('sc-admin-wrap').style.display = '';
+  } catch (e) {
+    $('who').textContent = '未登录';
+    toast('未登录，请先在主界面登录后访问控制台', true);
+    return;
+  }
+  await loadKeys();
+}
+
+async function loadKeys() {
+  try {
+    const { keys } = await api('GET', '/api/console/keys');
+    keysCache = keys;
+    const body = $('keys-body');
+    if (!keys.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty">还没有 API Key，上方生成第一个</td></tr>';
+    } else {
+      body.innerHTML = keys.map(k => {
+        const status = k.revoked ? '<span class="tag revoked">已吊销</span>'
+          : (k.expires_at && k.expires_at < now() ? '<span class="tag expired">已过期</span>'
+             : '<span class="tag share">有效</span>');
+        const ops = `<button class="btn small danger" onclick="deleteKey(${k.id})">删除</button>`;
+        return `<tr>
+          <td>${esc(k.name)}</td>
+          <td class="mono muted">${esc(k.key_prefix)}…</td>
+          <td>${scopeTags(k.scope, k.revoked)}</td>
+          <td class="muted">${fmt(k.created_at)}</td>
+          <td class="muted">${k.last_used_at ? fmt(k.last_used_at) : '—'}</td>
+          <td>${status}</td>
+          <td style="white-space:nowrap">${ops}</td>
+        </tr>`;
+      }).join('');
+    }
+    refreshPromptSelector();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* Key 选择器：默认选第一个有效 key，优先选中刚创建的 key */
+function refreshPromptSelector() {
+  const sel = $('prompt-key');
+  const valid = keysCache.filter(k => !k.revoked);
+  const prev = sel.value;
+  sel.innerHTML = valid.map(k =>
+    `<option value="${k.id}">${esc(k.name)}（${esc(k.key_prefix)}… · ${esc(k.scope)}）</option>`
+  ).join('');
+  if (!valid.length) {
+    sel.innerHTML = '<option value="">（暂无 Key，请先在上方创建）</option>';
+  } else if (pendingRaw && valid.some(k => String(k.id) === String(pendingRaw.id))) {
+    sel.value = String(pendingRaw.id);           // 刚创建的 key 优先选中
+  } else if (valid.some(k => String(k.id) === prev)) {
+    sel.value = prev;
+  }
+  updatePrompt();
+}
+
+function selectedKey() {
+  const id = $('prompt-key').value;
+  return keysCache.find(k => String(k.id) === String(id)) || null;
+}
+
+function updatePrompt() {
+  $('prompt-box').textContent = buildPromptPreview(selectedKey());
+}
+
+function copyPrompt() {
+  const k = selectedKey();
+  if (!k) { toast('请先创建并选择 API Key', true); return; }
+  if (pendingRaw && String(pendingRaw.id) === String(k.id)) {
+    copyText(buildPromptWithKey({ ...k, raw: pendingRaw.raw }))
+      .then(() => toast('提示词已复制，可直接发给 Agent'))
+      .catch(() => toast('复制失败，请手动选择复制', true));
+    return;
+  }
+  toast('该 Key 的完整值仅生成时可见，请重新创建 Key 后立即复制提示词', true);
+}
+
+/* ---------- Key 操作 ---------- */
+async function createKey() {
+  const scope = [];
+  if ($('sc-read').checked) scope.push('read');
+  if ($('sc-write').checked) scope.push('write');
+  if ($('sc-share').checked) scope.push('share');
+  if (isAdmin && $('sc-admin').checked) scope.push('admin');
+  if (!scope.length) { toast('至少选择一个权限', true); return; }
+  const form = {
+    name: $('key-name').value,
+    scope: scope.join(','),
+    expire_days: $('key-expire').value || 0,
+  };
+  $('btn-create').disabled = true;
+  try {
+    const data = await api('POST', '/api/console/keys', form);
+    // 暂存 raw：关闭弹窗后页面底部提示词仍可带完整 key 复制
+    pendingRaw = { id: data.id, raw: data.key };
+    // 弹窗：raw key + 自动拼好的提示词
+    $('key-full').textContent = data.key;
+    const keyObj = { raw: data.key, scope: data.scope, name: form.name || '未命名' };
+    $('key-modal-prompt').textContent = buildPromptWithKey(keyObj);
+    $('key-modal').classList.add('show');
+    $('key-name').value = '';
+    await loadKeys();
+  } catch (e) { toast(e.message, true); }
+  $('btn-create').disabled = false;
+}
+
+async function deleteKey(id) {
+  const k = keysCache.find(x => x.id === id);
+  if (!confirm(`确认删除 Key「${k ? k.name : id}」？\n删除后立即失效且无法恢复，历史审计记录会保留。`)) return;
+  try {
+    await api('DELETE', '/api/console/keys/' + id);
+    if (pendingRaw && String(pendingRaw.id) === String(id)) pendingRaw = null;
+    toast('已删除');
+    await loadKeys();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- 用量 / 审计 ---------- */
+async function loadUsage() {
+  try {
+    const { usage } = await api('GET', '/api/console/usage');
+    const body = $('usage-body');
+    if (!usage.length) { body.innerHTML = '<tr><td colspan="5" class="empty">暂无调用记录</td></tr>'; return; }
+    body.innerHTML = usage.map(u => `
+      <tr>
+        <td>${esc(u.name)} <span class="muted mono">${esc(u.key_prefix)}…</span></td>
+        <td>${u.calls || 0}</td>
+        <td>${u.ok_calls || 0}</td>
+        <td>${u.tokens || 0}</td>
+        <td class="muted">${u.last_used_at ? fmt(u.last_used_at) : '—'}</td>
+      </tr>`).join('');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadAudit() {
+  try {
+    const { audit } = await api('GET', '/api/console/audit?limit=100');
+    const body = $('audit-body');
+    if (!audit.length) { body.innerHTML = '<tr><td colspan="5" class="empty">暂无审计记录</td></tr>'; return; }
+    body.innerHTML = audit.map(a => `
+      <tr>
+        <td class="muted mono">${fmt(a.created_at)}</td>
+        <td class="mono">${esc(a.action)}</td>
+        <td>${a.scope ? `<span class="tag ${a.scope.split(',')[0]}">${esc(a.scope)}</span>` : '—'}</td>
+        <td>${a.status === 'ok' ? '<span class="tag share">ok</span>' : '<span class="tag admin">' + esc(a.status) + '</span>'}</td>
+        <td class="muted">${esc(a.detail || '')}</td>
+      </tr>`).join('');
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- 剪贴板（兼容 HTTP：navigator.clipboard 仅 HTTPS/localhost 可用，降级 execCommand） ---------- */
+function copyText(text) {
+  return new Promise((resolve, reject) => {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(resolve).catch(() => fallbackCopy(text, resolve, reject));
+    } else {
+      fallbackCopy(text, resolve, reject);
+    }
+  });
+}
+function fallbackCopy(text, resolve, reject) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    ok ? resolve() : reject(new Error('复制失败'));
+  } catch (e) { reject(e); }
+}
+
+/* ---------- 弹窗 / 工具 ---------- */
+function copyKey() {
+  copyText($('key-full').textContent).then(() => toast('Key 已复制')).catch(() => toast('复制失败，请手动选择复制', true));
+}
+function copyPromptModal() {
+  copyText($('key-modal-prompt').textContent).then(() => toast('提示词已复制')).catch(() => toast('复制失败，请手动选择复制', true));
+}
+function closeModal() { $('key-modal').classList.remove('show'); $('key-full').textContent = ''; }
+
+async function logout() {
+  await api('POST', '/logout');
+  location.href = '/';
+}
+
+function scopeTags(scope, revoked) {
+  return scope.split(',').map(s => `<span class="tag ${revoked ? 'revoked' : s}">${s}</span>`).join(' ');
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmt(s) { return s ? String(s).replace('T', ' ').slice(0, 16) : '—'; }
+function now() { return new Date().toISOString().replace('T', ' ').slice(0, 16); }
+
+load();
+</script>
+</body>
+</html>

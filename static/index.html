@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <!-- 明确声明只支持浅色：本站主体是高德的浅色地图（canvas/瓦片），
+       浏览器的「强制深色」只会重写我们自己的 CSS 颜色、动不了地图，
+       结果就是浅色地图上出现浅色图标。声明后浏览器不再自动变暗。 -->
+  <meta name="color-scheme" content="light">
+  <title>旅行记忆</title>
+  <link rel="icon" href="/static/icon.svg?v=20260911p" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png?v=20260911p" sizes="32x32">
+  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260911p">
+  <link rel="manifest" href="/static/site.webmanifest?v=20260911p">
+  <meta name="theme-color" content="#FF8A00">
+  <link rel="stylesheet" href="/static/style.css?v=20260911p">
+  <script>
+    window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
+  </script>
+  <script src="https://webapi.amap.com/maps?v=__AMAP_VERSION__&key=__AMAP_KEY__&plugin=AMap.Autocomplete,AMap.Geocoder,AMap.Driving,AMap.Geolocation"></script>
+</head>
+<body>
+
+  <!-- 登录覆盖层 -->
+  <div id="login-overlay" class="login-overlay hidden">
+    <div class="login-box">
+      <h2 class="login-brand"><img src="/static/icon.svg?v=20260911p" alt="" width="44" height="44"><span>旅行记忆</span></h2>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-auth="login" type="button">登录</button>
+        <button class="auth-tab" data-auth="register" type="button">注册</button>
+      </div>
+
+      <!-- 登录 -->
+      <form id="login-form">
+        <input type="text" id="login-username" class="login-input" placeholder="用户名" autocomplete="username">
+        <input type="password" id="login-password" class="login-input" placeholder="密码" autocomplete="current-password">
+        <button type="submit" class="btn btn-primary btn-block">登录</button>
+      </form>
+
+      <!-- 体验账号：账号密码写死在前端，点一下直接进，不用输任何东西 -->
+      <div class="demo-login">
+        <button type="button" id="btn-demo-login" class="btn btn-block demo-btn">
+          体验账号一键登录
+        </button>
+      </div>
+
+      <!-- 注册 -->
+      <form id="register-form" class="hidden">
+        <input type="text" id="reg-username" class="login-input" placeholder="用户名（登录用）" autocomplete="off">
+        <input type="text" id="reg-display" class="login-input" placeholder="昵称（可选）" autocomplete="off">
+        <input type="password" id="reg-password" class="login-input" placeholder="密码（至少 6 位）" autocomplete="new-password">
+        <input type="password" id="reg-password2" class="login-input" placeholder="确认密码" autocomplete="new-password">
+        <button type="submit" class="btn btn-primary btn-block">注册并进入</button>
+      </form>
+
+      <p id="login-error" class="login-error hidden"></p>
+      __ICP_FOOTER__
+    </div>
+  </div>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260911p" alt="" width="22" height="22"><span>旅行记忆</span></div>
+      <select id="trip-select" class="trip-select"></select>
+      <!-- 手机端用这一组替代下拉：上一个 / 当前行程（点开卡片选择器）/ 下一个 -->
+      <div id="trip-nav" class="trip-nav">
+        <button id="btn-trip-prev" class="trip-nav-arrow" aria-label="上一个行程">‹</button>
+        <button id="trip-picker" class="trip-picker">
+          <span class="trip-picker-name">载入中…</span>
+          <span class="trip-picker-pos"></span>
+        </button>
+        <button id="btn-trip-next" class="trip-nav-arrow" aria-label="下一个行程">›</button>
+      </div>
+      <button id="btn-new-trip" class="btn topbtn">＋ 新行程</button>
+      <button id="btn-edit-trip" class="btn topbtn" title="编辑当前行程">✎</button>
+      <button id="btn-recalc" class="btn topbtn" title="强制重新计算路线曲线（正常无需使用，路线会自动缓存）">🔄</button>
+      <button id="btn-share-trip" class="btn topbtn" title="分享当前行程（只读链接）">🔗</button>
+      <button id="btn-export-trip" class="btn topbtn" title="导出行程为纯文本（便于手工编辑）">⬇️</button>
+      <button id="btn-import-trip" class="btn topbtn" title="从纯文本导入行程">⬆️</button>
+      <button id="btn-console" class="btn topbtn" title="开发者控制台（API Key 管理）">🧑💻</button>
+      <button id="btn-logout" class="btn topbtn" title="退出登录">⏻</button>
+      <button id="btn-more" class="btn more-btn" title="更多操作">⋯</button>
+    </header>
+    <div class="userbar">
+      <span id="current-user" class="current-user"></span>
+      <span id="top-stats" class="top-stats" title="点击查看完整统计"></span>
+    </div>
+
+    <main class="layout">
+      <div id="map" class="map">
+        <button id="btn-layers" class="map-fab fab-layers" title="图层控制：景区 / 卫星 / 路况" aria-label="图层控制"></button>
+        <div id="layer-panel" class="layer-panel hidden">
+          <div class="layer-title">图层控制</div>
+          <label class="layer-item"><input type="checkbox" id="lay-poi"> 景区景点</label>
+          <label class="layer-item"><input type="checkbox" id="lay-satellite"> 卫星底图</label>
+          <label class="layer-item"><input type="checkbox" id="lay-traffic"> 路况</label>
+          <label class="layer-item" title="所有去过的地方"><input type="checkbox" id="lay-heatmap"> 足迹热力图</label>
+          <label class="layer-item" title="各点的照片和视频，多图重叠"><input type="checkbox" id="lay-photos"> 照片视频</label>
+        </div>
+        <button id="btn-map-fullscreen" class="map-fab fab-fullscreen" title="地图全屏" aria-label="地图全屏">⛶</button>
+        <button id="btn-fit-view" class="map-fab fab-fit" title="全览：把整个行程收进视野" aria-label="全览整个行程">⤢</button>
+        <button id="btn-locate" class="map-fab fab-locate" title="定位到我的位置" aria-label="定位到我的位置"></button>
+        <button id="btn-panel-open" class="map-fab hidden" title="展开详情" aria-label="展开详情">☰</button>
+        <button id="replay-launch" class="replay-launch hidden" title="轨迹回放：沿路线播放旅程动画" aria-label="轨迹回放">▶</button>
+        <div id="replay-bar" class="replay-bar hidden">
+          <button id="replay-toggle" class="replay-btn" title="轨迹回放：播放中点击=暂停，暂停中点击=停止，停止后点击=从头播放">▶</button>
+          <div class="replay-progress"><div id="replay-fill" class="replay-fill"></div><span id="replay-count" class="replay-count"></span></div>
+          <span id="replay-name" class="replay-name"></span>
+          <div class="replay-speed">
+            <button type="button" id="replay-speed" class="spd active" title="点击切换播放速度">1x</button>
+          </div>
+          <button id="replay-close" class="replay-close" title="最小化回放条（不中断播放）">—</button>
+        </div>
+      </div>
+
+      <div class="panel-resizer" title="拖拽调整面板高度" aria-label="拖拽调整面板高度">
+        <button id="btn-panel-toggle" class="panel-toggle" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 8 12 13 17 8"/><line x1="5" y1="17.5" x2="19" y2="17.5"/></svg></button>
+      </div>
+
+      <aside class="panel">
+        <div class="tabs">
+          <button class="tab active" data-tab="points">轨迹点</button>
+          <button class="tab" data-tab="detail">点详情</button>
+          <button class="tab" data-tab="albums">相册</button>
+          <button id="btn-panel-toggle-wide" class="panel-toggle wide-only" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 7 13 12 8 17"/><line x1="17.5" y1="5" x2="17.5" y2="19"/></svg></button>
+          <span class="tab-indicator" aria-hidden="true"></span>
+        </div>
+
+        <!-- 三个 tab 页做成一条横向轨道，切换时整条平移，形成卡片轮播效果 -->
+        <div class="view-track">
+          <section id="points-view" class="view" aria-hidden="false">
+            <ul id="point-list" class="point-list"></ul>
+          </section>
+
+          <section id="detail-view" class="view" aria-hidden="true">
+            <div id="detail-empty" class="empty-hint">点击地图上的点查看详情</div>
+            <div id="detail-body" class="hidden">
+              <!-- 标题行把「名字 + 日期 + 编辑/删除」并成一行：
+                   原来名字、日期经纬度、底部两个按钮各占一行，三行都是给图片让位的代价。
+                   经纬度移到名字的 title 里（悬停/长按可见），日期跟在名字后面。 -->
+              <div class="detail-head">
+                <h3 id="detail-name"></h3>
+                <span id="detail-date" class="detail-date"></span>
+                <button id="btn-edit-point" class="detail-act" title="编辑轨迹点" aria-label="编辑轨迹点"></button>
+                <button id="btn-del-point" class="detail-act danger" title="删除轨迹点" aria-label="删除轨迹点"></button>
+              </div>
+              <p id="detail-desc" class="detail-desc"></p>
+              <!-- 上传入口做进网格最后一格的「＋」（见 buildMediaAddCell），
+                   原来那条独占一行的按钮就省掉了，照片区域多出一整行 -->
+              <input type="file" id="file-input" accept="image/*,video/*" multiple hidden>
+              <div id="media-grid" class="media-grid"></div>
+            </div>
+          </section>
+
+          <section id="albums-view" class="view" aria-hidden="true">
+            <!-- 相册：扁平缩略图网格（类 iOS 照片）—— 类型筛选 / 时间排序 / 缩放 -->
+            <div class="photo-toolbar">
+              <div id="photo-filter" class="seg">
+                <button class="seg-btn active" data-filter="all">全部</button>
+                <button class="seg-btn" data-filter="photo">照片</button>
+                <button class="seg-btn" data-filter="video">视频</button>
+              </div>
+              <span id="photo-count" class="photo-count"></span>
+              <div class="photo-tools">
+                <button id="btn-photo-sort" class="icon-btn" title="切换时间排序">↓ 新→旧</button>
+                <button id="btn-photo-zoom-out" class="icon-btn" title="缩小（每行更多）">－</button>
+                <button id="btn-photo-zoom-in" class="icon-btn" title="放大（每行更少）">＋</button>
+              </div>
+            </div>
+            <div id="photo-grid" class="photo-grid"></div>
+          </section>
+        </div>
+
+        <!-- 添加地点：面板内浮动加号按钮 -->
+        <div id="add-point-bar">
+          <button id="btn-add-point" class="btn-fab" title="添加地点">＋</button>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- 媒体灯箱 -->
+  <div id="lightbox" class="lightbox hidden">
+    <div class="lightbox-close" id="lightbox-close">×</div>
+    <div class="lightbox-prev" id="lightbox-prev">‹</div>
+    <div class="lightbox-next" id="lightbox-next">›</div>
+    <div class="lightbox-stage" id="lightbox-stage"></div>
+    <div class="lightbox-counter" id="lightbox-counter"></div>
+  </div>
+
+  <!-- 模态框 -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="modal-title"></h2>
+      <form id="modal-form">
+        <div id="modal-fields"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="btn-cancel">取消</button>
+          <button type="submit" class="btn btn-primary">确定</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 完整统计弹窗 -->
+  <div id="stats-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="stats-modal-title">行程统计</h2>
+      <div id="stats-modal-body" class="stat-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="stats-modal-close">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 路线选择浮层（地图可视化，多方案颜色区分） -->
+  <div id="route-chooser" class="route-chooser hidden">
+    <div class="route-chooser-box">
+      <h3>选择路线</h3>
+      <p id="route-chooser-sub" class="route-chooser-sub"></p>
+      <div id="route-chooser-list" class="route-chooser-list"></div>
+      <div class="route-chooser-actions">
+        <button type="button" class="btn" id="route-chooser-cancel">取消</button>
+        <button type="button" class="btn btn-primary" id="route-chooser-ok">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="import-file-input" accept=".json,.txt,application/json" hidden>
+
+  __ICP_FOOTER__
+
+  <script src="/static/app.js?v=20260911p"></script>
+</body>
+</html>

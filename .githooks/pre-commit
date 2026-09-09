@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# travel-memory 提交前检查 —— 由 core.hooksPath=.githooks 挂上，所以 clone 下来就有。
+#
+# 顺序（先便宜且不可逆的，后贵的）：
+#   1) scripts/scan-secrets.sh --staged   密钥泄露一旦推出去只能吊销换发，最优先拦
+#   2) tests/run.sh                       快速套件（单元 + API），约 10 秒
+# E2E 要拉浏览器、十几秒，**故意不放进 pre-commit**，它由每天 02:40 的定时任务跑。
+#
+# 绕过：
+#   git commit --no-verify        （急事用；提交后 post-commit 会明确提示你绕过了）
+#   TM_SKIP_TESTS=1 git commit    （只跳测试，密钥扫描照跑 —— 推荐用这个）
+#
+# 安装（新 clone 后跑一次）：  ./test.sh install-hooks
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+GITDIR="$(git rev-parse --git-dir)"
+STAMP="$GITDIR/tm-precommit-stamp"
+rm -f "$STAMP"
+
+if [ -t 1 ]; then R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; B=$'\033[1m'; N=$'\033[0m'
+else R=''; G=''; Y=''; B=''; N=''; fi
+
+fail() {
+  echo ""
+  echo "${R}${B}✗ 提交已拦下：$1${N}"
+  echo "${Y}  修好后重新 commit；确实要带着问题提交，用 git commit --no-verify${N}"
+  echo ""
+  exit 1
+}
+
+# ---------------------------------------------------------------- 1. 密钥扫描
+if [ -x scripts/scan-secrets.sh ]; then
+  echo "${B}[1/2] 扫描暂存区有没有硬编码密钥…${N}"
+  if ! scripts/scan-secrets.sh --staged; then
+    echo ""
+    echo "${R}${B}✗ 暂存区里有疑似密钥（上面列出了位置）。${N}"
+    echo "${Y}  这类东西一旦推上去就只能吊销换发，不要用 --no-verify 硬闯。${N}"
+    echo "${Y}  正确做法：把密钥挪到仓库外的配置文件（如 amap_key.txt）并加进 .gitignore，${N}"
+    echo "${Y}            然后 git restore --staged <文件> 重新改过再提交。${N}"
+    echo ""
+    exit 1
+  fi
+else
+  echo "${Y}[1/2] 找不到 scripts/scan-secrets.sh，跳过密钥扫描${N}"
+fi
+
+# ---------------------------------------------------------------- 2. 快速测试
+if [ "${TM_SKIP_TESTS:-}" = "1" ]; then
+  echo ""
+  echo "${Y}${B}⚠ TM_SKIP_TESTS=1 —— 本次提交跳过了测试套件。${N}"
+  echo "${Y}  密钥扫描已跑过，但代码是否还能工作没有验证。请尽快补跑 ./test.sh${N}"
+  echo ""
+  date +%s > "$STAMP"; echo "skipped-by-env" >> "$STAMP"
+  exit 0
+fi
+
+# 只改文档就不必跑测试（密钥扫描已经跑过了）
+CODEFILES=$(git diff --cached --name-only --diff-filter=ACM \
+            | grep -Ev '\.(md|txt|png|jpg|jpeg|gif|svg|webp)$|^LICENSE$' || true)
+if [ -z "$CODEFILES" ]; then
+  echo "${G}[2/2] 本次只改了文档/图片，跳过测试${N}"
+  date +%s > "$STAMP"; echo "docs-only" >> "$STAMP"
+  exit 0
+fi
+
+# 没建 .venv 的机器（刚 clone、还没跑 setup.sh）不该被卡住 —— 提醒一句就放行。
+# 密钥扫描是纯 shell，任何机器上都跑得了，那一步不会被跳过。
+if [ ! -x .venv/bin/python ]; then
+  echo "${Y}[2/2] 没有 .venv，跳过测试。建好环境后测试才会自动跑：${N}"
+  echo "${Y}      ./setup.sh  &&  .venv/bin/pip install -r requirements-dev.txt${N}"
+  date +%s > "$STAMP"; echo "no-venv" >> "$STAMP"
+  exit 0
+fi
+
+# 工作区里还有没暂存的改动时提醒一句：测试跑的是工作区，不是暂存快照
+if ! git diff --quiet; then
+  echo "${Y}提醒：工作区有未暂存的改动，测试跑的是工作区状态，未必等于本次提交的内容。${N}"
+fi
+
+echo "${B}[2/2] 跑快速测试套件（单元 + API，约 10 秒）…${N}"
+LOG="$(mktemp -t tm-precommit-XXXXXX.log)"
+# COLUMNS=200：pytest 按终端宽度截断 “FAILED <nodeid> - <原因>”，
+# 重定向到文件时默认只有 80 列，nodeid 一长原因就没了。
+if COLUMNS=200 ./tests/run.sh > "$LOG" 2>&1; then
+  tail -n 3 "$LOG"
+  rm -f "$LOG"
+  echo "${G}✓ 检查通过${N}"
+  date +%s > "$STAMP"; echo "full" >> "$STAMP"
+  exit 0
+fi
+
+# 失败：把 pytest 的 short summary 原样打出来，看得见是哪个用例、什么原因
+echo ""
+echo "${R}${B}—— 失败明细 ——${N}"
+if grep -q "short test summary info" "$LOG"; then
+  sed -n '/short test summary info/,$p' "$LOG" | grep -E '^(FAILED|ERROR)' | head -20
+  echo ""
+fi
+sed -n '/=\+ FAILURES/,$p' "$LOG" | head -60
+echo ""
+echo "${Y}完整输出：$LOG${N}"
+echo "${Y}单独重跑某条：  ./test.sh -k <用例名> -vv${N}"
+fail "快速测试套件没过"

@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""把演示账号（默认 test）恢复成出厂状态 —— 当天所有改动一律不保留。
+
+公开演示账号谁都能登、谁都能改，一天下来数据就面目全非了。
+这个脚本设计成每天定时跑一次（推荐 03:00），把它整个抹掉重建。
+
+做的事：
+  1. 踢掉该账号所有登录会话（别人正开着的页面下次操作会被要求重新登录）
+  2. 清掉该账号在各张附属表里的痕迹：API Key、偏好、生成记录、幂等键、审计日志、点元数据
+  3. 调用 seed_test_user.py 重建行程 / 地点 / 照片 / 描述（它自己会先清行程、点、媒体、分享和磁盘文件）
+  4. 重置密码为出厂值，并把「上次打开的行程」指回第一个
+
+用法：
+    python3 scripts/reset_demo.py            # 重置默认演示账号 test
+    DEMO_USER=demo python3 scripts/reset_demo.py
+
+想关掉这个功能，把定时器停掉即可，脚本本身不会被任何请求触发。
+"""
+import os
+import subprocess
+import sys
+from datetime import datetime
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+os.chdir(ROOT)
+
+import db  # noqa: E402
+
+DEMO_USER = os.environ.get("DEMO_USER", "test")
+
+
+def log(msg):
+    print("[%s] %s" % (datetime.now().strftime("%F %T"), msg), flush=True)
+
+
+def main():
+    u = db.get_user_by_username(DEMO_USER)
+    if not u:
+        # 账号还不存在：直接交给 seed 脚本从零建
+        log("演示账号 %s 不存在，走全新创建" % DEMO_USER)
+    else:
+        uid = u["id"]
+        c = db.get_conn()
+        # 会话：不清的话，别人已经登着的页面能一直用下去
+        n_sess = c.execute("DELETE FROM sessions WHERE user_id=?", (uid,)).rowcount
+        # 附属表。generations / point_meta 挂在 trip/point 上，seed 会删 trip 和 point，
+        # 但不一定级联，所以这里先按 user 反查着删干净，免得留下孤儿行。
+        c.execute(
+            "DELETE FROM point_meta WHERE point_id IN "
+            "(SELECT p.id FROM points p JOIN trips t ON t.id=p.trip_id WHERE t.user_id=?)",
+            (uid,))
+        c.execute(
+            "DELETE FROM generations WHERE trip_id IN (SELECT id FROM trips WHERE user_id=?)",
+            (uid,))
+        c.execute(
+            "DELETE FROM idempotency_keys WHERE api_key_id IN "
+            "(SELECT id FROM api_keys WHERE user_id=?)", (uid,))
+        n_keys = c.execute("DELETE FROM api_keys WHERE user_id=?", (uid,)).rowcount
+        c.execute("DELETE FROM audit_log WHERE user_id=?", (uid,))
+        c.execute("DELETE FROM user_prefs WHERE user_id=?", (uid,))
+        c.commit()
+        c.close()
+        log("已清理：%d 个会话、%d 个 API Key，以及偏好/生成/审计/点元数据" % (n_sess, n_keys))
+
+    # 重建行程与照片（seed 脚本本身幂等：先清行程/点/媒体/分享和磁盘文件，再重建）
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "seed_test_user.py")],
+                       capture_output=True, text=True, cwd=ROOT)
+    if r.returncode != 0:
+        log("重建失败：\n%s\n%s" % (r.stdout[-2000:], r.stderr[-2000:]))
+        return 1
+    for line in r.stdout.strip().splitlines():
+        log("  " + line)
+
+    # 把「上次打开的行程」归位，保证下次登录看到的画面也是出厂状态。
+    # 选媒体最多的那个行程而不是列表第一个：列表按开始日期倒序，排头的往往是
+    # 「计划中」的空行程，演示账号一登进来看到空白地图，第一印象就废了。
+    u = db.get_user_by_username(DEMO_USER)
+    if u:
+        c = db.get_conn()
+        row = c.execute(
+            "SELECT t.id, t.name, COUNT(m.id) AS n FROM trips t "
+            "LEFT JOIN points p ON p.trip_id = t.id "
+            "LEFT JOIN media m ON m.point_id = p.id "
+            "WHERE t.user_id=? GROUP BY t.id ORDER BY n DESC, t.id ASC LIMIT 1",
+            (u["id"],)).fetchone()
+        c.close()
+        if row:
+            db.set_last_trip(u["id"], row["id"])
+            log("last_trip_id 归位 -> %s（%s，%s 个媒体）" % (row["id"], row["name"], row["n"]))
+    log("演示账号 %s 已恢复出厂状态" % DEMO_USER)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

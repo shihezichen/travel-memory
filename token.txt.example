@@ -1,0 +1,2 @@
+管理员 token，自己生成一串随机字符串即可，例如：
+  python3 -c "import secrets; print(secrets.token_urlsafe(24))"
