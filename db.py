@@ -68,6 +68,27 @@ CREATE TABLE IF NOT EXISTS media (
 );
 CREATE INDEX IF NOT EXISTS idx_media_point ON media(point_id);
 
+-- 视频清晰度档位。一个 media 一行一档（720p/480p…），原画档不在这里
+-- （原画就是 media.filename 本身，由接口合成出来，永远可用）。
+-- status: pending 排队中 / running 转码中 / done 可播 / failed 失败（可重试）
+-- 失败的档位不影响播放：前端永远能回退到原画。
+CREATE TABLE IF NOT EXISTS media_variants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    filename TEXT,
+    width INTEGER,
+    height INTEGER,
+    bitrate INTEGER,
+    filesize INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE(media_id, label)
+);
+CREATE INDEX IF NOT EXISTS idx_variants_media ON media_variants(media_id);
+
 CREATE TABLE IF NOT EXISTS shares (
     token TEXT PRIMARY KEY,
     trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
@@ -173,6 +194,40 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     UNIQUE(api_key_id, client_request_id)
 );
 CREATE INDEX IF NOT EXISTS idx_idem_key ON idempotency_keys(api_key_id, client_request_id);
+
+-- 断点续传会话。大文件被切成分片逐个上传，这张表记「传到哪了」，
+-- 使浏览器刷新/断网之后还能接着传（见 app.py 的 /api/upload-sessions/* 一组接口）。
+-- fingerprint 是客户端算的文件指纹（首若干 MB + 大小 + 名字 + lastModified 的哈希），
+-- 同一个 (point_id, owner_id, fingerprint) 只会有一个活跃会话 —— 重复「创建」直接复用。
+CREATE TABLE IF NOT EXISTS upload_sessions (
+    session_id TEXT PRIMARY KEY,
+    point_id INTEGER NOT NULL REFERENCES points(id) ON DELETE CASCADE,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    filesize INTEGER NOT NULL,
+    chunk_size INTEGER NOT NULL,
+    total_chunks INTEGER NOT NULL,
+    mtype TEXT,                                -- photo / video（按扩展名判定，建会话时就定死）
+    status TEXT DEFAULT 'uploading',           -- uploading / completed / aborted
+    media_id INTEGER,                          -- 合并成功后写入，便于幂等重复 complete
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_lookup
+    ON upload_sessions(point_id, owner_id, fingerprint, status);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_updated ON upload_sessions(updated_at);
+
+-- 已收到的分片。刻意用「一行一个分片」而不是在 upload_sessions 里存一个 JSON 位图：
+-- 同一个文件的多个分片是并发上传的，JSON 列会退化成读-改-写，丢更新是必然的。
+-- 拆成独立行之后每个分片各写各的，靠主键做幂等（重传同一片 = INSERT OR REPLACE）。
+CREATE TABLE IF NOT EXISTS upload_chunks (
+    session_id TEXT NOT NULL REFERENCES upload_sessions(session_id) ON DELETE CASCADE,
+    idx INTEGER NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (session_id, idx)
+);
 """
 
 # 会话有效期（天）
@@ -244,6 +299,21 @@ def init_db():
         # 点详情里可以像发朋友圈那样拖拽排序，顺序存这里。
         # 默认 0 = 没排过，此时仍按拍摄时间排（见 list_media 的 ORDER BY）
         conn.execute("ALTER TABLE media ADD COLUMN sort_order INTEGER DEFAULT 0")
+    # 兼容旧库：media_variants 表可能是早期版本建的，缺列就补上。
+    # 表本身在 SCHEMA 里 CREATE IF NOT EXISTS，所以这里只管列。
+    variant_cols = [r["name"] for r in conn.execute("PRAGMA table_info(media_variants)")]
+    if variant_cols:            # 表存在才谈得上补列
+        if "bitrate" not in variant_cols:
+            # 档位实际码率（kb/s），NULL = 还没探测到（转码未完成或 ffprobe 缺失）
+            conn.execute("ALTER TABLE media_variants ADD COLUMN bitrate INTEGER")
+        if "filesize" not in variant_cols:
+            # 档位文件字节数，NULL = 还没转好
+            conn.execute("ALTER TABLE media_variants ADD COLUMN filesize INTEGER")
+        if "error" not in variant_cols:
+            # 最近一次转码失败的原因，成功后清回 NULL
+            conn.execute("ALTER TABLE media_variants ADD COLUMN error TEXT")
+        if "updated_at" not in variant_cols:
+            conn.execute("ALTER TABLE media_variants ADD COLUMN updated_at TEXT")
     # 兼容旧库：users 若无 last_trip_id 列则补上（记住上次打开的行程，跨设备生效）
     user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
     if "last_trip_id" not in user_cols:
@@ -1065,6 +1135,269 @@ def delete_media(media_id):
     conn.execute("DELETE FROM media WHERE id=?", (media_id,))
     conn.commit()
     conn.close()
+
+
+# ---------- 视频清晰度档位 ----------
+# 档位行由后台转码线程写、由请求线程读。每个函数各自 get_conn()（连接不跨线程），
+# 这是本文件一贯的约定，别把连接传进线程里。
+
+_VARIANT_FIELDS = ("filename", "width", "height", "bitrate", "filesize", "status", "error")
+
+
+def list_variants(media_id):
+    """某个视频的全部档位行，按档位从高到低（1080p→480p）不保证，调用方自己排。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM media_variants WHERE media_id=? ORDER BY id ASC", (media_id,)
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def get_variant(media_id, label):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM media_variants WHERE media_id=? AND label=?",
+                       (media_id, label)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def upsert_variant(media_id, label, **fields):
+    """插入或更新一个档位行。只写传进来的字段，没传的保持原值。
+
+    用 UNIQUE(media_id,label) 做 upsert —— 回填脚本反复跑不会产生重复行。
+    """
+    cols = {k: v for k, v in fields.items() if k in _VARIANT_FIELDS}
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO media_variants(media_id, label) VALUES(?,?) "
+        "ON CONFLICT(media_id, label) DO NOTHING",
+        (media_id, label),
+    )
+    if cols:
+        sets = ", ".join(f"{k}=?" for k in cols)
+        conn.execute(
+            f"UPDATE media_variants SET {sets}, updated_at=datetime('now','localtime') "
+            "WHERE media_id=? AND label=?",
+            (*cols.values(), media_id, label),
+        )
+    conn.commit()
+    conn.close()
+
+
+def set_variant_status(media_id, label, status, error=None):
+    """只改状态（和失败原因）。成功时把 error 清回 NULL。"""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE media_variants SET status=?, error=?, "
+        "updated_at=datetime('now','localtime') WHERE media_id=? AND label=?",
+        (status, error, media_id, label),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_variants_map(media_ids):
+    """批量取多个 media 的档位，返回 {media_id: [变体行, ...]}。
+
+    一次查询搞定，避免相册页 N 张视频打 N 次库（N+1 查询）。
+    """
+    ids = [int(i) for i in media_ids if i is not None]
+    if not ids:
+        return {}
+    out = {}
+    conn = get_conn()
+    # SQLite 默认变量上限 999，分批查
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT * FROM media_variants WHERE media_id IN ({marks}) ORDER BY id ASC",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            out.setdefault(r["media_id"], []).append(dict(r))
+    conn.close()
+    return out
+
+
+def delete_variants(media_id):
+    """删掉某个视频的全部档位行，返回被删的档位文件名（调用方负责删盘上的文件）。"""
+    conn = get_conn()
+    names = [r["filename"] for r in conn.execute(
+        "SELECT filename FROM media_variants WHERE media_id=?", (media_id,)
+    ) if r["filename"]]
+    conn.execute("DELETE FROM media_variants WHERE media_id=?", (media_id,))
+    conn.commit()
+    conn.close()
+    return names
+
+
+def get_point_variant_files(point_id):
+    """某个点下所有媒体的档位文件名，用于级联删除时清盘。
+
+    media_variants 有 ON DELETE CASCADE，删点时**数据库行**会自动没，
+    但盘上的 mp4 不会 —— 不在删之前把文件名捞出来，档位文件就成了孤儿。
+    """
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT v.filename FROM media_variants v "
+        "JOIN media m ON v.media_id = m.id WHERE m.point_id = ?",
+        (point_id,),
+    ).fetchall()
+    conn.close()
+    return [r["filename"] for r in rows if r["filename"]]
+
+
+def get_trip_variant_files(trip_id):
+    """某个行程下所有媒体的档位文件名，用于级联删除时清盘。理由同上。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT v.filename FROM media_variants v "
+        "JOIN media m ON v.media_id = m.id "
+        "JOIN points p ON m.point_id = p.id WHERE p.trip_id = ?",
+        (trip_id,),
+    ).fetchall()
+    conn.close()
+    return [r["filename"] for r in rows if r["filename"]]
+
+
+def list_all_videos():
+    """全部视频媒体（id + filename），给回填脚本用。按 id 升序，便于断点续跑。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, filename FROM media WHERE type='video' ORDER BY id ASC"
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+# ---------- 断点续传会话 ----------
+def find_upload_session(point_id, owner_id, fingerprint):
+    """按 (点, 属主, 文件指纹) 找还在传的会话。找不到返回 None。
+
+    只认 status='uploading' —— 已完成/已放弃的会话不复用，否则同一个文件
+    第二次上传会被当成「已经传过了」直接返回旧的 media_id。
+    """
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM upload_sessions WHERE point_id=? AND owner_id IS ? "
+        "AND fingerprint=? AND status='uploading' ORDER BY created_at DESC LIMIT 1",
+        (point_id, owner_id, fingerprint),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_upload_session(session_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM upload_sessions WHERE session_id=?",
+                       (session_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_upload_session(session_id, point_id, owner_id, fingerprint, filename,
+                          filesize, chunk_size, total_chunks, mtype):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO upload_sessions(session_id, point_id, owner_id, fingerprint, "
+        "filename, filesize, chunk_size, total_chunks, mtype) VALUES(?,?,?,?,?,?,?,?,?)",
+        (session_id, point_id, owner_id, fingerprint, filename,
+         filesize, chunk_size, total_chunks, mtype),
+    )
+    conn.commit()
+    conn.close()
+    return session_id
+
+
+def add_upload_chunk(session_id, idx, size):
+    """记一个分片已落盘。同一片重传是幂等的（主键冲突就覆盖）。
+
+    顺手把会话的 updated_at 推后 —— 过期清理看的就是这个字段，
+    只要还在传就不该被当成僵尸会话回收。
+    """
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO upload_chunks(session_id, idx, size) "
+                 "VALUES(?,?,?)", (session_id, idx, size))
+    conn.execute("UPDATE upload_sessions SET updated_at=datetime('now','localtime') "
+                 "WHERE session_id=?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_upload_chunks(session_id):
+    """已收到的分片序号（升序）。"""
+    conn = get_conn()
+    rows = conn.execute("SELECT idx FROM upload_chunks WHERE session_id=? ORDER BY idx ASC",
+                        (session_id,)).fetchall()
+    conn.close()
+    return [r["idx"] for r in rows]
+
+
+def upload_chunks_total_size(session_id):
+    """已收到分片的字节数合计 —— 用来在合并之前就挡住「谎报 filesize 然后猛传」。"""
+    conn = get_conn()
+    row = conn.execute("SELECT COALESCE(SUM(size), 0) AS s FROM upload_chunks "
+                       "WHERE session_id=?", (session_id,)).fetchone()
+    conn.close()
+    return int(row["s"]) if row else 0
+
+
+def finish_upload_session(session_id, media_id):
+    conn = get_conn()
+    conn.execute("UPDATE upload_sessions SET status='completed', media_id=?, "
+                 "updated_at=datetime('now','localtime') WHERE session_id=?",
+                 (media_id, session_id))
+    conn.execute("DELETE FROM upload_chunks WHERE session_id=?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+def abort_upload_session(session_id):
+    conn = get_conn()
+    conn.execute("UPDATE upload_sessions SET status='aborted', "
+                 "updated_at=datetime('now','localtime') WHERE session_id=?",
+                 (session_id,))
+    conn.execute("DELETE FROM upload_chunks WHERE session_id=?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_stale_upload_sessions(hours=24):
+    """超过 hours 没动静、还挂在 uploading 的会话。给定时清理用。
+
+    也一并带上早已 completed/aborted 但行还留着的老会话（同样按 hours 过期），
+    这张表没有别的读者，留着只会无限长下去。
+    """
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM upload_sessions "
+        "WHERE updated_at <= datetime('now','localtime', ?)",
+        (f"-{int(hours)} hours",),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def delete_upload_session(session_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM upload_chunks WHERE session_id=?", (session_id,))
+    conn.execute("DELETE FROM upload_sessions WHERE session_id=?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_point_upload_sessions(point_id, owner_id):
+    """某个点上「还没传完」的会话，前端据此显示未完成占位格。"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM upload_sessions WHERE point_id=? AND owner_id IS ? "
+        "AND status='uploading' ORDER BY created_at ASC",
+        (point_id, owner_id),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
 
 
 # ---------- 路线缓存 ----------

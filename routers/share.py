@@ -24,6 +24,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
+import transcode
 from config import AMAP_KEY, AMAP_SECURITY, OSRM_URL
 from routers.deps import (
     current_user, require_owner, amap_version, amap_key_notice_html, _route_cache_key,
@@ -93,7 +94,8 @@ def api_share_view(token: str, password: str = ""):
         raise HTTPException(404, "行程不存在")
     points = db.list_points(share["trip_id"])
     for p in points:
-        p["media"] = db.list_media(p["id"])
+        # 带上视频清晰度档位，分享页也能选清晰度 / 自动降级
+        p["media"] = transcode.attach_qualities(db.list_media(p["id"]))
     return {
         "trip": {
             "id": trip["id"], "name": trip["name"],

@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import db
 import media as media_mod
+import transcode  # 视频清晰度分层转码（后台线程，见 transcode.py 顶部的诊断说明）
 import mcp_http  # MCP Streamable HTTP 远程端点（开放平台：远程 Agent 接入）
 
 # 领域 API 层（记忆/联想/生成 + API Key 认证 + 审计）
@@ -60,6 +61,7 @@ UPLOAD_DIR = BASE / "uploads"
 # 在目录不存在时会直接抛异常 —— 服务连启动都启动不了。这里先建好。
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "thumbs").mkdir(parents=True, exist_ok=True)
+(UPLOAD_DIR / "variants").mkdir(parents=True, exist_ok=True)   # 视频清晰度档位
 
 # 管理员令牌（从 token.txt 读取，作为管理员直登凭据；可不存在）
 ADMIN_TOKEN = ""
@@ -137,6 +139,14 @@ def is_public_path(path: str) -> bool:
     # 媒体文件（图片/视频）：分享页匿名访问必需，且为只读静态资源
     if path.startswith("/uploads/"):
         return True
+    # 视频清晰度档位（只读 GET）：分享页是匿名的，它要能查「转码好了没」，
+    # 否则轮询一路 401，档位菜单永远停在「转码中」。返回的只是档位文件名，
+    # 而 /uploads/ 本身就是公开目录，不比原始文件名更敏感。
+    # 只放行 /api/media/{id}/variants 本身 —— /variants/retry 是写操作，
+    # 多一层路径段就落不进这个分支，仍旧要登录 + require_owner。
+    if (path.startswith("/api/media/") and path.endswith("/variants")
+            and path[len("/api/media/"):-len("/variants")].isdigit()):
+        return True
     # Markdown 在线渲染（只读文档）
     if path.startswith("/md/"):
         return True
@@ -190,6 +200,34 @@ async def auth_middleware(request: Request, call_next):
         request.state.user = user
         return await call_next(request)
     return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
+# ---------- 规范域名跳转（www.top001.xin -> top001.xin）----------
+# 注意注册顺序：Starlette 里后注册的中间件在**外层**，所以这段必须写在
+# auth_middleware 之后 —— 它要在鉴权之前跑，否则 www 上的请求会先吃一个 401，
+# 用户看到的是报错而不是跳转。
+CANONICAL_HOST = os.environ.get("TRAVEL_DOMAIN", "").strip().lower()
+
+
+@app.middleware("http")
+async def canonical_host_middleware(request: Request, call_next):
+    if not CANONICAL_HOST:
+        return await call_next(request)
+    # Host 头可能带端口（top001.xin:443），比较时要剥掉；IPv6 字面量形如 [::1]:443，
+    # 不能无脑 split(":")，所以按最后一个冒号且不在方括号内的情况处理。
+    raw = (request.headers.get("host") or "").strip().lower()
+    host = raw
+    if host.startswith("["):
+        host = host[:host.index("]") + 1] if "]" in host else host
+    elif ":" in host:
+        host = host.rsplit(":", 1)[0]
+    if host != "www." + CANONICAL_HOST:
+        return await call_next(request)
+
+    from starlette.responses import RedirectResponse
+    # 保留路径和 query，换掉 netloc。用 301：规范域名是长期决定，让浏览器和搜索引擎缓存。
+    target = request.url.replace(netloc=CANONICAL_HOST)
+    return RedirectResponse(url=str(target), status_code=301)
 
 
 # ---------- 健康检查（免鉴权，供 frp/外部监控探活）----------
@@ -323,6 +361,37 @@ class CacheHeaderStaticFiles(StaticFiles):
         return resp
 
 
+class UploadStaticFiles(CacheHeaderStaticFiles):
+    """/uploads 的缓存策略。原来一律 `no-cache, must-revalidate`，
+    等于每次重播视频都要回源问一次 —— 这是诊断出来的次要卡顿来源。
+
+    分三档，故意不给原图/原片一年期 immutable：
+      - `?v=` 查询串：沿用父类的一年 immutable（前端主动打的版本号）。
+      - `variants/`：一年 immutable。档位文件名是 `<uuid>_<档位>.mp4`，
+        内容永不改变、也永不被覆盖，缓存死了也没关系。
+      - 其余（原片/原图/缩略图）：1 天 public。**不能给 immutable** ——
+        上传后的 faststart 重封装会原地覆盖同名原片（transcode.ensure_faststart），
+        真给了一年 immutable，客户端就会把重封装之前那份「卡顿版」一直留着。
+    """
+
+    async def get_response(self, path, scope):
+        norm = str(path).replace("\\", "/").lstrip("/")
+        # 断点续传的半成品分片就落在 uploads/.chunks/ 下（见 CHUNK_DIR）。
+        # 它在 StaticFiles 的根目录里，不挡住就等于开了一条「猜到 session_id
+        # 就能下载别人正在传的文件」的路。这里直接当不存在。
+        if norm.startswith(".chunks/") or norm == ".chunks":
+            raise HTTPException(404, "Not Found")
+        resp = await super().get_response(path, scope)
+        qs = (scope.get("query_string") or b"").decode()
+        if "v=" in qs:
+            return resp                       # 父类已经设成一年 immutable
+        if norm.startswith("variants/"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            resp.headers["Cache-Control"] = "public, max-age=86400"
+        return resp
+
+
 class MdRedirectStaticFiles(CacheHeaderStaticFiles):
     """.md 文件不直接下载，301 重定向到 /md/ 渲染端点（在线浏览）"""
 
@@ -334,7 +403,7 @@ class MdRedirectStaticFiles(CacheHeaderStaticFiles):
 
 
 app.mount("/static", MdRedirectStaticFiles(directory=BASE / "static"), name="static")
-app.mount("/uploads", CacheHeaderStaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/uploads", UploadStaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 # ---------- Markdown 在线渲染（/md/<文件名>.md） ----------
@@ -477,11 +546,14 @@ def api_list_generations(request: Request, trip_id: int, kind: str = None, limit
 def api_delete_trip(request: Request, trip_id: int):
     require_owner(current_user(request), db.get_trip_owner_id(trip_id), "行程")
     files = db.get_trip_media_files(trip_id)
+    variants = db.get_trip_variant_files(trip_id)   # 必须在 delete 之前捞（行会级联消失）
     db.delete_trip(trip_id)
     for fname, thumb in files:
         (UPLOAD_DIR / fname).unlink(missing_ok=True)
         if thumb:
             (media_mod.THUMB_DIR / thumb).unlink(missing_ok=True)
+    for vname in variants:
+        (UPLOAD_DIR / "variants" / vname).unlink(missing_ok=True)
     return {"ok": True}
 
 
@@ -761,11 +833,14 @@ def api_reorder_points(request: Request, trip_id: int, ordered_ids: str = Form(.
 def api_delete_point(request: Request, point_id: int):
     require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")
     files = db.get_point_media_files(point_id)
+    variants = db.get_point_variant_files(point_id)  # 必须在 delete 之前捞（行会级联消失）
     db.delete_point(point_id)
     for fname, thumb in files:
         (UPLOAD_DIR / fname).unlink(missing_ok=True)
         if thumb:
             (media_mod.THUMB_DIR / thumb).unlink(missing_ok=True)
+    for vname in variants:
+        (UPLOAD_DIR / "variants" / vname).unlink(missing_ok=True)
     return {"ok": True}
 
 
@@ -773,7 +848,7 @@ def api_delete_point(request: Request, point_id: int):
 @app.get("/api/points/{point_id}/media")
 def api_list_media(request: Request, point_id: int):
     require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")
-    return db.list_media(point_id)
+    return transcode.attach_qualities(db.list_media(point_id))
 
 
 @app.post("/api/points/{point_id}/media")
@@ -825,6 +900,7 @@ def api_upload_media(request: Request, point_id: int, file: UploadFile = File(..
 
     mid = db.add_media(point_id, mtype, stored_name, thumb_name,
                        exif_time, exif_lat, exif_lng)
+    transcode.on_media_uploaded(mid, src_path, mtype)   # 视频丢后台转码，不阻塞本请求
     return {
         "id": mid, "type": mtype, "filename": stored_name,
         "thumb": thumb_name, "exif_time": exif_time,
@@ -857,8 +933,48 @@ def api_delete_media(request: Request, media_id: int):
         (UPLOAD_DIR / m["filename"]).unlink(missing_ok=True)
         if m["thumb_filename"]:
             (media_mod.THUMB_DIR / m["thumb_filename"]).unlink(missing_ok=True)
+        # 转码档位文件也要一起清掉，否则删了视频还留着一堆 720p/480p 占盘
+        for vname in db.delete_variants(media_id):
+            (UPLOAD_DIR / "variants" / vname).unlink(missing_ok=True)
         db.delete_media(media_id)
     return {"ok": True}
+
+
+# ---------- 视频清晰度档位 ----------
+@app.get("/api/media/{media_id}/variants")
+def api_media_variants(media_id: int):
+    """某个视频的可用清晰度档位。
+
+    **刻意不鉴权**：/uploads/ 本身就是公开静态目录（app.py:138 的 is_public_path，
+    分享页匿名访问必需），档位文件名并不比原始文件名更敏感。这样分享页
+    （share.js）不用另开一套带 token 的接口就能轮询转码进度。
+    """
+    m = db.get_media(media_id)
+    if not m:
+        raise HTTPException(404, "媒体不存在")
+    if m["type"] != "video":
+        return {"media_id": media_id, "type": m["type"], "qualities": []}
+    qualities = transcode.build_quality_list(m, db.list_variants(media_id))
+    pending = [q for q in qualities if q["status"] in ("pending", "running")]
+    return {
+        "media_id": media_id, "type": "video",
+        "qualities": qualities,
+        # 前端据此决定要不要继续轮询
+        "transcoding": bool(pending),
+    }
+
+
+@app.post("/api/media/{media_id}/variants/retry")
+def api_retry_variants(request: Request, media_id: int):
+    """重试失败的档位（需本人或管理员）。转码失败不影响播放，这只是补救入口。"""
+    require_owner(current_user(request), db.get_media_owner_id(media_id), "媒体")
+    m = db.get_media(media_id)
+    if not m:
+        raise HTTPException(404, "媒体不存在")
+    if m["type"] != "video":
+        raise HTTPException(400, "只有视频才有清晰度档位")
+    queued = transcode.retry_failed(media_id, UPLOAD_DIR / m["filename"])
+    return {"ok": True, "queued": queued}
 
 
 # ---------- P2-3 多媒体检索 ----------
@@ -883,9 +999,11 @@ def api_search_media(request: Request, trip_id: int,
 def api_trip_media(request: Request, trip_id: int):
     """行程内全部媒体的扁平列表，按拍摄时间升序（相册网格用，前端自行筛选/排序）"""
     require_owner(current_user(request), db.get_trip_owner_id(trip_id), "行程")
-    items = db.list_trip_media(trip_id)
+    items = transcode.attach_qualities(db.list_trip_media(trip_id))
     return {
         "items": [{
+            # 视频的可用清晰度档位（照片没有这个键）
+            **({"qualities": m["qualities"]} if m.get("qualities") else {}),
             "id": m["id"],
             "type": m["type"],
             "point_id": m["point_id"],

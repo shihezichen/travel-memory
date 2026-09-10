@@ -1472,6 +1472,7 @@ function shareLoadAlbums() {
       thumb_url: m.thumb_filename ? '/uploads/thumbs/' + m.thumb_filename : null,
       taken_at: m.exif_time || m.created_at || '',
       caption: m.caption || '',
+      qualities: m.qualities,        // 视频清晰度档位，相册页点开也要能选
     });
   }));
   // 统一按拍摄时间升序，和主页面后端返回的顺序一致
@@ -2189,7 +2190,8 @@ let lbZoom = { on: false, scale: 1, tx: 0, ty: 0, fit: 1 };
     // 而进入全屏放大态，同时 touchend 的 preventDefault 还把合成 click 吃掉了，
     // 结果就是编辑入口完全点不动。
     if (e.target.closest && e.target.closest(
-        '#lightbox-close, #lightbox-prev, #lightbox-next, video, .lb-caption')) {
+        '#lightbox-close, #lightbox-prev, #lightbox-next, video, .lb-caption, '
+        + '.lb-quality-btn, .lb-quality-menu')) {
       active = false; return;
     }
     if (e.touches.length === 2) {

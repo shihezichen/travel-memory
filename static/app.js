@@ -4235,7 +4235,8 @@ let lbZoom = { on: false, scale: 1, tx: 0, ty: 0, fit: 1 };
     // 而进入全屏放大态，同时 touchend 的 preventDefault 还把合成 click 吃掉了，
     // 结果就是编辑入口完全点不动。
     if (e.target.closest && e.target.closest(
-        '#lightbox-close, #lightbox-prev, #lightbox-next, video, .lb-caption')) {
+        '#lightbox-close, #lightbox-prev, #lightbox-next, video, .lb-caption, '
+        + '.lb-quality-btn, .lb-quality-menu')) {
       active = false; return;
     }
     if (e.touches.length === 2) {

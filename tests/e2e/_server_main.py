@@ -26,7 +26,7 @@ PORT = int(os.environ.get("TM_TEST_PORT", "8199"))
 assert DB_FILE != (REPO_ROOT / "data.db"), "E2E 服务不得使用生产 data.db"
 assert UPLOADS != (REPO_ROOT / "uploads"), "E2E 服务不得使用生产 uploads/"
 
-for d in (UPLOADS, UPLOADS / "thumbs", UPLOADS / "tiles"):
+for d in (UPLOADS, UPLOADS / "thumbs", UPLOADS / "tiles", UPLOADS / "variants"):
     d.mkdir(parents=True, exist_ok=True)
 
 import db                       # noqa: E402
@@ -35,6 +35,13 @@ db.DB_PATH = DB_FILE
 import media as media_mod       # noqa: E402
 media_mod.UPLOAD_DIR = UPLOADS
 media_mod.THUMB_DIR = UPLOADS / "thumbs"
+
+# 转码模块也持有 UPLOAD_DIR / VARIANT_DIR 两个模块级常量。漏了它，E2E 里传一个
+# 视频就会把档位文件写进**生产** uploads/variants/ —— 这个进程是 subprocess，
+# tests/conftest.py 的 monkeypatch 保险丝完全够不着它。
+import transcode as _transcode  # noqa: E402
+_transcode.UPLOAD_DIR = UPLOADS
+_transcode.VARIANT_DIR = UPLOADS / "variants"
 
 import app as app_mod           # noqa: E402
 app_mod.UPLOAD_DIR = UPLOADS
@@ -46,10 +53,11 @@ app_mod.GATE_HASH = ""          # E2E 不测门禁，走用户名密码
 
 # /uploads 的 StaticFiles 在 import 时就绑到生产目录了，这里重新挂一遍指向临时目录。
 # （生产代码不需要这么做 —— 这正是「可测试性改动建议」里那条的由来。）
-from starlette.staticfiles import StaticFiles      # noqa: E402
+# 用 app_mod.UploadStaticFiles 而不是裸 StaticFiles：缓存头分档和 .chunks/ 屏蔽
+# 都在那个子类里，换成裸的等于 E2E 测的不是生产那套行为。
 for route in list(app_mod.app.router.routes):
     if getattr(route, "path", None) == "/uploads":
-        route.app = StaticFiles(directory=UPLOADS)
+        route.app = app_mod.UploadStaticFiles(directory=UPLOADS)
 
 if __name__ == "__main__":
     import uvicorn

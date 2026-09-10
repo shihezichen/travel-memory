@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 import db
 import media as media_mod
 import mcp_http
+import transcode
 
 from domain import memory as domain_memory
 from domain import association as domain_assoc
@@ -1183,6 +1184,7 @@ def ai_upload_media(request: Request, point_id: int, data_base64: str = Form(...
 
     mid = db.add_media(point_id, mtype, stored_name, thumb_name,
                        exif_time, exif_lat, exif_lng)
+    transcode.on_media_uploaded(mid, src_path, mtype)   # 视频丢后台转码，不阻塞本请求
     _audit(key, "media.upload", "ok", detail=f"point={point_id} type={mtype}")
     return {"id": mid, "type": mtype, "filename": stored_name, "thumb": thumb_name,
             "exif_time": exif_time, "exif_lat": exif_lat, "exif_lng": exif_lng}

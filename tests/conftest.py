@@ -76,10 +76,14 @@ import app as app_mod  # noqa: E402
 from routers import agent_api as _r_agent_api  # noqa: E402
 from routers import share as _r_share  # noqa: E402
 
-_ROUTER_MODULES = [_r_agent_api, _r_share]
-# 每个 router 模块里需要被重定向到 tmp_path 的目录型全局。
-# 不是每个模块两个都有，所以按 hasattr 挑。
-_ROUTER_DIR_ATTRS = ("UPLOAD_DIR", "_TILE_DIR")
+# transcode 不是 router，但同样持有 UPLOAD_DIR / VARIANT_DIR 模块级全局，
+# 漏了它，转码测试就会把档位文件写进生产 uploads/variants/。
+import transcode as _transcode  # noqa: E402
+
+_ROUTER_MODULES = [_r_agent_api, _r_share, _transcode]
+# 每个模块里需要被重定向到 tmp_path 的目录型全局。
+# 不是每个模块都全有，所以按 hasattr 挑。
+_ROUTER_DIR_ATTRS = ("UPLOAD_DIR", "_TILE_DIR", "VARIANT_DIR")
 
 
 def _router_dir_targets():
@@ -119,13 +123,27 @@ def isolated_env(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     thumbs = uploads / "thumbs"
     tiles = uploads / "tiles"
-    for d in (uploads, thumbs, tiles):
+    variants = uploads / "variants"
+    for d in (uploads, thumbs, tiles, variants):
         d.mkdir(parents=True, exist_ok=True)
 
+    _dir_for = {"_TILE_DIR": tiles, "VARIANT_DIR": variants}
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(app_mod, "UPLOAD_DIR", uploads)
     for _m, _a in _router_dir_targets():
-        monkeypatch.setattr(_m, _a, tiles if _a == "_TILE_DIR" else uploads)
+        monkeypatch.setattr(_m, _a, _dir_for.get(_a, uploads))
+
+    # 转码：测试里**绝不**真的跑 ffmpeg（慢、且依赖机器上的编码器）。
+    # 默认把入队函数换成记录器；要断言「上传有没有触发转码」的用例
+    # 直接读 transcode._TEST_CALLS，要测真转码逻辑的用例自己再 monkeypatch 回去。
+    _tc_calls = []
+    monkeypatch.setattr(_transcode, "_TEST_CALLS", _tc_calls, raising=False)
+
+    def _fake_enqueue(media_id, src_path, force=False):
+        _tc_calls.append({"media_id": media_id, "path": str(src_path), "force": force})
+        return True
+
+    monkeypatch.setattr(_transcode, "enqueue", _fake_enqueue)
     monkeypatch.setattr(media_mod, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(media_mod, "THUMB_DIR", thumbs)
 

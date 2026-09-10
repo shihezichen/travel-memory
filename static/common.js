@@ -174,6 +174,228 @@ function clearReplayLines() {
   if (replayTodoLine) { replayTodoLine.setMap(null); replayTodoLine = null; }
 }
 
+// ==========================================================================
+// 视频清晰度分层 / 自动降级
+//
+// 背景（后端 transcode.py 顶部有完整诊断）：手机直出的 mp4 常把 moov 索引写在
+// 文件尾、码率又高到 5~6 Mbps，移动网络上必卡。后端现在会把原画重封装成
+// faststart，并额外转出 1080p/720p/480p 三档（只降不升）。这里负责：
+//   1) 默认档位自动降级（网络 + 屏幕 + DPR，手机默认不上 1080p）
+//   2) 用户手动选档，记 localStorage 下次沿用
+//   3) 切档保持播放进度和播放状态
+//   4) 还在转码的档位灰掉标「转码中」，转好了自动刷出来
+// ==========================================================================
+
+const VIDEO_QUALITY_KEY = 'tm_video_quality';
+const QUALITY_LABELS = ['original', '1080p', '720p', '480p'];
+// 各档位对应的短边像素，用来和「屏幕/网络预算」比大小。原画按无穷大算。
+const QUALITY_SHORT_SIDE = { original: Infinity, '1080p': 1080, '720p': 720, '480p': 480 };
+const QUALITY_NAMES = { original: '原画', '1080p': '1080P', '720p': '720P', '480p': '480P' };
+
+// 正在轮询转码进度的定时器，切页/关灯箱时要清掉，否则后台一直打接口
+let _qualityPollTimer = null;
+
+// 读用户手动选过的档位。没选过 / 存了脏值 → null（表示走自动降级）
+function loadQualityPref() {
+  try {
+    const raw = localStorage.getItem(VIDEO_QUALITY_KEY);
+    if (raw && QUALITY_LABELS.includes(raw)) return raw;
+  } catch (e) {}
+  return null;
+}
+
+function saveQualityPref(label) {
+  try { localStorage.setItem(VIDEO_QUALITY_KEY, label); } catch (e) {}
+}
+
+// 自动降级：算一个「短边预算」，取不超过预算的最高档。
+// 拿不到 navigator.connection（Safari/Firefox 都没有）就按未知处理 —— 未知一律保守。
+function tmQualityBudget() {
+  // --- 网络预算 ---
+  let netCap = 720;            // 未知网络的默认上限：720，手机默认不上 1080p
+  try {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (c) {
+      if (c.saveData) {
+        netCap = 480;                                  // 用户开了省流量，尊重它
+      } else if (c.effectiveType === 'slow-2g' || c.effectiveType === '2g'
+                 || c.effectiveType === '3g') {
+        netCap = 480;
+      } else if (typeof c.downlink === 'number' && c.downlink > 0) {
+        // downlink 是 Mbps 估计值。720p 实测约 0.8 Mbps，留 2~3 倍余量。
+        netCap = c.downlink < 1.5 ? 480 : (c.downlink < 4 ? 720 : 1080);
+      } else if (c.effectiveType === '4g') {
+        netCap = 1080;
+      }
+    }
+  } catch (e) {}
+
+  // --- 屏幕预算 ---
+  // 灯箱里视频最多铺满视口，超过「视口短边 × DPR」的像素是白给的。
+  // DPR 截到 2：3x 屏再上 3 倍分辨率，肉眼收益极小、流量翻倍。
+  let scrCap = 1080;
+  try {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const shortSide = Math.min(window.innerWidth || 360, window.innerHeight || 640);
+    scrCap = Math.round(shortSide * dpr);
+  } catch (e) {}
+
+  return Math.min(netCap, scrCap);
+}
+
+// 在可用档位里挑一个默认档。qualities 是后端给的档位数组。
+function tmPickQuality(qualities) {
+  const usable = (qualities || []).filter(q => q.status === 'done' && q.url);
+  if (!usable.length) return null;
+
+  // 用户手动选过就沿用（那一档必须真的可用，否则继续走自动）
+  const pref = loadQualityPref();
+  if (pref) {
+    const hit = usable.find(q => q.label === pref);
+    if (hit) return hit;
+  }
+
+  const cap = tmQualityBudget();
+  // 转码档（非原画）里，短边不超预算的最高一档
+  const tiers = usable.filter(q => q.label !== 'original')
+    .sort((a, b) => (QUALITY_SHORT_SIDE[b.label] || 0) - (QUALITY_SHORT_SIDE[a.label] || 0));
+  const fit = tiers.find(q => (QUALITY_SHORT_SIDE[q.label] || 0) <= cap);
+  if (fit) return fit;
+  // 所有转码档都超预算 → 取最低那档（总比原画省）
+  if (tiers.length) return tiers[tiers.length - 1];
+  // 一档都没转好 → 原画兜底，播放永远不会因为转码没跟上而挂掉
+  return usable.find(q => q.label === 'original') || usable[0];
+}
+
+// 切换清晰度：保持当前进度和播放状态。
+// 换 src 会把播放位置清零，所以要先记 currentTime，等新源的元数据到了再 seek 回去。
+function tmSwitchQuality(v, url) {
+  if (!v || !url) return;
+  const at = v.currentTime || 0;
+  const wasPlaying = !v.paused && !v.ended;
+  const onReady = () => {
+    v.removeEventListener('loadedmetadata', onReady);
+    try {
+      // seek 目标可能超过新源时长（理论上不会，防一手），夹一下
+      if (at > 0 && isFinite(v.duration)) v.currentTime = Math.min(at, v.duration - 0.05);
+      else if (at > 0) v.currentTime = at;
+    } catch (e) {}
+    if (wasPlaying) { const p = v.play(); if (p && p.catch) p.catch(() => {}); }
+  };
+  v.addEventListener('loadedmetadata', onReady);
+  v.src = url;
+  v.load();
+}
+
+// 档位列表兜底：接口没带 qualities（老缓存/相册页自己拼的对象）时，
+// 先按「只有原画」渲染，再异步拉一次补上。
+function tmFallbackQualities(m) {
+  return [{
+    label: 'original', name: '原画', status: 'done',
+    url: '/uploads/' + m.filename + '?v=1',
+  }];
+}
+
+// 给一格视频装上清晰度按钮 + 菜单，并选好默认档开播。
+function tmSetupQuality(wrap, v, m) {
+  const btn = document.createElement('button');
+  btn.className = 'lb-quality-btn';
+  btn.type = 'button';
+  const menu = document.createElement('div');
+  menu.className = 'lb-quality-menu hidden';
+  wrap.appendChild(btn);
+  wrap.appendChild(menu);
+
+  let qualities = (m.qualities && m.qualities.length) ? m.qualities : tmFallbackQualities(m);
+  let current = null;
+
+  function render() {
+    btn.textContent = current ? (QUALITY_NAMES[current.label] || current.label) : '清晰度';
+    menu.innerHTML = '';
+    qualities.forEach(q => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      const ready = q.status === 'done' && q.url;
+      row.className = 'lb-quality-item'
+        + (ready ? '' : ' disabled')
+        + (current && q.label === current.label ? ' active' : '');
+      row.disabled = !ready;
+      let tail = '';
+      if (q.status === 'pending' || q.status === 'running') tail = '转码中';
+      else if (q.status === 'failed') tail = '失败';
+      else if (q.filesize) tail = (q.filesize / 1048576).toFixed(1) + 'M';
+      row.innerHTML = '<span>' + esc(QUALITY_NAMES[q.label] || q.label) + '</span>'
+        + '<span class="lb-quality-tail">' + esc(tail) + '</span>';
+      if (ready) {
+        row.onclick = (ev) => {
+          ev.stopPropagation();
+          menu.classList.add('hidden');
+          if (current && q.label === current.label) return;
+          current = q;
+          saveQualityPref(q.label);          // 手动选过就记住，下次沿用
+          tmSwitchQuality(v, q.url);
+          render();
+          tmToast('已切换到 ' + (QUALITY_NAMES[q.label] || q.label));
+        };
+      }
+      menu.appendChild(row);
+    });
+  }
+
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    menu.classList.toggle('hidden');
+  };
+  // 点视频区域别的地方就收起菜单
+  wrap.addEventListener('click', (ev) => {
+    if (ev.target !== btn && !menu.contains(ev.target)) menu.classList.add('hidden');
+  });
+
+  // 选默认档并起播
+  current = tmPickQuality(qualities);
+  v.src = (current && current.url) || ('/uploads/' + m.filename + '?v=1');
+  render();
+
+  // 还有档位在转码 → 轮询刷新（转好了菜单里就能选了）。
+  // 没带 qualities 的情况也走这里，顺便把真实档位补回来。
+  const needPoll = !m.qualities
+    || qualities.some(q => q.status === 'pending' || q.status === 'running');
+  if (needPoll && m.id) tmPollQualities(m, wrap, (list) => {
+    qualities = list;
+    // 用户没手动选过、且当前还停在原画上时，转码档一转好就自动切过去
+    if (!loadQualityPref() && current && current.label === 'original') {
+      const better = tmPickQuality(list);
+      if (better && better.label !== 'original') {
+        current = better;
+        tmSwitchQuality(v, better.url);
+      }
+    }
+    render();
+  });
+}
+
+// 轮询某个视频的转码进度，转完就停。最多盯 3 分钟，避免后台一直打接口。
+function tmPollQualities(m, wrap, onUpdate) {
+  let tries = 0;
+  clearTimeout(_qualityPollTimer);
+  const tick = () => {
+    // 这一格已经从 DOM 上摘掉了（翻页/关灯箱）→ 停止轮询
+    if (!wrap.isConnected || tries++ > 36) return;
+    fetch('/api/media/' + encodeURIComponent(m.id) + '/variants')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!d || !wrap.isConnected) return;
+        if (d.qualities && d.qualities.length) {
+          m.qualities = d.qualities;         // 回写，翻回这一格时不用再拉
+          onUpdate(d.qualities);
+        }
+        if (d.transcoding) _qualityPollTimer = setTimeout(tick, 5000);
+      })
+      .catch(() => {});
+  };
+  _qualityPollTimer = setTimeout(tick, 1500);
+}
+
 // 造一格媒体。只有当前这格的视频才自动播放，相邻格预载但不出声。
 function buildLightboxMedia(m, isCurrent) {
   if (m.type === 'video') {
@@ -191,13 +413,21 @@ function buildLightboxMedia(m, isCurrent) {
         { className: 'lb-video-poster-play', textContent: '▶' }));
       return ph;
     }
+    // 视频用外层 wrap 包一下：清晰度按钮要和 <video> 平级。
+    // 不能塞进 <video> 里（HTML 不允许），也不能让它变成 .lightbox-media ——
+    // lbApplyZoom 会给 .lightbox-media 加 transform，菜单会跟着一起被缩放位移。
+    const wrap = document.createElement('div');
+    wrap.className = 'lb-video-wrap';
+
     const v = document.createElement('video');
-    v.src = '/uploads/' + m.filename;
     v.controls = true;
     v.autoplay = true;
     v.preload = 'auto';
     v.className = 'lightbox-media';
-    return v;
+    wrap.appendChild(v);
+
+    tmSetupQuality(wrap, v, m);
+    return wrap;
   }
   const img = document.createElement('img');
   img.src = '/uploads/' + m.filename;
@@ -216,6 +446,7 @@ function buildLightboxMedia(m, isCurrent) {
 // 于是那个「全屏/投屏」的悬浮按钮会一直挂在页面上——翻到照片后还在，
 // 关掉灯箱后也还在。必须显式 pause + 断源 + load()，并退出画中画。
 function stopLightboxVideos() {
+  clearTimeout(_qualityPollTimer);   // 顺手停掉转码进度轮询，别在后台空转
   const box = document.getElementById('lightbox');
   if (!box) return;
   box.querySelectorAll('video').forEach(v => {

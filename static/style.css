@@ -1222,6 +1222,51 @@ body.map-fullscreen-on { overflow: hidden; }
   transform-origin: center center;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* ---------- 视频清晰度选择 ---------- */
+/* 视频外面套一层 wrap，好让清晰度按钮和 <video> 平级定位。
+   wrap 自己不设 transform，否则 lbApplyZoom 给 .lightbox-media 的缩放会串味。 */
+.lb-video-wrap {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  max-width: 100%; max-height: 100%;
+}
+/* 放左上角：右上是关闭按钮、正上方是计数、下方是视频原生控制条，只有这儿是空的 */
+.lb-quality-btn {
+  position: absolute; left: 8px; top: 8px; z-index: 11;
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  background: rgba(0, 0, 0, .55); color: #fff;
+  font-size: 12px; line-height: 1.4; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lb-quality-btn:hover { background: rgba(0, 0, 0, .72); }
+.lb-quality-menu {
+  position: absolute; left: 8px; top: 40px; z-index: 12;
+  min-width: 132px; padding: 4px;
+  border-radius: 10px; border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(17, 24, 39, .94);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .45);
+}
+.lb-quality-menu.hidden { display: none; }
+.lb-quality-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  width: 100%; padding: 9px 10px;
+  border: none; background: none; color: #fff;
+  font-size: 13px; line-height: 1.3; text-align: left;
+  border-radius: 7px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lb-quality-item:active { background: rgba(255, 255, 255, .12); }
+.lb-quality-item.active { color: #9ec5ff; font-weight: 600; }
+/* 还没转好的档位：灰掉但仍然列出来，让人知道「一会儿会有」 */
+.lb-quality-item.disabled { color: rgba(255, 255, 255, .38); cursor: default; }
+.lb-quality-tail { font-size: 11px; color: rgba(255, 255, 255, .55); }
+.lb-quality-item.active .lb-quality-tail { color: #9ec5ff; }
+/* 放大态下和其他浮层一起让开 */
+.lightbox.zoomed .lb-quality-btn,
+.lightbox.zoomed .lb-quality-menu { opacity: 0; pointer-events: none; }
+.lb-quality-btn, .lb-quality-menu { transition: opacity .2s ease; }
 /* 双指捏合完全由 JS 接管，告诉浏览器别在图片上做自己的整页缩放/滚动手势。
    不然浏览器会把双指当成页面缩放交给合成器，连说明文字和关闭按钮一起放大。
    只给图片和视频占位图，不给 <video>——那上面要留着原生控件的触摸操作；
