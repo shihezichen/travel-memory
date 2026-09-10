@@ -8,12 +8,12 @@
        结果就是浅色地图上出现浅色图标。声明后浏览器不再自动变暗。 -->
   <meta name="color-scheme" content="light">
   <title>旅行记忆 · 分享</title>
-  <link rel="icon" href="/static/icon.svg?v=20260911v3" type="image/svg+xml">
-  <link rel="icon" href="/static/favicon-32.png?v=20260911v3" sizes="32x32">
-  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260911v3">
-  <link rel="manifest" href="/static/site.webmanifest?v=20260911v3">
+  <link rel="icon" href="/static/icon.svg?v=20260911v4" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png?v=20260911v4" sizes="32x32">
+  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260911v4">
+  <link rel="manifest" href="/static/site.webmanifest?v=20260911v4">
   <meta name="theme-color" content="#FF8A00">
-  <link rel="stylesheet" href="/static/style.css?v=20260911v3">
+  <link rel="stylesheet" href="/static/style.css?v=20260911v4">
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
   </script>
@@ -22,7 +22,7 @@
 <body class="share-page">
   <div class="app">
     <header class="topbar">
-      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260911v3" alt="" width="22" height="22"><span>旅行记忆</span></div>
+      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260911v4" alt="" width="22" height="22"><span>旅行记忆</span></div>
       <div class="share-title" id="share-title">载入中…</div>
     </header>
     <div class="userbar">
@@ -126,13 +126,22 @@
 
   <div id="lightbox" class="lightbox hidden">
     <div class="lightbox-close" id="lightbox-close">×</div>
+    <!-- 保存到本地。放在关闭按钮左边：右上角是灯箱里唯一稳定不被内容挤走的位置，
+         照片和视频都用同一个入口，移动端 44px 触摸区。实际下载由服务端的
+         Content-Disposition: attachment 促成（见 download.py），不靠 <a download>。 -->
+    <button class="lightbox-download" id="lightbox-download" type="button"
+            title="保存到本地" aria-label="保存到本地" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+    </button>
+    <!-- 视频的「下哪一档」菜单（复用播放器已拿到的 qualities，不再打一次接口） -->
+    <div class="lb-download-menu hidden" id="lightbox-download-menu"></div>
     <div class="lightbox-prev" id="lightbox-prev">‹</div>
     <div class="lightbox-next" id="lightbox-next">›</div>
     <div class="lightbox-stage" id="lightbox-stage"></div>
     <div class="lightbox-counter" id="lightbox-counter"></div>
   </div>
 
-  <script src="/static/common.js?v=20260911v3"></script>
-  <script src="/static/share.js?v=20260911v3"></script>
+  <script src="/static/common.js?v=20260911v4"></script>
+  <script src="/static/share.js?v=20260911v4"></script>
 </body>
 </html>

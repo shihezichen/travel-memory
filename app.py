@@ -23,6 +23,7 @@ import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
 import db
+import download  # 媒体「另存为」（Content-Disposition: attachment，见 download.py）
 import media as media_mod
 import transcode  # 视频清晰度分层转码（后台线程，见 transcode.py 顶部的诊断说明）
 import mcp_http  # MCP Streamable HTTP 远程端点（开放平台：远程 Agent 接入）
@@ -1311,6 +1312,25 @@ def api_retry_variants(request: Request, media_id: int):
         raise HTTPException(400, "只有视频才有清晰度档位")
     queued = transcode.retry_failed(media_id, UPLOAD_DIR / m["filename"])
     return {"ok": True, "queued": queued}
+
+
+# ---------- 媒体下载（另存为） ----------
+@app.get("/api/media/{media_id}/download")
+def api_media_download(request: Request, media_id: int, quality: str = "original"):
+    """把原图 / 原片 / 某个清晰度档位以「附件」形式下载（需本人或管理员）。
+
+    为什么不直接给 /uploads/ 的链接：那条路的 Content-Type 是 image/video，
+    浏览器一律内联打开；只有 Content-Disposition: attachment 才是下载。
+
+    **鉴权和「能不能看」一致，不更宽**：这条走 require_owner，别人的私有媒体
+    一律 404。分享页的匿名访客走另一条 /api/share/{token}/media/{id}/download，
+    在那边校验 token + 密码 + 媒体归属 —— 两条路各自对应一种「能看」的方式。
+
+    quality 只认 download.ALLOWED_QUALITIES 里的字面量（original/1080p/…），
+    拼不出 ../；照片传非 original 直接 404。
+    """
+    require_owner(current_user(request), db.get_media_owner_id(media_id), "媒体")
+    return download.build_response(media_id, quality, UPLOAD_DIR)
 
 
 # ---------- P2-3 多媒体检索 ----------

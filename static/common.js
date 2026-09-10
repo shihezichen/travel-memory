@@ -396,6 +396,113 @@ function tmPollQualities(m, wrap, onUpdate) {
   _qualityPollTimer = setTimeout(tick, 1500);
 }
 
+// ---------- 保存到本地 ----------
+// 为什么不能直接 <a href="/uploads/xxx.mp4" download>：
+//   1. 同源的 download 属性在**桌面** Chrome/Firefox 上好用，但 iOS Safari 从来
+//      不认它，视频会直接跳去内联播放；
+//   2. 微信 webview（X5 / WKWebView）更彻底，连 Content-Disposition 都会拦。
+// 所以真正促成「下载而不是播放」的是服务端的 attachment 响应头（download.py），
+// download 属性只留着让桌面浏览器别新开标签页。微信这一档老实降级成文字提示 ——
+// 假装点了有用，比明说下不了更糟。
+
+function tmIsWeChat() {
+  return /MicroMessenger|wxwork/i.test(navigator.userAgent || '');
+}
+
+function tmIsIOS() {
+  const ua = navigator.userAgent || '';
+  // iPadOS 13+ 默认发桌面版 UA，只能靠「Mac + 有触摸点」认出来
+  return /iPad|iPhone|iPod/.test(ua)
+    || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+}
+
+// 下载地址。两条路对应两种「能看」的方式，权限各自在服务端校验：
+//   分享页 → /api/share/{token}/media/{id}/download（匿名，但校验 token+密码+归属）
+//   主应用 → /api/media/{id}/download（要登录，且必须是本人/管理员）
+function tmDownloadUrl(m, label) {
+  const qs = [];
+  if (label && label !== 'original') qs.push('quality=' + encodeURIComponent(label));
+  const seg = location.pathname.split('/').filter(Boolean);
+  if (seg[0] === 'share' && seg[1]) {
+    // 密码分享：share.js 把用户输过的密码存在 sessionStorage，这里沿用同一个键
+    const pwd = sessionStorage.getItem('share_pwd_' + seg[1]) || '';
+    if (pwd) qs.push('password=' + encodeURIComponent(pwd));
+    return '/api/share/' + encodeURIComponent(seg[1]) + '/media/'
+      + encodeURIComponent(m.id) + '/download' + (qs.length ? '?' + qs.join('&') : '');
+  }
+  return '/api/media/' + encodeURIComponent(m.id) + '/download'
+    + (qs.length ? '?' + qs.join('&') : '');
+}
+
+function tmTriggerDownload(m, label) {
+  if (tmIsWeChat()) {
+    // 微信里点了也不会下载，所以干脆不发请求，直接给能用的办法
+    tmToast(m.type === 'video'
+      ? '微信里无法直接下载。点右上角「···」→ 在浏览器打开，或长按视频保存'
+      : '微信里无法直接下载。长按图片即可保存到相册', 4000);
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = tmDownloadUrl(m, label);
+  a.rel = 'noopener';
+  a.download = '';           // 留空 = 用服务端给的文件名（Content-Disposition）
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (tmIsIOS()) {
+    // iOS Safari 会下进「文件」App 而不是相册，说清楚，省得人以为没成功
+    tmToast('已开始下载，可在「文件」App 里查看；想存进相册请长按' +
+      (m.type === 'video' ? '视频' : '图片'), 4000);
+  } else {
+    tmToast('开始下载…');
+  }
+}
+
+// 灯箱翻到某一格时刷新右上角的下载按钮。app.js / share.js 的 renderLightbox 各调一次。
+function tmUpdateDownloadBtn(m) {
+  const btn = document.getElementById('lightbox-download');
+  const menu = document.getElementById('lightbox-download-menu');
+  if (!btn) return;
+  if (menu) { menu.classList.add('hidden'); menu.innerHTML = ''; }
+  if (!m || !m.id) { btn.hidden = true; return; }   // 没 id 就没法拼下载地址
+  btn.hidden = false;
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    // 视频：列出**已转好**的档位让人挑。数据直接取 m.qualities —— 播放器那边
+    // 已经拉过、轮询也会回写到同一个对象上，这里不再多打一次接口。
+    const ready = (m.type === 'video' && m.qualities ? m.qualities : [])
+      .filter(q => q.status === 'done' && q.url);
+    if (!menu || ready.length <= 1) { tmTriggerDownload(m, 'original'); return; }
+    if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
+    menu.innerHTML = '';
+    ready.forEach(q => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'lb-download-item';
+      const size = q.filesize ? (q.filesize / 1048576).toFixed(1) + 'M' : '';
+      row.innerHTML = '<span>' + esc(QUALITY_NAMES[q.label] || q.label) + '</span>'
+        + '<span class="lb-quality-tail">' + esc(size) + '</span>';
+      row.onclick = (e) => {
+        e.stopPropagation();
+        menu.classList.add('hidden');
+        tmTriggerDownload(m, q.label);
+      };
+      menu.appendChild(row);
+    });
+    menu.classList.remove('hidden');
+  };
+}
+
+// 点别处收起下载菜单。挂在 document 上而不是 #lightbox 上，是因为
+// 菜单要能被灯箱外的点击（比如误触页面其他地方）一起收掉。
+document.addEventListener('click', (ev) => {
+  const menu = document.getElementById('lightbox-download-menu');
+  if (!menu || menu.classList.contains('hidden')) return;
+  const btn = document.getElementById('lightbox-download');
+  if (menu.contains(ev.target) || (btn && btn.contains(ev.target))) return;
+  menu.classList.add('hidden');
+});
+
 // 造一格媒体。只有当前这格的视频才自动播放，相邻格预载但不出声。
 function buildLightboxMedia(m, isCurrent) {
   if (m.type === 'video') {

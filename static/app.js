@@ -2852,6 +2852,7 @@ function renderLightbox() {
   $('#lightbox-counter').textContent = `${lightboxIndex + 1} / ${lightboxMedia.length}`;
   $('#lightbox-prev').style.visibility = lightboxIndex > 0 ? 'visible' : 'hidden';
   $('#lightbox-next').style.visibility = lightboxIndex < lightboxMedia.length - 1 ? 'visible' : 'hidden';
+  tmUpdateDownloadBtn(m);        // 右上角「保存到本地」跟着当前这格走
   saveLightboxState();
 }
 
@@ -4673,7 +4674,8 @@ let lbZoom = { on: false, scale: 1, tx: 0, ty: 0, fit: 1 };
     // 结果就是编辑入口完全点不动。
     if (e.target.closest && e.target.closest(
         '#lightbox-close, #lightbox-prev, #lightbox-next, video, .lb-caption, '
-        + '.lb-quality-btn, .lb-quality-menu')) {
+        + '.lb-quality-btn, .lb-quality-menu, '
+        + '#lightbox-download, .lb-download-menu')) {
       active = false; return;
     }
     if (e.touches.length === 2) {

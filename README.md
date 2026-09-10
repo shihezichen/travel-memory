@@ -48,6 +48,10 @@ Travel Memory 是一个自托管的多用户旅行记忆系统。它有两副面
 - 地图上按轨迹点聚成"照片堆"，随缩放级别自动放大缩小
 - 相册：整个行程的扁平网格（类 iOS 照片），双指捏合改变每行数量，可按类型筛选、按时间排序
 - 点详情：九宫格式媒体网格，长按拖拽排序，格内直接编辑描述
+- 保存到本地：灯箱右上角一个下载按钮，照片直接下原图，视频可挑清晰度档位下载。
+  文件名按「拍摄日期-地点-序号」拼（`旅行记忆-20260910-京都-01.mp4`）。
+  分享页的匿名访客同样能下，权限和「能不能看」一致。
+  微信内置浏览器拦下载，那里会退化成「长按保存」的提示，不假装能下
 - 灯箱：跟手轮播翻页、点击进入全屏、双指缩放与平移、拖到边缘继续翻页（安卓图库式）
 - 每张照片可写一段描述，**支持 Markdown**（粗斜体、列表、引用、链接、行内代码）
 
@@ -150,6 +154,7 @@ systemctl --user enable --now travel-memory-demo-reset.timer
 app.py                 FastAPI 应用，95 个 HTTP 端点
 db.py                  SQLite 表结构、迁移与全部查询
 media.py               缩略图 / EXIF / 视频抽帧
+download.py            媒体「另存为」：文件名拼装 + RFC 5987 编码 + quality 白名单
 mcp_http.py            MCP Streamable HTTP 端点（34 个工具）
 mcp_server.py          MCP stdio 版本
 companion.py           伴随进程（定时任务）
@@ -264,6 +269,11 @@ The stack is deliberately boring: **FastAPI + SQLite + vanilla JavaScript**. No 
 - Photos cluster into "stacks" at each point on the map, scaling with zoom level
 - Album: a flat whole-trip grid (iOS Photos style), pinch to change columns, filter by type, sort by time
 - Point detail: a WeChat-moments-style grid — long-press to drag-reorder, edit a caption right in the cell
+- Save to device: a download button in the lightbox corner — photos download the original,
+  videos let you pick a quality. Filenames are built from date/place/index
+  (`旅行记忆-20260910-京都-01.mp4`). Anonymous share-page visitors can download too,
+  with exactly the same permissions as viewing. WeChat's in-app browser blocks downloads,
+  so there it degrades to a "long-press to save" hint rather than pretending
 - Lightbox: finger-tracking carousel, tap for fullscreen, pinch zoom and pan, drag past the edge to page (Android gallery behaviour)
 - Every photo can carry a caption **with Markdown support** (bold/italic, lists, quotes, links, inline code)
 
@@ -370,6 +380,7 @@ A single uvicorn process is enough (SQLite is single-writer). For production:
 app.py                 FastAPI app, 95 HTTP endpoints
 db.py                  SQLite schema, migrations and every query
 media.py               thumbnails / EXIF / video frame extraction
+download.py            media "save as": filename building, RFC 5987, quality whitelist
 mcp_http.py            MCP Streamable HTTP endpoint (34 tools)
 mcp_server.py          MCP stdio variant
 companion.py           companion process (scheduled jobs)

@@ -24,6 +24,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
+import download
 import transcode
 from config import AMAP_KEY, AMAP_SECURITY, OSRM_URL
 from routers.deps import (
@@ -104,6 +105,28 @@ def api_share_view(token: str, password: str = ""):
         },
         "points": points,
     }
+
+
+@router.get("/api/share/{token}/media/{media_id}/download")
+def api_share_media_download(token: str, media_id: int,
+                             quality: str = "original", password: str = ""):
+    """分享页的「保存到本地」。匿名可访问，但**不比分享页本身更宽**：
+
+      1. token 必须存在且未过期（同 api_share_view）；
+      2. 分享设了密码就必须带对（share.js 里存在 sessionStorage 的那份）；
+      3. 媒体必须确实属于这条分享链接的行程 —— 否则拿一个自己的 token
+         就能顺着 media_id 把别人的私有媒体全部下走。
+
+    这三条过了，才等于「这个匿名访客本来就能在分享页里看到它」。
+    """
+    share = db.get_share(token)
+    if not share:
+        raise HTTPException(404, "分享不存在或已失效")
+    if share.get("has_password") and not db.verify_share_password(token, password):
+        return JSONResponse({"error": "wrong_password"}, status_code=403)
+    if db.get_media_trip_id(media_id) != share["trip_id"]:
+        raise HTTPException(404, "媒体不存在")
+    return download.build_response(media_id, quality, UPLOAD_DIR)
 
 
 # ---------- 分享缩略图 / 二维码 ----------

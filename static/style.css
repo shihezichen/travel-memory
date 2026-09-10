@@ -1321,6 +1321,51 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
 @media (prefers-reduced-motion: reduce) {
   .lightbox-media.zoom-anim { transition: none; }
 }
+/* ---------- 保存到本地 ---------- */
+/* 摆在关闭按钮左边。右上角是灯箱里唯一「不会被内容挤走」的落点：正上方是计数、
+   左上角被清晰度按钮占了、下方是视频原生控制条。44px 是移动端可靠的触摸下限，
+   比清晰度按钮大一圈是故意的 —— 它旁边就是关闭，点错代价是关掉灯箱。 */
+.lightbox-download {
+  position: absolute; top: 14px; right: 62px; z-index: 11;
+  width: 44px; height: 44px; padding: 10px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, .42); color: #fff;
+  cursor: pointer; opacity: .85;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity .2s ease, background .2s ease;
+}
+.lightbox-download[hidden] { display: none; }
+.lightbox-download:hover { opacity: 1; background: rgba(0, 0, 0, .62); }
+.lightbox-download:active { background: rgba(255, 255, 255, .2); }
+.lightbox-download svg {
+  width: 22px; height: 22px;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* 档位菜单：右上角展开，样式跟清晰度菜单保持一致，只是靠右对齐 */
+.lb-download-menu {
+  position: absolute; top: 62px; right: 62px; z-index: 12;
+  min-width: 132px; padding: 4px;
+  border-radius: 10px; border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(17, 24, 39, .94);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .45);
+}
+.lb-download-menu.hidden { display: none; }
+.lb-download-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  width: 100%; padding: 11px 10px;
+  border: none; background: none; color: #fff;
+  font-size: 13px; line-height: 1.3; text-align: left;
+  border-radius: 7px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lb-download-item:active { background: rgba(255, 255, 255, .12); }
+/* 放大态下和清晰度按钮一起让开（关闭按钮保留，这个不保留：放大是在看图，
+   下载入口退回去一层，退出放大就回来） */
+.lightbox.zoomed .lightbox-download,
+.lightbox.zoomed .lb-download-menu { opacity: 0; pointer-events: none; }
+
 .lightbox-close {
   position: absolute; top: 16px; right: 20px; z-index: 10;
   font-size: 36px; color: #fff; cursor: pointer; line-height: 1;

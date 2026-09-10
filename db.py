@@ -492,6 +492,21 @@ def get_point_owner_id(point_id):
     return row["user_id"] if row else None
 
 
+def get_media_trip_id(media_id):
+    """媒体所属的行程 id（不存在返回 None）。
+
+    分享页下载要用：只有「这条媒体确实属于该分享链接的行程」才放行，
+    否则拿到任意一个 token 就能把别人行程的媒体一并下走。
+    """
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT p.trip_id FROM media m JOIN points p ON p.id=m.point_id WHERE m.id=?",
+        (media_id,),
+    ).fetchone()
+    conn.close()
+    return row["trip_id"] if row else None
+
+
 def get_media_owner_id(media_id):
     conn = get_conn()
     row = conn.execute(
