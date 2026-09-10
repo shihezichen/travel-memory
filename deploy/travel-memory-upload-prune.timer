@@ -1,0 +1,11 @@
+[Unit]
+Description=Travel Memory — 每天 04:40 清理过期的分片上传临时文件
+
+[Timer]
+OnCalendar=*-*-* 04:40:00
+# 机器当时没开机的话，开机后补跑一次
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

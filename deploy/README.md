@@ -96,6 +96,7 @@ journalctl --user -u travel-memory.service -n 50
 | Unit | 频率 | 作用 |
 |---|---|---|
 | `travel-memory-audit-prune.timer` | 每天 04:10 | 删 90 天前的 `audit_log`（见下文） |
+| `travel-memory-upload-prune.timer` | 每天 04:40 | 清 24 小时没动静的分片上传临时文件（见下文） |
 | `travel-memory-demo-reset.timer` | 每天 03:00 | 把演示账号恢复出厂状态（`scripts/reset_demo.py`） |
 
 ### 定时任务（依赖**不在本仓库里**的脚本）
@@ -145,6 +146,34 @@ systemctl --user enable --now travel-memory-audit-prune.timer
 
 清理只删 `audit_log`，不碰 trips / points / media / users。
 过期 session 是服务启动时清的（`db.init_db()`），不需要单独的 timer。
+
+---
+
+## 分片上传的临时文件清理
+
+大文件走断点续传时，还没合并的分片放在 `uploads/.chunks/<session_id>/`。
+传完会立刻清掉；用户中途关掉浏览器再也不回来的，就会留在盘上。
+
+```bash
+# 先看看会清掉什么
+.venv/bin/python scripts/prune_upload_sessions.py --dry-run
+
+# 手动清一次（默认 24 小时没动静算过期）
+.venv/bin/python scripts/prune_upload_sessions.py --hours 24
+```
+
+装成每天自动跑：
+
+```bash
+cp deploy/travel-memory-upload-prune.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now travel-memory-upload-prune.timer
+```
+
+**这个 timer 是可选的**：服务进程在「新建上传会话」时自己也会顺手清一次
+（每小时最多一次，见 `app.prune_upload_sessions`）。装上只是让长期没人上传的
+机器也能按时回收。清理只碰 `.chunks/` 和 `upload_sessions` / `upload_chunks`，
+绝不碰已经合并好的媒体文件。
 
 ---
 

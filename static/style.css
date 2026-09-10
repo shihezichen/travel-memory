@@ -550,6 +550,40 @@ body.map-fullscreen-on { overflow: hidden; }
   .media-uploading.processing .up-ring svg { animation: none; }
 }
 
+/* ---------- 「未完成的上传」占位格 ---------- */
+/* 刷新/换页回来之后，服务端还留着传了一半的会话。这一格把它显式摆出来，
+   并且**必须说清楚「要重新选中同一个文件」**：浏览器不允许网页保存本地文件句柄，
+   页面刷新后 File 对象就没了，做不到自动接着传。不说清楚的话用户会一直等。 */
+.media-resume {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 1px;
+  padding: 4px;
+  /* 故意用琥珀色而不是主题色：这一格是「有事没干完」，不是可点的功能入口。
+     颜色写死不走变量 —— 微信内置 webview 上 color-mix() 不一定认。 */
+  border: 1px dashed #d97706;
+  background: #fffbeb;
+  color: var(--text); text-align: center; cursor: default;
+}
+.media-resume .resume-title { font-size: 10px; font-weight: 700; color: #b45309; }
+.media-resume .resume-name {
+  font-size: 9px; line-height: 1.2; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted);
+}
+.media-resume .resume-pct { font-size: 10px; font-variant-numeric: tabular-nums; }
+.media-resume .resume-hint { font-size: 8px; line-height: 1.2; color: var(--muted); }
+.media-resume button {
+  margin-top: 2px; padding: 1px 7px;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: var(--panel); color: var(--text);
+  font-size: 10px; cursor: pointer;
+}
+.media-resume .resume-go { border-color: var(--primary); color: var(--primary); }
+.media-resume .resume-drop { position: absolute; right: 3px; top: 3px; margin: 0; padding: 0 5px; }
+/* 格子太密的时候只留最要紧的信息，别把按钮挤没了 */
+.media-grid[data-cols="5"] .media-resume .resume-name,
+.media-grid[data-cols="5"] .media-resume .resume-hint { display: none; }
+
 /* ---------- 点详情九宫格 ---------- */
 /* 「＋」格：替代原来独占一行的「上传照片/视频」按钮，参考发朋友圈的九宫格。 */
 .media-add {

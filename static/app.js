@@ -1654,14 +1654,20 @@ function renderMedia(media) {
   const grid = $('#media-grid');
   grid.innerHTML = '';
   applyMediaCols();      // 重建后把当前缩放档位重新落到网格上
-  detailMedia = media || [];
+  // 服务端列表 + 刚传完但这份快照里还没有的（见 mergeRecentUploads）
+  detailMedia = mergeRecentUploads(currentPointId, media || []);
   lightboxMedia = detailMedia;
   detailMedia.forEach((m) => {
     grid.appendChild(buildMediaItem(m));
   });
+  // 正在上传的占位格挂回来。少了这一步，上传途中任何一次 loadDetail
+  // （点 tab / 横滑切 tab / 删一张图）都会把在传的格子连同上传结果一起丢掉。
+  reattachActiveUploads(grid);
   // 「＋」永远排在最后一格；辅助点（纯途经点）不给上传入口
   const pt = (lastPoints || []).find(p => Number(p.id) === Number(currentPointId));
   if (!pt || !pt.is_waypoint) grid.appendChild(buildMediaAddCell());
+  // 上次没传完的（刷新/换设备回来）：异步拉一次，插「未完成的上传」占位格
+  if (!pt || !pt.is_waypoint) refreshResumableCells(currentPointId);
 }
 
 function buildMediaItem(m) {
@@ -1703,6 +1709,7 @@ function buildMediaItem(m) {
     e.stopPropagation();
     if (!await tmConfirm('删除这张媒体？', '删除媒体', { danger: true, okText: '删除' })) return;
     await api(`/api/media/${m.id}`, { method: 'DELETE' });
+    forgetRecentUpload(m.id);   // 别让「刚上传」的补丁表把刚删掉的又补回来
     loadDetail(currentPointId);
   };
   item.appendChild(del);
@@ -1722,7 +1729,105 @@ function buildMediaAddCell() {
 // 手机上选一段视频，点完「＋」直接就回到页面了，几十秒里什么都不发生 —— 看起来就是没反应。
 // 现在改成：选中文件的瞬间先在「＋」前面插入占位格（图片用本地预览、视频抽第一帧当封面），
 // 上面盖一圈环形进度；「＋」自动被挤到后面，可以马上再点、再选下一批，多个文件同时传。
-const UPLOAD_CONCURRENCY = 3;   // 同时传 3 个：再多手机上行带宽反而互相拖慢
+const UPLOAD_CONCURRENCY = 3;   // 同时处理 3 个文件：再多手机上行带宽反而互相拖慢
+
+// ---------- 分片上传 / 断点续传 ----------
+// 手机上一段视频动辄 100MB+，单请求上传网络一抖就得从 0 重来。超过阈值的文件
+// 改成切片逐个传，服务端记住收到哪些片，断了接着传。
+// 小文件继续走原来的单请求接口（少一次建会话往返，也让分享页/旧客户端不受影响）。
+// 这两个允许被页面加载前注入的全局覆盖 —— 只为 E2E 用（拿几百 KB 的小文件
+// 就能跑通「多分片 + 断点续传」，不用真造一个 100MB 的样本传上一分钟）。
+// 生产环境没人设这两个全局，取的就是下面的默认值；而且服务端对 chunk_size
+// 有自己的上下限钳制，前端就算乱传也开不出口子。
+const CHUNK_THRESHOLD = Number(window.TM_CHUNK_THRESHOLD) || 8 * 1024 * 1024;
+const CHUNK_SIZE = Number(window.TM_CHUNK_SIZE) || 4 * 1024 * 1024;
+const CHUNK_PARALLEL = 3;                   // 同一个文件最多同时传几片
+const CHUNK_RETRIES = 4;                    // 单片失败重试次数（指数退避）
+const FP_SAMPLE_BYTES = 2 * 1024 * 1024;    // 指纹只取前 2MB —— 整文件 md5 在手机上会卡死
+const UPLOAD_STORE_KEY = 'tm_uploads_v1';
+const UPLOAD_STORE_TTL = 24 * 3600 * 1000;  // 和服务端会话过期时间对齐
+
+// 全局连接预算。没有它就会变成「3 个文件 × 每个 3 片 = 9 条并发连接」，
+// 上行被打满之后每一条都慢，整体反而更久，弱网下还会集体超时。
+// 这个闸门管住所有上传请求（整文件的算 1 条，每个分片也算 1 条）。
+const UPLOAD_CONNECTIONS = 4;
+const uploadGate = (function () {
+  let inUse = 0;
+  const waiting = [];
+  return {
+    acquire() {
+      if (inUse < UPLOAD_CONNECTIONS) { inUse++; return Promise.resolve(); }
+      return new Promise((resolve) => waiting.push(resolve)).then(() => { inUse++; });
+    },
+    release() {
+      inUse = Math.max(0, inUse - 1);
+      const next = waiting.shift();
+      if (next) next();
+    },
+    get inUse() { return inUse; },
+  };
+})();
+
+function uploadSleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function fnv1a64Hex(bytes) {
+  // crypto.subtle 只在安全上下文（https / localhost）可用。明文 http 访问时
+  // 退回这个纯 JS 哈希 —— 指纹只用来「认出是不是同一个文件」，不做安全判断。
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (let i = 0; i < bytes.length; i++) {
+    h1 = (h1 ^ bytes[i]) >>> 0; h1 = Math.imul(h1, 16777619) >>> 0;
+    h2 = (h2 + bytes[i]) >>> 0; h2 = Math.imul(h2 ^ (h2 >>> 7), 2246822519) >>> 0;
+  }
+  return ('00000000' + h1.toString(16)).slice(-8) +
+         ('00000000' + h2.toString(16)).slice(-8);
+}
+
+// 文件指纹：前 2MB + 大小 + 文件名 + lastModified。
+// 刻意**不**算整文件 md5 —— 100MB 的视频在手机上算一遍要好几秒还烫手，
+// 而这几项组合起来重复的概率已经低到无所谓（撞了最多是白传一次）。
+async function fileFingerprint(file) {
+  const head = await file.slice(0, Math.min(FP_SAMPLE_BYTES, file.size)).arrayBuffer();
+  const meta = new TextEncoder().encode(
+    '|' + file.size + '|' + (file.name || '') + '|' + (file.lastModified || 0));
+  const buf = new Uint8Array(head.byteLength + meta.length);
+  buf.set(new Uint8Array(head), 0);
+  buf.set(meta, head.byteLength);
+  if (window.crypto && crypto.subtle && crypto.subtle.digest) {
+    try {
+      const d = await crypto.subtle.digest('SHA-256', buf);
+      return Array.from(new Uint8Array(d))
+        .map((b) => ('0' + b.toString(16)).slice(-2)).join('');
+    } catch (e) { /* 非安全上下文：落到下面的兜底 */ }
+  }
+  return 'fnv-' + fnv1a64Hex(buf) + '-' + file.size;
+}
+
+// 会话状态存 localStorage：刷新回来还知道「这个点上有个传了一半的文件」。
+// 存的只是 id 和进度，**存不了 File 句柄** —— 浏览器不允许，见 buildResumeCell 的说明。
+function loadUploadStore() {
+  try { return JSON.parse(localStorage.getItem(UPLOAD_STORE_KEY) || '{}') || {}; }
+  catch (e) { return {}; }
+}
+function saveUploadStore(store) {
+  const cutoff = Date.now() - UPLOAD_STORE_TTL;
+  for (const k of Object.keys(store)) {
+    if (!(store[k] && store[k].updated > cutoff)) delete store[k];
+  }
+  try { localStorage.setItem(UPLOAD_STORE_KEY, JSON.stringify(store)); } catch (e) {}
+}
+function rememberUpload(rec) {
+  const store = loadUploadStore();
+  store[rec.session_id] = Object.assign({}, store[rec.session_id], rec,
+                                        { updated: Date.now() });
+  saveUploadStore(store);
+}
+function forgetUpload(sessionId) {
+  const store = loadUploadStore();
+  delete store[sessionId];
+  saveUploadStore(store);
+}
 
 function isVideoFile(file) {
   return /^video\//.test(file.type || '') ||
@@ -1791,7 +1896,7 @@ function buildUploadCell(file) {
     const pct = ring.querySelector('.up-pct');
     if (pct) pct.textContent = '';
   };
-  cell._setFailed = (msg, onRetry) => {
+  cell._setFailed = (msg, onRetry, onDismiss) => {
     cell.classList.remove('processing');
     cell.classList.add('up-failed');
     ring.innerHTML = '<span class="up-err" title="' + esc(msg || '上传失败') + '">↻</span>';
@@ -1800,17 +1905,29 @@ function buildUploadCell(file) {
       const x = el('button', 'up-cancel', '×');
       x.type = 'button';
       x.title = '不传了';
-      x.onclick = (e) => { e.stopPropagation(); cell.remove(); };
+      x.onclick = (e) => { e.stopPropagation(); cell.remove(); if (onDismiss) onDismiss(); };
       cell.appendChild(x);
     }
   };
   return cell;
 }
 
-// 单个文件的上传。用 XHR 而不是 fetch —— fetch 至今拿不到上传进度。
-function uploadOneFile(pointId, file, cell) {
+// 解析后端的错误体：FastAPI 统一是 {"detail": ...}，detail 可能是字符串也可能是对象
+function uploadErrText(raw, status) {
+  try {
+    const j = JSON.parse(raw);
+    const d = j && j.detail;
+    if (typeof d === 'string') return d;
+    if (d && typeof d === 'object') return d.error || JSON.stringify(d);
+  } catch (e) {}
+  return raw || ('HTTP ' + status);
+}
+
+// 单个文件的上传（不分片）。用 XHR 而不是 fetch —— fetch 至今拿不到上传进度。
+function uploadOneFile(pointId, file, cell, job) {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
+    if (job) job.xhr = xhr;
     xhr.open('POST', '/api/points/' + pointId + '/media');
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) cell._setProgress(e.loaded / e.total);
@@ -1825,30 +1942,263 @@ function uploadOneFile(pointId, file, cell) {
         showLogin();
         resolve({ ok: false, msg: '未登录或登录已过期' });
       } else {
-        resolve({ ok: false, msg: xhr.responseText || ('HTTP ' + xhr.status) });
+        resolve({ ok: false, msg: uploadErrText(xhr.responseText, xhr.status) });
       }
     };
     xhr.onerror = () => resolve({ ok: false, msg: '网络中断' });
-    xhr.onabort = () => resolve({ ok: false, msg: '已取消' });
+    xhr.onabort = () => resolve({ ok: false, cancelled: true, msg: '已取消' });
     const fd = new FormData();
     fd.append('file', file);
     xhr.send(fd);
   });
 }
 
-// 一个文件走完全程：传 → 成功就把占位格换成真正的格子；失败就留在原地，可以点 ↻ 重来
-async function runUpload(pointId, file, cell) {
-  const res = await uploadOneFile(pointId, file, cell);
-  if (Number(pointId) !== Number(currentPointId) || !cell.isConnected) return;  // 期间切走了
-  if (!res.ok) {
-    cell._setFailed(res.msg, () => {
-      // 重来：换一个干净的占位格顶上去，避免复用上一次的失败状态
-      const again = buildUploadCell(file);
-      cell.replaceWith(again);
-      runUpload(pointId, file, again);
-    });
+// 传一个分片。返回 {ok} / {ok:false, fatal} —— fatal 的不该重试（越权、类型不对、会话没了）。
+function putOneChunk(sessionId, idx, blob, onLoaded, job) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    if (job) job.chunkXhrs.add(xhr);
+    xhr.open('PUT', '/api/upload-sessions/' + sessionId + '/chunks/' + idx);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onLoaded(e.loaded); };
+    const done = (r) => { if (job) job.chunkXhrs.delete(xhr); resolve(r); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { onLoaded(blob.size); done({ ok: true }); return; }
+      if (xhr.status === 401) { showLogin(); done({ ok: false, fatal: true, msg: '未登录或登录已过期' }); return; }
+      // 4xx 是「请求本身不对」，重试多少次都一样；5xx / 网络错误才值得退避重来
+      done({ ok: false, fatal: xhr.status >= 400 && xhr.status < 500,
+             msg: uploadErrText(xhr.responseText, xhr.status) });
+    };
+    xhr.onerror = () => done({ ok: false, msg: '网络中断' });
+    xhr.onabort = () => done({ ok: false, fatal: true, cancelled: true, msg: '已取消' });
+    const fd = new FormData();
+    fd.append('file', blob, String(idx));
+    xhr.send(fd);
+  });
+}
+
+// 分片上传全流程：建/复用会话 → 并发传缺的片（失败指数退避重试）→ 合并。
+// session 已经存在时（续传）只传服务端还没收到的那些片。
+async function uploadChunked(pointId, file, cell, job) {
+  job.chunkXhrs = job.chunkXhrs || new Set();
+  let sess = job.session;
+  if (!sess) {
+    try {
+      const fp = job.fingerprint || (job.fingerprint = await fileFingerprint(file));
+      const fd = new FormData();
+      fd.append('fingerprint', fp);
+      fd.append('filename', file.name || 'unknown');
+      fd.append('filesize', String(file.size));
+      fd.append('chunk_size', String(CHUNK_SIZE));
+      sess = await api('/api/points/' + pointId + '/upload-sessions',
+                       { method: 'POST', body: fd });
+    } catch (err) {
+      return { ok: false, msg: '创建上传会话失败：' + err.message };
+    }
+    job.session = sess;
+  }
+  if (job.cancelled) return { ok: false, cancelled: true, msg: '已取消' };
+
+  const chunkSize = sess.chunk_size;
+  const total = sess.total_chunks;
+  const chunkLen = (i) => (i < total - 1 ? chunkSize : file.size - chunkSize * (total - 1));
+  const done = new Set(sess.received || []);
+  const flying = new Map();          // idx -> 这一片已经发出去多少字节
+  const persist = () => rememberUpload({
+    session_id: sess.session_id, point_id: pointId, fingerprint: job.fingerprint,
+    filename: file.name, filesize: file.size, chunk_size: chunkSize,
+    total_chunks: total, received: Array.from(done),
+  });
+  const bump = () => {
+    let sent = 0;
+    done.forEach((i) => { sent += chunkLen(i); });
+    flying.forEach((v) => { sent += v; });
+    // 聚合进度：已确认的片按整片算，在途的按 XHR 报的字节算 —— 所以进度是
+    // 平滑上涨的，不会「卡住不动然后一跳到 100%」。
+    cell._setProgress(Math.min(1, sent / Math.max(1, file.size)));
+  };
+  persist();
+  bump();
+
+  const queue = [];
+  for (let i = 0; i < total; i++) if (!done.has(i)) queue.push(i);
+  let failure = null;
+  const it = queue[Symbol.iterator]();
+  const workers = [];
+  for (let w = 0; w < Math.min(CHUNK_PARALLEL, queue.length || 1); w++) {
+    workers.push((async () => {
+      for (const idx of it) {
+        if (failure || job.cancelled) return;
+        const blob = file.slice(idx * chunkSize, idx * chunkSize + chunkLen(idx));
+        let ok = false;
+        for (let attempt = 0; attempt <= CHUNK_RETRIES; attempt++) {
+          if (job.cancelled) return;
+          await uploadGate.acquire();
+          let res;
+          try {
+            res = await putOneChunk(sess.session_id, idx, blob,
+                                    (n) => { flying.set(idx, n); bump(); }, job);
+          } finally {
+            uploadGate.release();
+          }
+          if (res.ok) { ok = true; break; }
+          flying.delete(idx);
+          bump();
+          if (res.fatal || job.cancelled) { failure = failure || res.msg; return; }
+          if (attempt < CHUNK_RETRIES) {
+            // 指数退避 + 抖动：弱网抖一下时别所有分片同时重试，那只会再挤一次
+            await uploadSleep(Math.min(8000, 500 * Math.pow(2, attempt))
+                              + Math.random() * 300);
+          }
+        }
+        if (!ok) { failure = failure || ('分片 ' + (idx + 1) + '/' + total + ' 上传失败'); return; }
+        flying.delete(idx);
+        done.add(idx);
+        bump();
+        persist();
+      }
+    })());
+  }
+  await Promise.all(workers);
+
+  if (job.cancelled) return { ok: false, cancelled: true, msg: '已取消' };
+  if (failure) return { ok: false, msg: failure, session: sess };
+
+  cell._setProgress(1);
+  cell._setProcessing();
+  try {
+    const d = await api('/api/upload-sessions/' + sess.session_id + '/complete',
+                        { method: 'POST' });
+    forgetUpload(sess.session_id);
+    return { ok: true, data: d };
+  } catch (err) {
+    return { ok: false, msg: '合并失败：' + err.message, session: sess };
+  }
+}
+
+// 正在进行中的上传。**这个登记簿是「切 tab 丢上传」那个 bug 的解药**：
+// loadDetail 会把 #media-grid 整个重建，占位格连同 DOM 一起没了；
+// 有了它，重建之后能把还在传的格子挂回去，传完也能把结果插进新网格。
+const activeUploads = [];
+// 刚传完、但服务端列表快照可能还没反映出来的媒体（loadDetail 的 GET 早于上传完成
+// 却晚于它返回时会发生）。renderMedia 会把这些并回去，免得刚传好的又消失。
+const recentUploads = [];
+
+function noteRecentUpload(pointId, m) {
+  recentUploads.push({ pointId: Number(pointId), m: m, at: Date.now() });
+}
+function forgetRecentUpload(mediaId) {
+  for (let i = recentUploads.length - 1; i >= 0; i--) {
+    if (Number(recentUploads[i].m.id) === Number(mediaId)) recentUploads.splice(i, 1);
+  }
+}
+// 服务端列表 + 刚传完还没被它包含进来的那些。一旦某条出现在服务端列表里，
+// 就说明服务端已经知道它了，从这个补丁表里摘掉（否则删掉它之后还会复活）。
+function mergeRecentUploads(pointId, list) {
+  const have = new Set((list || []).map((x) => String(x.id)));
+  const out = (list || []).slice();
+  const cutoff = Date.now() - 120000;
+  for (let i = recentUploads.length - 1; i >= 0; i--) {
+    const r = recentUploads[i];
+    if (have.has(String(r.m.id)) || r.at < cutoff) { recentUploads.splice(i, 1); continue; }
+    if (r.pointId === Number(pointId)) out.push(r.m);
+  }
+  return out;
+}
+
+// 网格被重建之后，把还在传的占位格重新挂回去（挂在真实格子之后、「＋」之前）
+function reattachActiveUploads(grid) {
+  for (const up of activeUploads) {
+    if (Number(up.pointId) !== Number(currentPointId)) continue;
+    grid.appendChild(up.cell);      // appendChild 会把节点从旧父节点搬过来
+  }
+}
+
+// 把一个（可能已经脱离文档的）格子放回当前网格的「＋」之前
+function placeUploadCell(cell) {
+  const grid = document.getElementById('media-grid');
+  if (!grid) return false;
+  if (cell.parentElement === grid) return true;
+  const addCell = grid.querySelector('.media-add');
+  if (addCell) grid.insertBefore(cell, addCell);
+  else grid.appendChild(cell);
+  return true;
+}
+
+// 上传成功的收尾：把占位格换成真正的格子。
+// 关键改动：**不再因为格子已经脱离文档就把结果丢掉**。原来这里是
+// `if (!cell.isConnected) return;`，于是上传途中只要发生过一次 loadDetail
+// （点 tab、横滑切 tab、删一张图都会），服务端明明存好了，前端却再也不显示。
+function finishUploadCell(pointId, cell, m) {
+  noteRecentUpload(pointId, m);
+  if (Number(pointId) !== Number(currentPointId)) {
+    cell.remove();      // 用户已经切到别的点了：服务端有，下次打开自然看得到
     return;
   }
+  const grid = document.getElementById('media-grid');
+  if (!grid) { cell.remove(); return; }
+  if (detailMedia.some((x) => Number(x.id) === Number(m.id))) {
+    cell.remove();      // 期间的 loadDetail 已经把它拉回来了，别重复插一个
+    return;
+  }
+  const real = buildMediaItem(m);
+  if (cell.parentElement === grid) cell.replaceWith(real);
+  else {
+    cell.remove();
+    const addCell = grid.querySelector('.media-add');
+    if (addCell) grid.insertBefore(real, addCell);
+    else grid.appendChild(real);
+  }
+  detailMedia.push(m);
+  lightboxMedia = detailMedia;
+  syncDetailMediaOrder();
+}
+
+// 一个文件走完全程：传 → 成功换成真正的格子；失败就留在原地，可以点 ↻ 重来。
+// 大文件走分片（断了能续），小文件仍走单请求接口。
+async function runUpload(pointId, file, cell, job) {
+  job = job || {};
+  job.chunkXhrs = job.chunkXhrs || new Set();
+  const entry = { pointId: Number(pointId), file: file, cell: cell, job: job };
+  activeUploads.push(entry);
+  cell._job = job;
+  const drop = () => {
+    const i = activeUploads.indexOf(entry);
+    if (i >= 0) activeUploads.splice(i, 1);
+  };
+  let res;
+  try {
+    if (file.size >= CHUNK_THRESHOLD) {
+      res = await uploadChunked(pointId, file, cell, job);
+    } else {
+      // 不分片的也要占一个连接名额，否则「3 个整文件 + 4 个分片」还是 7 条连接
+      await uploadGate.acquire();
+      try { res = await uploadOneFile(pointId, file, cell, job); }
+      finally { uploadGate.release(); }
+    }
+  } catch (err) {
+    res = { ok: false, msg: String((err && err.message) || err) };
+  }
+
+  if (!res.ok) {
+    if (res.cancelled || Number(pointId) !== Number(currentPointId)) {
+      drop();
+      cell.remove();
+      return;
+    }
+    // 失败的格子**留在登记簿里**：它现在是个「点 ↻ 重来」的入口，
+    // 网格被 loadDetail 重建时得跟着挂回去，不然重试入口就没了。
+    placeUploadCell(cell);
+    cell._setFailed(res.msg, () => {
+      // 重来：换一个干净的占位格顶上去，避免复用上一次的失败状态。
+      // 分片的会话带着走 —— 重试只补没传上去的那几片，不从头再来。
+      drop();
+      const again = buildUploadCell(file);
+      cell.replaceWith(again);
+      runUpload(pointId, file, again, { session: res.session, fingerprint: job.fingerprint });
+    }, drop);
+    return;
+  }
+  drop();
   const d = res.data || {};
   // 上传接口返回的字段名是 thumb，而网格用的是 thumb_filename，这里对齐
   const m = {
@@ -1856,11 +2206,7 @@ async function runUpload(pointId, file, cell) {
     thumb_filename: d.thumb, caption: '',
     exif_time: d.exif_time, point_id: pointId,
   };
-  const real = buildMediaItem(m);
-  cell.replaceWith(real);
-  detailMedia.push(m);
-  lightboxMedia = detailMedia;
-  syncDetailMediaOrder();
+  finishUploadCell(pointId, cell, m);
 }
 
 // 网格里的真实格子顺序才是准的（并发上传谁先完成不一定），据此把 detailMedia 排回来
@@ -1868,7 +2214,8 @@ function syncDetailMediaOrder() {
   const grid = document.getElementById('media-grid');
   if (!grid) return;
   const byId = new Map(detailMedia.map(m => [String(m.id), m]));
-  const next = Array.from(grid.querySelectorAll('.media-item:not(.media-add):not(.media-uploading)'))
+  const next = Array.from(grid.querySelectorAll(
+    '.media-item:not(.media-add):not(.media-uploading):not(.media-resume)'))
     .map(e => byId.get(e.dataset.mid)).filter(Boolean);
   if (next.length === detailMedia.length) {
     detailMedia = next;
@@ -1893,6 +2240,96 @@ function startUploads(files) {
   const it = jobs[Symbol.iterator]();
   for (let i = 0; i < Math.min(UPLOAD_CONCURRENCY, jobs.length); i++) {
     (async () => { for (const job of it) { await job(); } })();
+  }
+}
+
+// ---------- 未完成的上传：占位格 + 重新选文件续传 ----------
+// 浏览器的安全模型不允许网页保存/恢复本地文件句柄：刷新之后 File 对象就没了，
+// 只有 session_id 和「传到第几片」还在。所以**做不到自动续传**，
+// 只能引导用户重新选中同一个文件 —— 这一点必须在界面上说清楚，
+// 否则用户会以为关掉页面它自己会传完。
+let resumeFileInput = null;
+
+function pickResumeFile(onPick) {
+  if (!resumeFileInput) {
+    resumeFileInput = document.createElement('input');
+    resumeFileInput.type = 'file';
+    resumeFileInput.accept = 'image/*,video/*';
+    resumeFileInput.style.display = 'none';
+    document.body.appendChild(resumeFileInput);
+  }
+  resumeFileInput.onchange = (e) => {
+    const f = (e.target.files || [])[0];
+    e.target.value = '';
+    if (f) onPick(f);
+  };
+  resumeFileInput.click();
+}
+
+function buildResumeCell(pointId, sess) {
+  const cell = el('div', 'media-item media-resume');
+  const pct = Math.min(99, Math.floor(100 * (sess.received_bytes || 0) /
+                                      Math.max(1, sess.filesize)));
+  cell.title = sess.filename + '：已传 ' + pct + '%，重新选中同一个文件即可继续';
+  cell.appendChild(el('div', 'resume-title', '未完成的上传'));
+  cell.appendChild(el('div', 'resume-name', sess.filename));
+  cell.appendChild(el('div', 'resume-pct', '已传 ' + pct + '%'));
+  cell.appendChild(el('div', 'resume-hint', '需重新选中同一文件'));
+
+  const go = el('button', 'resume-go', '继续');
+  go.type = 'button';
+  go.onclick = (e) => {
+    e.stopPropagation();
+    tmToast('请重新选中「' + sess.filename + '」，浏览器不允许网页自己读取本地文件');
+    pickResumeFile(async (f) => {
+      const fp = await fileFingerprint(f);
+      if (fp !== sess.fingerprint || f.size !== sess.filesize) {
+        tmAlert('这不是同一个文件（或内容已改动），没法接着上次的进度传。\n' +
+                '请选中原来那个「' + sess.filename + '」，或者点「放弃」重新传一次。');
+        return;
+      }
+      if (Number(currentPointId) !== Number(pointId)) return;
+      const again = buildUploadCell(f);
+      cell.replaceWith(again);
+      runUpload(pointId, f, again,
+                { session: sess, fingerprint: fp });
+    });
+  };
+  cell.appendChild(go);
+
+  const drop = el('button', 'resume-drop', '放弃');
+  drop.type = 'button';
+  drop.onclick = async (e) => {
+    e.stopPropagation();
+    if (!await tmConfirm('放弃这个没传完的上传？已经传上去的分片会被删除。',
+                         '放弃上传', { danger: true, okText: '放弃' })) return;
+    try { await api('/api/upload-sessions/' + sess.session_id, { method: 'DELETE' }); }
+    catch (err) { /* 会话可能已经被清理过了，照样把格子撤掉 */ }
+    forgetUpload(sess.session_id);
+    cell.remove();
+  };
+  cell.appendChild(drop);
+  return cell;
+}
+
+// 拉这个点上「传了一半」的会话，渲染成占位格。renderMedia 之后异步调用。
+async function refreshResumableCells(pointId) {
+  if (!pointId) return;
+  let sessions = [];
+  try { sessions = await api('/api/points/' + pointId + '/upload-sessions'); }
+  catch (err) { return; }
+  if (Number(pointId) !== Number(currentPointId)) return;
+  const grid = document.getElementById('media-grid');
+  if (!grid) return;
+  grid.querySelectorAll('.media-resume').forEach((e) => e.remove());
+  const addCell = grid.querySelector('.media-add');
+  for (const s of sessions) {
+    // 本页正在传的那个就是它 —— 已经有进度环了，别再显示一个「未完成」
+    if (activeUploads.some((u) => u.job && u.job.session &&
+                                  u.job.session.session_id === s.session_id)) continue;
+    const cell = buildResumeCell(pointId, s);
+    if (addCell) grid.insertBefore(cell, addCell);
+    else grid.appendChild(cell);
   }
 }
 

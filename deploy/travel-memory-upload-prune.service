@@ -1,0 +1,8 @@
+[Unit]
+Description=Travel Memory — 清理过期的分片上传临时文件（断点续传）
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/travel-memory
+# 24 小时没动静的上传会话连同 uploads/.chunks/ 下的临时分片一起删
+ExecStart=%h/travel-memory/.venv/bin/python %h/travel-memory/scripts/prune_upload_sessions.py --hours 24

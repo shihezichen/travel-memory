@@ -4,6 +4,7 @@ import os
 import base64
 import json
 import time
+import shutil
 import threading
 import math
 import uuid
@@ -845,6 +846,24 @@ def api_delete_point(request: Request, point_id: int):
 
 
 # ---------- 媒体 ----------
+PHOTO_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic")
+VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+
+
+def media_type_for(filename: str) -> str:
+    """按扩展名判定 photo / video。不认识的类型直接 400。
+
+    单请求上传和分片上传都走这里 —— 两条路必须对「什么能传」有完全一致的判断，
+    否则分片就成了绕过类型限制的后门。
+    """
+    ext = Path(filename or "").suffix.lower()
+    if ext in PHOTO_EXTS:
+        return "photo"
+    if ext in VIDEO_EXTS:
+        return "video"
+    raise HTTPException(400, f"不支持的文件类型: {ext}")
+
+
 @app.get("/api/points/{point_id}/media")
 def api_list_media(request: Request, point_id: int):
     require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")
@@ -874,14 +893,8 @@ def api_upload_media(request: Request, point_id: int, file: UploadFile = File(..
     if not raw:
         raise HTTPException(400, "空文件")
 
-    fname = file.filename or "unknown"
-    ext = Path(fname).suffix.lower()
-    if ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"):
-        mtype = "photo"
-    elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
-        mtype = "video"
-    else:
-        raise HTTPException(400, f"不支持的文件类型: {ext}")
+    ext = Path(file.filename or "unknown").suffix.lower()
+    mtype = media_type_for(file.filename or "unknown")
 
     limit = MAX_UPLOAD_PHOTO if mtype == "photo" else MAX_UPLOAD_VIDEO
     if len(raw) > limit:
@@ -892,20 +905,343 @@ def api_upload_media(request: Request, point_id: int, file: UploadFile = File(..
     stored_name = f"{uuid.uuid4().hex}{ext}"
     src_path = UPLOAD_DIR / stored_name
     src_path.write_bytes(raw)
+    return register_uploaded_file(point_id, src_path, mtype)
 
+
+def register_uploaded_file(point_id: int, src_path: Path, mtype: str) -> dict:
+    """文件已经落到 uploads/ 之后的收尾：缩略图 → EXIF → 写库 → 丢后台转码。
+
+    单请求上传和分片合并共用这一段。**分片合并也必须走这里**，否则合出来的
+    视频不会进转码队列（没有 faststart、没有低码率档位），播放体验直接倒退回
+    「等整片下完才起播」。
+    """
     thumb_name = media_mod.make_thumb(src_path, mtype)
     exif_time = exif_lat = exif_lng = None
     if mtype == "photo":
         exif_time, exif_lat, exif_lng = media_mod.read_exif(src_path)
 
-    mid = db.add_media(point_id, mtype, stored_name, thumb_name,
+    mid = db.add_media(point_id, mtype, src_path.name, thumb_name,
                        exif_time, exif_lat, exif_lng)
     transcode.on_media_uploaded(mid, src_path, mtype)   # 视频丢后台转码，不阻塞本请求
     return {
-        "id": mid, "type": mtype, "filename": stored_name,
+        "id": mid, "type": mtype, "filename": src_path.name,
         "thumb": thumb_name, "exif_time": exif_time,
         "exif_lat": exif_lat, "exif_lng": exif_lng,
     }
+
+
+# ---------- 分片上传 / 断点续传 ----------
+# 为什么要有这一组接口：手机上一段视频动辄 100MB+，走单请求上传时网络一抖就得
+# 从 0 重来，弱网下基本传不上去。这里把文件切成分片逐个传，服务端记住「收到哪些片」，
+# 断了之后接着传没收到的那些。
+#
+# 边界（刻意保守，别在这里开口子）：
+#   · 原来的单请求接口 POST /api/points/{id}/media **原样保留**，小文件继续走它。
+#   · 体积上限两道关：建会话时按声明的 filesize 挡一次，合并前按真实字节数再挡一次。
+#     每个分片的长度也必须精确等于「按 chunk_size 推出来的应有长度」——
+#     这样「所有片都在」就等价于「总字节数正好等于 filesize」，谎报没有意义。
+#   · 归属校验在**每一个**分片请求上都做，不是只在建会话时查一次。
+CHUNK_SIZE_MIN = 256 * 1024
+CHUNK_SIZE_MAX = 16 * 1024 * 1024
+CHUNK_COUNT_MAX = 4096          # 挡住「1 字节一片」把 inode 刷爆
+UPLOAD_SESSION_TTL_HOURS = 24   # 这么久没动静的会话连同临时分片一起回收
+# 同一个会话的 complete 串行化：两个并发的 complete 会合并出两份文件、写两条 media。
+_COMPLETE_LOCKS = {}
+_COMPLETE_LOCKS_GUARD = threading.Lock()
+# 过期清理的节流（进程内）：建会话时顺手清一次，但最多每小时一次。
+_PRUNE_LAST = [0.0]
+
+
+def _chunk_root() -> Path:
+    """分片暂存根目录。写成函数而不是模块常量：测试会重绑 UPLOAD_DIR，
+    常量会在 import 时就冻结成生产路径。"""
+    return UPLOAD_DIR / ".chunks"
+
+
+def _safe_session_id(session_id: str) -> str:
+    """会话 id 是服务端生成的 32 位十六进制。这里再校验一次形状 ——
+    它会被拼进文件路径，不能让 `../` 之类的东西混进来。"""
+    sid = str(session_id or "")
+    if len(sid) != 32 or any(c not in "0123456789abcdef" for c in sid):
+        raise HTTPException(404, "上传会话不存在")
+    return sid
+
+
+def _chunk_dir(session_id: str) -> Path:
+    return _chunk_root() / _safe_session_id(session_id)
+
+
+def _session_lock(session_id: str) -> threading.Lock:
+    with _COMPLETE_LOCKS_GUARD:
+        return _COMPLETE_LOCKS.setdefault(session_id, threading.Lock())
+
+
+def _drop_session_files(session_id: str):
+    shutil.rmtree(_chunk_dir(session_id), ignore_errors=True)
+    with _COMPLETE_LOCKS_GUARD:
+        _COMPLETE_LOCKS.pop(session_id, None)
+
+
+def _expected_chunk_size(sess: dict, idx: int) -> int:
+    """第 idx 片应有的字节数。最后一片是余数，其余都是满片。"""
+    total = int(sess["total_chunks"])
+    if idx < total - 1:
+        return int(sess["chunk_size"])
+    return int(sess["filesize"]) - int(sess["chunk_size"]) * (total - 1)
+
+
+def _session_payload(sess: dict, resumed: bool = False) -> dict:
+    received = db.list_upload_chunks(sess["session_id"]) \
+        if sess["status"] == "uploading" else []
+    return {
+        "session_id": sess["session_id"],
+        "point_id": sess["point_id"],
+        "filename": sess["filename"],
+        "fingerprint": sess["fingerprint"],
+        "filesize": sess["filesize"],
+        "chunk_size": sess["chunk_size"],
+        "total_chunks": sess["total_chunks"],
+        "type": sess["mtype"],
+        "status": sess["status"],
+        "media_id": sess["media_id"],
+        "received": received,
+        "received_bytes": db.upload_chunks_total_size(sess["session_id"]),
+        "updated_at": sess["updated_at"],
+        "resumed": resumed,
+    }
+
+
+def _load_session(request: Request, session_id: str) -> dict:
+    """取会话并校验归属。**每个分片请求都调它** —— 只在建会话时查一次归属，
+    等于把 session_id 变成一张「谁捡到谁能往里写」的通行证。"""
+    sess = db.get_upload_session(_safe_session_id(session_id))
+    if not sess:
+        raise HTTPException(404, "上传会话不存在")
+    require_owner(current_user(request), sess["owner_id"], "上传会话")
+    return sess
+
+
+def prune_upload_sessions(hours: int = UPLOAD_SESSION_TTL_HOURS) -> dict:
+    """回收过期会话：删库里的行 + 删磁盘上的临时分片。
+
+    再顺手扫一遍 .chunks/ 下的孤儿目录（库里已经没有对应会话了，
+    比如手工删库、或者进程在建目录和写库之间被杀）。
+    """
+    removed = 0
+    for s in db.list_stale_upload_sessions(hours):
+        _drop_session_files(s["session_id"])
+        db.delete_upload_session(s["session_id"])
+        removed += 1
+    orphans = 0
+    root = _chunk_root()
+    if root.is_dir():
+        cutoff = time.time() - hours * 3600
+        for d in root.iterdir():
+            try:
+                if not d.is_dir() or d.stat().st_mtime > cutoff:
+                    continue
+                if db.get_upload_session(d.name):
+                    continue
+                shutil.rmtree(d, ignore_errors=True)
+                orphans += 1
+            except OSError:
+                continue
+    return {"sessions": removed, "orphan_dirs": orphans}
+
+
+def _prune_upload_sessions_throttled():
+    """建会话时顺手清一次垃圾，每小时最多一次。
+
+    这样即使运维没装 systemd timer，临时分片也不会无限堆积；
+    装了 timer 的话这里几乎每次都直接跳过，不花钱。
+    """
+    now = time.time()
+    if now - _PRUNE_LAST[0] < 3600:
+        return
+    _PRUNE_LAST[0] = now
+    try:
+        prune_upload_sessions()
+    except Exception:            # 清理失败绝不能连累正在发生的上传
+        pass
+
+
+@app.post("/api/points/{point_id}/upload-sessions")
+def api_create_upload_session(request: Request, point_id: int,
+                              fingerprint: str = Form(...),
+                              filename: str = Form(...),
+                              filesize: int = Form(...),
+                              chunk_size: int = Form(4 * 1024 * 1024)):
+    """建（或复用）一个分片上传会话。
+
+    同一个 (点, 用户, 文件指纹) 只会有一个活跃会话：重复调用直接把老会话
+    连同「已经收到哪些片」一起还回去 —— 这就是续传的入口。
+    """
+    user = current_user(request)
+    require_owner(user, db.get_point_owner_id(point_id), "地点")
+    if not db.get_point(point_id):
+        raise HTTPException(404, "点不存在")
+
+    fp = (fingerprint or "").strip()[:128]
+    if not fp:
+        raise HTTPException(400, "缺少文件指纹")
+    name = Path(filename or "").name[:200]
+    mtype = media_type_for(name)
+    limit = MAX_UPLOAD_PHOTO if mtype == "photo" else MAX_UPLOAD_VIDEO
+    if filesize <= 0:
+        raise HTTPException(400, "空文件")
+    if filesize > limit:
+        raise HTTPException(
+            413, f"{'照片' if mtype == 'photo' else '视频'}最大 {limit // (1024 * 1024)}MB，"
+                 f"当前 {filesize / (1024 * 1024):.1f}MB")
+    chunk_size = max(CHUNK_SIZE_MIN, min(CHUNK_SIZE_MAX, int(chunk_size or 0)))
+    total_chunks = (filesize + chunk_size - 1) // chunk_size
+    if total_chunks > CHUNK_COUNT_MAX:
+        raise HTTPException(400, "分片数过多，请调大分片大小")
+
+    _prune_upload_sessions_throttled()
+
+    old = db.find_upload_session(point_id, user["id"], fp)
+    if old:
+        if (int(old["filesize"]) == filesize
+                and int(old["chunk_size"]) == chunk_size
+                and int(old["total_chunks"]) == total_chunks):
+            _chunk_dir(old["session_id"]).mkdir(parents=True, exist_ok=True)
+            return _session_payload(old, resumed=True)
+        # 声明变了（换了分片大小，或指纹撞车但文件其实不同）→ 老的作废重来，
+        # 否则会拿着新的分片长度去拼老的偏移，合出来的文件是坏的。
+        _drop_session_files(old["session_id"])
+        db.abort_upload_session(old["session_id"])
+
+    sid = uuid.uuid4().hex
+    db.create_upload_session(sid, point_id, user["id"], fp, name,
+                             filesize, chunk_size, total_chunks, mtype)
+    _chunk_dir(sid).mkdir(parents=True, exist_ok=True)
+    return _session_payload(db.get_upload_session(sid), resumed=False)
+
+
+@app.get("/api/points/{point_id}/upload-sessions")
+def api_list_point_upload_sessions(request: Request, point_id: int):
+    """这个点上「传了一半还没传完」的会话。前端据此显示未完成占位格。"""
+    user = current_user(request)
+    require_owner(user, db.get_point_owner_id(point_id), "地点")
+    return [_session_payload(s)
+            for s in db.list_point_upload_sessions(point_id, user["id"])]
+
+
+@app.get("/api/upload-sessions/{session_id}")
+def api_get_upload_session(request: Request, session_id: str):
+    return _session_payload(_load_session(request, session_id))
+
+
+@app.put("/api/upload-sessions/{session_id}/chunks/{idx}")
+def api_put_upload_chunk(request: Request, session_id: str, idx: int,
+                         file: UploadFile = File(...)):
+    """上传单个分片。同一片重传是幂等的（覆盖写 + 主键覆盖）。
+
+    同步 def 的理由和单请求上传一样：这里有整片写盘，不能占着事件循环。
+    """
+    sess = _load_session(request, session_id)
+    if sess["status"] != "uploading":
+        raise HTTPException(409, "上传会话已结束")
+    if idx < 0 or idx >= int(sess["total_chunks"]):
+        raise HTTPException(400, "分片序号越界")
+
+    want = _expected_chunk_size(sess, idx)
+    declared = request.headers.get("content-length") or ""
+    if declared.isdigit() and int(declared) > want + (1 << 20):
+        raise HTTPException(413, "分片过大")
+    data = file.file.read()
+    if len(data) != want:
+        raise HTTPException(400, f"分片大小不符：应为 {want} 字节，收到 {len(data)}")
+
+    d = _chunk_dir(session_id)
+    d.mkdir(parents=True, exist_ok=True)
+    # 先写临时文件再原子改名：合并那一步绝不能读到写了一半的分片。
+    tmp = d / f"{idx}.part"
+    tmp.write_bytes(data)
+    os.replace(tmp, d / str(idx))
+    db.add_upload_chunk(session_id, idx, len(data))
+    return {"ok": True, "idx": idx, "size": len(data)}
+
+
+@app.post("/api/upload-sessions/{session_id}/complete")
+def api_complete_upload_session(request: Request, session_id: str):
+    """所有分片都到齐之后合并成一个文件，然后走和单请求上传完全相同的收尾。"""
+    sess = _load_session(request, session_id)
+    with _session_lock(sess["session_id"]):
+        sess = db.get_upload_session(sess["session_id"])
+        if not sess:
+            raise HTTPException(404, "上传会话不存在")
+        # 幂等：重复 complete（比如客户端超时重试）直接把上次的结果还回去，
+        # 不会合出第二份文件、写第二条 media。
+        if sess["status"] == "completed" and sess["media_id"]:
+            m = db.get_media(sess["media_id"])
+            if m:
+                return {"id": m["id"], "type": m["type"], "filename": m["filename"],
+                        "thumb": m["thumb_filename"], "exif_time": m["exif_time"],
+                        "exif_lat": m["exif_lat"], "exif_lng": m["exif_lng"],
+                        "duplicate": True}
+        if sess["status"] != "uploading":
+            raise HTTPException(409, "上传会话已结束")
+
+        total = int(sess["total_chunks"])
+        got = set(db.list_upload_chunks(sess["session_id"]))
+        missing = [i for i in range(total) if i not in got]
+        if missing:
+            raise HTTPException(409, {"error": "分片不全", "missing": missing[:64]})
+        size_sum = db.upload_chunks_total_size(sess["session_id"])
+        if size_sum != int(sess["filesize"]):
+            raise HTTPException(400, "分片总大小与声明不符")
+
+        mtype = sess["mtype"] or media_type_for(sess["filename"])
+        limit = MAX_UPLOAD_PHOTO if mtype == "photo" else MAX_UPLOAD_VIDEO
+        if size_sum > limit:
+            _drop_session_files(sess["session_id"])
+            db.abort_upload_session(sess["session_id"])
+            raise HTTPException(413, f"文件过大，上限 {limit // (1024 * 1024)}MB")
+
+        ext = Path(sess["filename"]).suffix.lower()
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        src_path = UPLOAD_DIR / stored_name
+        d = _chunk_dir(sess["session_id"])
+        written = 0
+        tmp_path = src_path.with_suffix(src_path.suffix + ".merging")
+        try:
+            with open(tmp_path, "wb") as out:
+                for i in range(total):
+                    part = d / str(i)
+                    if not part.exists():
+                        raise HTTPException(409, f"分片 {i} 丢失，请重传该分片")
+                    with open(part, "rb") as fh:
+                        while True:
+                            buf = fh.read(1 << 20)
+                            if not buf:
+                                break
+                            out.write(buf)
+                            written += len(buf)
+            if written != int(sess["filesize"]):
+                raise HTTPException(500, "合并结果大小不符，请重试")
+            os.replace(tmp_path, src_path)
+        except HTTPException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        except OSError as e:
+            tmp_path.unlink(missing_ok=True)
+            raise HTTPException(500, f"合并失败：{e}")
+
+        payload = register_uploaded_file(sess["point_id"], src_path, mtype)
+        db.finish_upload_session(sess["session_id"], payload["id"])
+    _drop_session_files(sess["session_id"])
+    return payload
+
+
+@app.delete("/api/upload-sessions/{session_id}")
+def api_abort_upload_session(request: Request, session_id: str):
+    """用户点「放弃」：会话作废，临时分片立刻删掉。"""
+    sess = _load_session(request, session_id)
+    db.abort_upload_session(sess["session_id"])
+    _drop_session_files(sess["session_id"])
+    return {"ok": True}
 
 
 @app.put("/api/media/{media_id}/caption")
