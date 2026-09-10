@@ -29,8 +29,8 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 
 ### 第 1 步：注册账号并创建 API Key
 
-1. 打开平台注册页：`https://your-server.example.com/` → 注册一个账号（或让平台管理员开通）
-2. 登录后进入 **开发者控制台**：`https://your-server.example.com/console`
+1. 打开平台注册页：`https://top001.xin/` → 注册一个账号（或让平台管理员开通）
+2. 登录后进入 **开发者控制台**：`https://top001.xin/console`
 3. 点击「创建 API Key」，选择权限范围：
    - `read` — 只读：查询行程/记忆/导出/统计
    - `write` — 读写：在 read 基础上可创建/修改/删除行程与地点
@@ -41,7 +41,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 ### 第 2 步：把 Key 交给你的 Agent
 
 在你的 Agent 配置中保存 Key（例如环境变量 `TRAVEL_MEMORY_API_KEY=tm_xxx`），
-并告诉它「你可以通过 MCP 访问旅行记忆平台，端点是 https://your-server.example.com/mcp」。
+并告诉它「你可以通过 MCP 访问旅行记忆平台，端点是 https://top001.xin/mcp」。
 
 ### 第 3 步：配置 MCP 客户端
 
@@ -52,7 +52,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
   "mcpServers": {
     "travel-memory": {
       "type": "http",
-      "url": "https://your-server.example.com/mcp",
+      "url": "https://top001.xin/mcp",
       "headers": {
         "Authorization": "Bearer tm_你的Key"
       }
@@ -62,7 +62,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 ```
 
 如果你的客户端不支持自定义 Header，也可以在 URL 中直接带 Key：
-`https://your-server.example.com/mcp?api_key=tm_你的Key`（两种方式等价，推荐 Header 方式）。
+`https://top001.xin/mcp?api_key=tm_你的Key`（两种方式等价，推荐 Header 方式）。
 
 ---
 
@@ -70,9 +70,8 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 
 | 项 | 值 |
 |---|---|
-| 端点 | `POST https://your-server.example.com/mcp` ✅ Let's Encrypt 证书（完整校验通过，无需 -k） |
-| ⚠️ 未来变更 | 域名 `top001.xin` 备案通过后端点将切为 `https://top001.xin/mcp`，**届时需要改配置**，会提前通知 |
-| 旧端点（已下线） | ~~`https://travel-memory.47.107.66.14.nip.io/mcp`~~、~~`http://47.107.66.14:8084/mcp`~~ |
+| 端点 | `POST https://top001.xin/mcp` ✅ Let's Encrypt 域名证书（完整校验通过，无需 -k） |
+| 旧端点（已下线） | ~~IP 直连端点~~（2026-09-10 备案通过后已切回域名）、~~`https://travel-memory.47.107.66.14.nip.io/mcp`~~、~~`http://47.107.66.14:8084/mcp`~~ |
 | 协议 | MCP Streamable HTTP transport（JSON-RPC 2.0 over HTTP） |
 | 协议版本 | `2025-03-26` |
 | 认证方式 | `Authorization: Bearer tm_xxx`（HTTP Header） |
@@ -90,7 +89,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 |---|---|---|
 | `initialize` | 握手，返回协议版本/能力/服务信息 | 是 |
 | `notifications/initialized` | 客户端就绪通知 | 否（HTTP 202） |
-| `tools/list` | 列出全部可用工具（20 个） | 是 |
+| `tools/list` | 列出全部可用工具（34 个） | 是 |
 | `tools/call` | 调用工具 | 是 |
 | `ping` | 健康检查 | 是 |
 
@@ -207,7 +206,7 @@ HTTP transport 无法传 multipart，媒体通过 `data_base64` 传输（文件�
 不依赖任何 MCP 客户端，用 curl 即可完整验证链路：
 
 ```bash
-BASE=https://your-server.example.com/mcp
+BASE=https://top001.xin/mcp
 KEY=tm_你的Key
 
 # 1) 握手
@@ -253,11 +252,10 @@ curl -s -o /dev/null -w "%{http_code}" $BASE -H "Authorization: Bearer tm_wrong"
 - 📡 **无流式**：当前返回完整 JSON，不支持 SSE 流式输出
 - 🚦 **限流**：按 Key 分级限流（读 120/写 60/生成 20 次/分钟）+ 按 IP 兜底（300 次/分钟）。超限返回 429，请按提示退避
 - 🔁 **幂等**：写操作（create_trip / add_point / upload_media）支持传 `client_request_id`（建议 UUID）。网络重试时传相同值不会重复创建，直接返回首次结果
-- 🔒 **传输安全**：全程 HTTPS，Let's Encrypt 正式证书（签给 IP `your-server.example.com`），
+- 🔒 **传输安全**：全程 HTTPS，Let's Encrypt 正式证书（签给域名 `top001.xin`，90 天，服务端自动续期），
   客户端**无需**跳过证书校验（不要用 `curl -k` / `verify=False`）。HTTP 会 301 跳 HTTPS。
-- ℹ️ **为什么端点是 IP 不是域名**：域名 `top001.xin` 备案审核中，期间被阿里云在 SNI 层拦截，
-  暂时不可用。IP 证书用的是 Let's Encrypt `shortlived` profile（6 天有效期），
-  服务端每 6 小时自动续期，对接入方**透明无感**。备案通过后会切回域名并提前通知。
+- ℹ️ **端点变更历史**：2026-09-10 域名 `top001.xin` 备案通过（粤ICP备2026134597号），
+  端点已从此前的 IP 直连地址切回域名。续期由服务端自动完成，对接入方**透明无感**。
 - 🧹 **Key 吊销**：随时可在开发者控制台吊销，吊销后立即失效
 
 ---
@@ -274,7 +272,7 @@ A: 正常。平台是多租户隔离的，每个 Key 只能访问自己账号的
 A: 暂不支持，当前为单次请求-响应模式。后续版本会评估。
 
 **Q: 在哪里管理我的 Key？**
-A: 开发者控制台 `https://your-server.example.com/console`（需登录）：查看、创建、吊销、用量审计。
+A: 开发者控制台 `https://top001.xin/console`（需登录）：查看、创建、吊销、用量审计。
 
 ---
 

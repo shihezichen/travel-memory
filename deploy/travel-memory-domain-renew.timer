@@ -1,0 +1,10 @@
+[Unit]
+Description=每天 03:17 检查域名证书
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

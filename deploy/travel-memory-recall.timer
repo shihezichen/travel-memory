@@ -1,0 +1,10 @@
+[Unit]
+Description=每天 09:00 检查周年纪念
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

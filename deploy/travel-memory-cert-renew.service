@@ -1,0 +1,8 @@
+[Unit]
+Description=Travel Memory — Let's Encrypt IP 证书续期检查
+After=network-online.target
+
+[Service]
+Type=oneshot
+# acme/ 不入库（里面有 TLS 私钥和 lego 二进制），脚本需要你自己按 acme 流程准备。
+ExecStart=%h/travel-memory/acme/renew-ip.sh

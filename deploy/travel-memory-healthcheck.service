@@ -1,0 +1,9 @@
+[Unit]
+Description=Travel Memory — 健康巡检（证书/服务/隧道/ACME 路径/备份）
+After=network-online.target
+
+[Service]
+Type=oneshot
+# 巡检脚本属于本机运维基建，不在本仓库里（见 .gitignore 的「本机运维专用」一节）。
+# 把 __OPS_DIR__ 换成你放巡检脚本的目录；不需要巡检就别装这一对 unit。
+ExecStart=__OPS_DIR__/healthcheck.sh

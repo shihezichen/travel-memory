@@ -29,8 +29,8 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 
 ### 第 1 步：注册账号并创建 API Key
 
-1. 打开平台注册页：`https://travel-memory.47.107.66.14.nip.io/` → 注册一个账号（或让平台管理员开通）
-2. 登录后进入 **开发者控制台**：`https://travel-memory.47.107.66.14.nip.io/console`
+1. 打开平台注册页：`https://top001.xin/` → 注册一个账号（或让平台管理员开通）
+2. 登录后进入 **开发者控制台**：`https://top001.xin/console`
 3. 点击「创建 API Key」，选择权限范围：
    - `read` — 只读：查询行程/记忆/导出/统计
    - `write` — 读写：在 read 基础上可创建/修改/删除行程与地点
@@ -41,7 +41,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 ### 第 2 步：把 Key 交给你的 Agent
 
 在你的 Agent 配置中保存 Key（例如环境变量 `TRAVEL_MEMORY_API_KEY=tm_xxx`），
-并告诉它「你可以通过 MCP 访问旅行记忆平台，端点是 https://travel-memory.47.107.66.14.nip.io/mcp」。
+并告诉它「你可以通过 MCP 访问旅行记忆平台，端点是 https://top001.xin/mcp」。
 
 ### 第 3 步：配置 MCP 客户端
 
@@ -52,7 +52,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
   "mcpServers": {
     "travel-memory": {
       "type": "http",
-      "url": "https://travel-memory.47.107.66.14.nip.io/mcp",
+      "url": "https://top001.xin/mcp",
       "headers": {
         "Authorization": "Bearer tm_你的Key"
       }
@@ -62,7 +62,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 ```
 
 如果你的客户端不支持自定义 Header，也可以在 URL 中直接带 Key：
-`https://travel-memory.47.107.66.14.nip.io/mcp?api_key=tm_你的Key`（两种方式等价，推荐 Header 方式）。
+`https://top001.xin/mcp?api_key=tm_你的Key`（两种方式等价，推荐 Header 方式）。
 
 ---
 
@@ -70,8 +70,8 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 
 | 项 | 值 |
 |---|---|
-| 端点 | `POST https://travel-memory.47.107.66.14.nip.io/mcp` |
-| 兼容端点 | `POST http://47.107.66.14:8084/mcp`（HTTP 明文，过渡用） |
+| 端点 | `POST https://top001.xin/mcp` ✅ Let's Encrypt 域名证书（完整校验通过，无需 -k） |
+| 旧端点（已下线） | ~~IP 直连端点~~（2026-09-10 备案通过后已切回域名）、~~`https://travel-memory.47.107.66.14.nip.io/mcp`~~、~~`http://47.107.66.14:8084/mcp`~~ |
 | 协议 | MCP Streamable HTTP transport（JSON-RPC 2.0 over HTTP） |
 | 协议版本 | `2025-03-26` |
 | 认证方式 | `Authorization: Bearer tm_xxx`（HTTP Header） |
@@ -89,7 +89,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 |---|---|---|
 | `initialize` | 握手，返回协议版本/能力/服务信息 | 是 |
 | `notifications/initialized` | 客户端就绪通知 | 否（HTTP 202） |
-| `tools/list` | 列出全部可用工具（17 个） | 是 |
+| `tools/list` | 列出全部可用工具（34 个） | 是 |
 | `tools/call` | 调用工具 | 是 |
 | `ping` | 健康检查 | 是 |
 
@@ -179,6 +179,26 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 
 失败时 `isError: true`，`text` 字段含错误详情。
 
+### 5.2 上传媒体（upload_media，base64）
+
+HTTP transport 无法传 multipart，媒体通过 `data_base64` 传输（文件内容 base64 编码）：
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"upload_media","arguments":{"point_id":42,"data_base64":"<BASE64_内容>","filename":"eiffel_sunset.jpg"}}}
+```
+
+响应返回媒体元数据（含缩略图名、EXIF 提取的时间/坐标）。`filename` 的扩展名或 `content_type` 用于推断照片/视频类型。
+
+### 5.3 幂等重试（防重复创建）
+
+写操作支持传 `client_request_id`（UUID）。网络超时后重试时传相同值，不会重复创建：
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"create_trip","arguments":{"name":"十一欧洲自驾","client_request_id":"550e8400-e29b-41d4-a716-446655440000"}}}
+```
+
+同一个 `client_request_id` 只会执行一次；后续相同调用直接返回首次的结果。
+
 ---
 
 ## 6. 手测示例（curl）
@@ -186,7 +206,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 不依赖任何 MCP 客户端，用 curl 即可完整验证链路：
 
 ```bash
-BASE=https://travel-memory.47.107.66.14.nip.io/mcp
+BASE=https://top001.xin/mcp
 KEY=tm_你的Key
 
 # 1) 握手
@@ -215,6 +235,8 @@ curl -s -o /dev/null -w "%{http_code}" $BASE -H "Authorization: Bearer tm_wrong"
 |---|---|---|---|
 | 401 | -32001 | Key 无效/缺失 | 检查 Key 是否完整、是否被吊销；重新在控制台创建 |
 | 403 | -32002 | 工具所需 scope 超出 Key 权限 | 在控制台重新创建更高 scope 的 Key |
+| 429 | -32029 | 触发限流（请求过于频繁） | 按 Retry-After / 错误信息提示的秒数退避后重试 |
+| 409 | — | 幂等冲突（相同 client_request_id 正在处理中） | 稍后重试，或更换 client_request_id |
 | 400 | — | 请求体不是合法 JSON-RPC | 检查 JSON 格式与 Content-Type |
 | 200 | -32601 | 未知方法 | 只使用上文列出的方法 |
 | 200 | -32602 | 参数错误 | 对照工具清单补全参数 |
@@ -228,7 +250,12 @@ curl -s -o /dev/null -w "%{http_code}" $BASE -H "Authorization: Bearer tm_wrong"
 - 🚫 **无管理能力**：远程 MCP 不能注册账号、不能管理 Key（这些只能在 Web 控制台做）
 - ⏱️ **超时**：单次工具调用上限 60 秒（AI 生成类可能较慢，属正常）
 - 📡 **无流式**：当前返回完整 JSON，不支持 SSE 流式输出
-- 🔒 **传输安全**：主端点已支持 HTTPS（Let's Encrypt 正式证书）；`http://47.107.66.14:8084` 为兼容过渡端点，建议新接入统一走 HTTPS
+- 🚦 **限流**：按 Key 分级限流（读 120/写 60/生成 20 次/分钟）+ 按 IP 兜底（300 次/分钟）。超限返回 429，请按提示退避
+- 🔁 **幂等**：写操作（create_trip / add_point / upload_media）支持传 `client_request_id`（建议 UUID）。网络重试时传相同值不会重复创建，直接返回首次结果
+- 🔒 **传输安全**：全程 HTTPS，Let's Encrypt 正式证书（签给域名 `top001.xin`，90 天，服务端自动续期），
+  客户端**无需**跳过证书校验（不要用 `curl -k` / `verify=False`）。HTTP 会 301 跳 HTTPS。
+- ℹ️ **端点变更历史**：2026-09-10 域名 `top001.xin` 备案通过（粤ICP备2026134597号），
+  端点已从此前的 IP 直连地址切回域名。续期由服务端自动完成，对接入方**透明无感**。
 - 🧹 **Key 吊销**：随时可在开发者控制台吊销，吊销后立即失效
 
 ---
@@ -245,7 +272,7 @@ A: 正常。平台是多租户隔离的，每个 Key 只能访问自己账号的
 A: 暂不支持，当前为单次请求-响应模式。后续版本会评估。
 
 **Q: 在哪里管理我的 Key？**
-A: 开发者控制台 `https://travel-memory.47.107.66.14.nip.io/console`（需登录）：查看、创建、吊销、用量审计。
+A: 开发者控制台 `https://top001.xin/console`（需登录）：查看、创建、吊销、用量审计。
 
 ---
 

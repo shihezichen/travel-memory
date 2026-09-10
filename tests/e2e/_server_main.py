@@ -38,7 +38,10 @@ media_mod.THUMB_DIR = UPLOADS / "thumbs"
 
 import app as app_mod           # noqa: E402
 app_mod.UPLOAD_DIR = UPLOADS
-app_mod._TILE_DIR = UPLOADS / "tiles"
+# _TILE_DIR 随分享缩略图一起搬到了 routers/share.py
+from routers import share as _share_mod  # noqa: E402
+_share_mod.UPLOAD_DIR = UPLOADS
+_share_mod._TILE_DIR = UPLOADS / "tiles"
 app_mod.GATE_HASH = ""          # E2E 不测门禁，走用户名密码
 
 # /uploads 的 StaticFiles 在 import 时就绑到生产目录了，这里重新挂一遍指向临时目录。

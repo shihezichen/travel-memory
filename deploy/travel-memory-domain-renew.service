@@ -1,0 +1,7 @@
+[Unit]
+Description=Travel Memory — 域名证书续期（还没切域名时是空操作）
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/travel-memory/acme/renew.sh

@@ -1,0 +1,8 @@
+[Unit]
+Description=Travel Memory — 同步代码+数据到异地冷备机
+After=network-online.target
+
+[Service]
+Type=oneshot
+# 同步脚本里是特定机器的 ssh host / 远端路径，不入库。
+ExecStart=%h/travel-memory/sync-to-top001.sh

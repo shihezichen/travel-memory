@@ -4,7 +4,7 @@ let markers = [];
 let polyline = null;
 let segPolylines = [];  // 高亮相邻段时重建的分段折线
 let segLabels = [];     // 每段路线中点上的里程标签
-let routeSegs = null;   // 各段真实路线 path（drawRoute 结果，供重建分段用）
+let routeSegs = null;   // 各段真实路线 path（shareDrawRoute 结果，供重建分段用）
 let segDists = null;    // 各段真实路线里程（米），与 routeSegs 对齐
 let fallbackSegs = false; // 临时分段标记
 let drivingLoaded = false;
@@ -35,47 +35,22 @@ let replayTodoLine = null; // 未走过的路线（灰色压暗）
 const REPLAY_BASE_MS = 30000; // 1x 速度播完整条轨迹的时长
 
 // ---------- 工具 ----------
-function $(sel) { return document.querySelector(sel); }
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-function fmtDate(d) {
+function shareFmtDate(d) {
   if (!d) return '未定';
   return d.length === 10 ? d : d;
 }
 // 轻提示（右下角浮一条，自动消失）
 let _toastTimer = null;
-function tmToast(text, ms) {
-  const old = document.querySelector('.tm-toast');
-  if (old) old.remove();
-  clearTimeout(_toastTimer);
-  const t = el('div', 'tm-toast', text);
-  document.body.appendChild(t);
-  _toastTimer = setTimeout(() => {
-    t.classList.add('out');
-    setTimeout(() => t.remove(), 260);
-  }, ms || 1800);
-}
-
-function esc(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
 
 // 从 URL 提取分享 token
 function getToken() {
   return location.pathname.split('/').filter(Boolean).pop();
 }
 
-
 // ---------- 自定义对话框（替代原生 alert / confirm / prompt） ----------
 // 原生弹窗的标题栏由浏览器写死为「<域名/IP> 显示」，JS 改不了，只能自绘。
 // 自绘的另一个好处：样式跟站内统一，移动端不再是系统味的灰框。
-function tmDialog(opts) {
+function shareTmDialog(opts) {
   const o = Object.assign({
     title: '提示', message: '', okText: '确定', cancelText: '取消',
     danger: false, showCancel: true, input: null, multiline: false,
@@ -124,14 +99,14 @@ function tmDialog(opts) {
     }, 30);
   });
 }
-function tmAlert(message, title) {
-  return tmDialog({ title: title || '提示', message, showCancel: false, okText: '知道了' });
+function shareTmAlert(message, title) {
+  return shareTmDialog({ title: title || '提示', message, showCancel: false, okText: '知道了' });
 }
-function tmConfirm(message, title, opts) {
-  return tmDialog(Object.assign({ title: title || '确认', message }, opts || {}));
+function shareTmConfirm(message, title, opts) {
+  return shareTmDialog(Object.assign({ title: title || '确认', message }, opts || {}));
 }
-function tmPrompt(message, defaultValue, title, opts) {
-  return tmDialog(Object.assign(
+function shareTmPrompt(message, defaultValue, title, opts) {
+  return shareTmDialog(Object.assign(
     { title: title || '请输入', message, input: defaultValue || '' }, opts || {}));
 }
 
@@ -154,14 +129,14 @@ function saveShareState(patch) {
     localStorage.setItem(SHARE_STATE_KEY, JSON.stringify(all));
   } catch (e) {}
 }
-function saveMapView() {
+function shareSaveMapView() {
   if (!map) return;
   const z = map.getZoom(), c = map.getCenter();
   if (z == null || !c) return;
   saveShareState({ zoom: z, center: [c.lng, c.lat] });
 }
 let _scrollSavePending = false;
-function savePointListScroll() {
+function shareSavePointListScroll() {
   if (_scrollSavePending) return;
   _scrollSavePending = true;
   requestAnimationFrame(() => {
@@ -172,7 +147,7 @@ function savePointListScroll() {
 }
 
 // ---------- 初始化地图 ----------
-function initMap() {
+function shareInitMap() {
   map = new AMap.Map('map', {
     center: [104.0, 35.0],
     zoom: 4,
@@ -180,8 +155,8 @@ function initMap() {
     viewMode: '2D',  // 微信内置浏览器 WebGL 渲染不完整，强制 2D 保证地名标注正常显示
   });
   // zoomend 一起绑：只缩放不平移时高德不发 moveend，新缩放级别存不下来
-  map.on('moveend', saveMapView);
-  map.on('zoomend', saveMapView);
+  map.on('moveend', shareSaveMapView);
+  map.on('zoomend', shareSaveMapView);
   map.on('zoomend', syncPhotoStackScale);   // 照片堆大小跟着缩放级别走
   map.on('zoomend', syncElevLabelsVisibility);
 }
@@ -200,7 +175,7 @@ async function fetchShare(token, password, wasWrong) {
     const res = await fetch(url);
     if (res.status === 403) {
       // 需要密码（或密码错误）
-      const pwd = await tmPrompt(wasWrong ? '密码错误，请重新输入：' : '此分享已加密，请输入访问密码：', '', '访问密码');
+      const pwd = await shareTmPrompt(wasWrong ? '密码错误，请重新输入：' : '此分享已加密，请输入访问密码：', '', '访问密码');
       if (pwd === null || pwd === '') { showError('需要密码才能查看此分享'); return; }
       sessionStorage.setItem('share_pwd_' + token, pwd);
       return fetchShare(token, pwd, true);
@@ -211,9 +186,9 @@ async function fetchShare(token, password, wasWrong) {
     }
     shareData = await res.json();
     renderHeader();
-    renderStats();
-    renderPointList();
-    renderMap();
+    shareRenderStats();
+    shareRenderPointList();
+    shareRenderMap();
     restoreShareUiState();
   } catch (e) {
     showError('加载失败：' + e.message);
@@ -230,15 +205,15 @@ function restoreShareUiState() {
       if (map && typeof map.resize === 'function') setTimeout(() => map.resize(), 30);
     }
   }
-  if (st.tab) switchTab(st.tab);
-  restoreLayerState();
+  if (st.tab) shareSwitchTab(st.tab);
+  shareRestoreLayerState();
   // 选中点仅在面板展开时恢复，避免强行展开用户已收起的面板
   const collapsed = $('.panel').classList.contains('collapsed');
   const exists = st.pointId && shareData.points.some(p => p.id === st.pointId);
   if (!collapsed && exists) {
     suppressAutoPan = true;                 // 恢复期间别动视野
     setTimeout(() => { suppressAutoPan = false; }, 0);
-    showDetail(st.pointId);
+    shareShowDetail(st.pointId);
     return;
   }
   const view = $('#points-view');
@@ -256,8 +231,8 @@ function renderHeader() {
   document.title = t.name + ' · 旅行记忆';
   let meta = shareData.points.length + ' 个地点';
   if (t.start_date) {
-    meta += ' · ' + fmtDate(t.start_date) +
-      (t.end_date && t.end_date !== t.start_date ? ' ~ ' + fmtDate(t.end_date) : '');
+    meta += ' · ' + shareFmtDate(t.start_date) +
+      (t.end_date && t.end_date !== t.start_date ? ' ~ ' + shareFmtDate(t.end_date) : '');
   }
   $('#share-meta').textContent = meta + '（只读）';
 }
@@ -265,7 +240,7 @@ function renderHeader() {
 let lastStatsDetail = null;   // 顶部统计条点开的「完整统计」内容
 
 // 分享页统计：总里程（真实路线就绪后更新）· 天数 · 城市 · 地点 · 媒体
-function calcTotalDistance() {
+function shareCalcTotalDistance() {
   let meters = 0;
   if (segDists && segDists.length) {
     meters = segDists.reduce((s, d) => s + (d || 0), 0);
@@ -277,7 +252,7 @@ function calcTotalDistance() {
   return meters ? fmtKm(meters) : '';
 }
 
-function renderStats() {
+function shareRenderStats() {
   const pts = shareData.points;
   const mediaCount = pts.reduce((n, p) => n + (p.media ? p.media.length : 0), 0);
   let photo = 0, video = 0;
@@ -285,7 +260,7 @@ function renderStats() {
     if (m.type === 'photo') photo++; else if (m.type === 'video') video++;
   }));
   const parts = [];
-  const distText = calcTotalDistance();
+  const distText = shareCalcTotalDistance();
   if (distText) parts.push('总里程 ' + distText);
   const days = new Set(pts.map(p => p.start_date).filter(Boolean)).size;
   if (days >= 2) parts.push(`${days} 天`);
@@ -316,9 +291,9 @@ function renderStats() {
     points: pts.map((p, i) => ({
       no: i + 1,
       name: p.name || '（未命名）',
-      date: fmtDate(p.start_date),
+      date: shareFmtDate(p.start_date),
       waypoint: !!p.is_waypoint,
-      distFromPrev: i > 0 ? fmtKm(segDistanceMeters(i - 1, pts)) : '',
+      distFromPrev: i > 0 ? fmtKm(shareSegDistanceMeters(i - 1, pts)) : '',
     })),
   };
   // 微信分享卡片标题带上统计（微信抓取 document.title 作为分享卡片标题）
@@ -329,12 +304,12 @@ function renderStats() {
 }
 
 // 真实路线就绪后刷新统计中的总里程
-function updateStatsDistance() {
-  renderStats();
+function shareUpdateStatsDistance() {
+  shareRenderStats();
 }
 
 // 完整统计弹窗（与主页面 app.js 的 openStatsModal 保持一致）
-function openStatsModal() {
+function shareOpenStatsModal() {
   if (!lastStatsDetail) return;
   const d = lastStatsDetail;
   let tripHtml = '';
@@ -357,13 +332,13 @@ function openStatsModal() {
     (d.points.length ? `<div class="stat-sub">各点明细（${d.points.length}）</div>` + ptsHtml : '');
   $('#stats-modal').classList.remove('hidden');
 }
-$('#top-stats').onclick = openStatsModal;
+$('#top-stats').onclick = shareOpenStatsModal;
 $('#stats-modal-close').onclick = () => $('#stats-modal').classList.add('hidden');
 $('#stats-modal').addEventListener('click', (e) => {
   if (e.target === $('#stats-modal')) $('#stats-modal').classList.add('hidden');
 });
 
-function renderPointList() {
+function shareRenderPointList() {
   const ul = $('#point-list');
   ul.innerHTML = '';
   shareData.points.forEach((p, i) => {
@@ -373,8 +348,8 @@ function renderPointList() {
     li.appendChild(el('span', 'point-index', String(i + 1)));
     const info = el('div', 'point-info');
     info.appendChild(el('div', 'point-name', p.name));
-    info.appendChild(el('div', 'point-date', fmtDate(p.start_date) +
-      (p.end_date && p.end_date !== p.start_date ? ' ~ ' + fmtDate(p.end_date) : '')));
+    info.appendChild(el('div', 'point-date', shareFmtDate(p.start_date) +
+      (p.end_date && p.end_date !== p.start_date ? ' ~ ' + shareFmtDate(p.end_date) : '')));
     const mediaParts = [];
     const photos = (p.media || []).filter(m => m.type === 'photo').length;
     const videos = (p.media || []).filter(m => m.type === 'video').length;
@@ -382,13 +357,13 @@ function renderPointList() {
     if (videos) mediaParts.push(`🎬 ${videos}`);
     if (mediaParts.length) info.appendChild(el('div', 'point-media', mediaParts.join('  ')));
     li.appendChild(info);
-    li.onclick = () => showDetail(p.id);
+    li.onclick = () => shareShowDetail(p.id);
     ul.appendChild(li);
   });
 }
 
-function renderMap() {
-  clearMap();
+function shareRenderMap() {
+  shareClearMap();
   const points = shareData.points;
   if (points.length === 0) return;
   const seq = ++renderSeq;
@@ -432,8 +407,8 @@ function renderMap() {
     });
     marker._dot = dot;
     marker.on('click', () => {
-      if (multi) showPointPicker(group);
-      else showDetail(group[0].p.id);
+      if (multi) shareShowPointPicker(group);
+      else shareShowDetail(group[0].p.id);
     });
     // 记录该 marker 对应的所有点 id（环线合并点含多次经过），供详情高亮对应
     marker._pointIds = group.map(g => g.p.id);
@@ -462,7 +437,7 @@ function renderMap() {
           // 补上地点名，灯箱底部那行「地点 · 时间」才有内容
           lightboxMedia = g.p.media.map(x => Object.assign({ point_name: g.p.name }, x));
           lightboxIndex = 0;
-          renderLightbox();
+          shareRenderLightbox();
           $('#lightbox').classList.remove('hidden');
         }
       };
@@ -478,13 +453,13 @@ function renderMap() {
     }
   });
 
-  syncPhotoMarkersVisibility();
+  shareSyncPhotoMarkersVisibility();
   positionPhotoStacks();   // 📷 角标刚建出来，位置还是 0,0，必须立刻摆好
-  // 先按直线距离标出里程，真实路线算完后 drawRoute 会用真实中点重建一次
-  drawPolyline(path);
-  renderSegLabels();
-  restoreMapView();
-  drawRoute(points, seq);
+  // 先按直线距离标出里程，真实路线算完后 shareDrawRoute 会用真实中点重建一次
+  shareDrawPolyline(path);
+  shareRenderSegLabels();
+  shareRestoreMapView();
+  shareDrawRoute(points, seq);
   // 轨迹回放入口：不足两个点无法回放，隐藏入口；控制条按需出现（播放时才显示）
   $('#replay-launch').classList.toggle('hidden', points.length < 2);
   $('#replay-bar').classList.add('hidden');
@@ -494,14 +469,7 @@ function renderMap() {
 const ELEV_MIN_ZOOM = 7;
 // 地名比海拔更占地方，门槛高一档（与主页面一致）
 const NAME_MIN_ZOOM = 9;
-function syncElevLabelsVisibility() {
-  const el0 = document.getElementById('map');
-  if (!el0 || !map || !map.getZoom) return;
-  const z = map.getZoom();
-  el0.classList.toggle('hide-elev', z < ELEV_MIN_ZOOM);
-  el0.classList.toggle('hide-pname', z < NAME_MIN_ZOOM);
-}
-function clearMap() {
+function shareClearMap() {
   renderSeq++;
   markers.forEach(m => m.setMap(null));
   markers = [];
@@ -517,13 +485,13 @@ function clearMap() {
   fallbackSegs = false;
   routeSegs = null;
   segDists = null;
-  stopReplay(false); // 切换行程/清空时停止轨迹回放
+  shareStopReplay(false); // 切换行程/清空时停止轨迹回放
 }
 
 // 进入点详情时，高亮地图上对应的 marker 并把视野移过去（以示列表/详情与地图的对应关系）
 // 同主页面：刷新后恢复选中点时别把视野拉过去，否则保存的画面会被顶掉
 let suppressAutoPan = false;
-function highlightMapPoint(pointId) {
+function shareHighlightMapPoint(pointId) {
   let target = null;
   markers.forEach(m => {
     const hit = m._pointIds && m._pointIds.includes(pointId);
@@ -539,21 +507,15 @@ function highlightMapPoint(pointId) {
 }
 
 // 清除全部 marker 高亮
-function unhighlightMapPoints() {
-  markers.forEach(m => {
-    if (m._dot) m._dot.classList.remove('highlight');
-    if (m.setzIndex) m.setzIndex(m._baseZ);
-  });
-}
 
 // ---------- 相邻轨迹段高亮（来时路/即将去） ----------
 // 选中点后：前一段（来时路）绿色、后一段（即将去）橙色，其余段淡化
-function highlightAdjacentSegments(pointId) {
+function shareHighlightAdjacentSegments(pointId) {
   const points = shareData ? shareData.points : [];
   if (!points || points.length < 2) return;
   const idx = points.findIndex(p => String(p.id) === String(pointId));
   if (idx < 0) return;
-  ensureSegmentsForHighlight(points);
+  shareEnsureSegmentsForHighlight(points);
   segPolylines.forEach((seg, i) => {
     if (i === idx - 1) {
       seg.setOptions({ strokeColor: '#16a34a', strokeWeight: 6, strokeOpacity: 1 });
@@ -566,12 +528,12 @@ function highlightAdjacentSegments(pointId) {
     }
   });
   // 上面几行把不透明度改回了 1，自绘层开着的话高德那条线会重新露出来，得再压回去
-  buildRouteOverlay();
+  shareBuildRouteOverlay();
 }
 
 // 保证分段折线可用：真实路线（segPolylines）未就绪时，隐藏整条折线并用分段重建
 // （有 routeSegs 用真实段路径，否则直线兜底）
-function ensureSegmentsForHighlight(points) {
+function shareEnsureSegmentsForHighlight(points) {
   if (segPolylines.length > 0) return;
   if (!polyline || points.length < 2) return;
   polyline.setMap(null);
@@ -594,36 +556,32 @@ function ensureSegmentsForHighlight(points) {
     segPolylines.push(seg);
   }
   fallbackSegs = true;
-  renderSegLabels();
+  shareRenderSegLabels();
 }
 
 // 清除相邻段高亮，恢复默认蓝色整条折线
-function unhighlightSegments() {
-  styleSegLabels(null);        // 标签常驻，只把颜色恢复成默认
+function shareUnhighlightSegments() {
+  shareStyleSegLabels(null);        // 标签常驻，只把颜色恢复成默认
   if (fallbackSegs) {
     segPolylines.forEach(p => p.setMap(null));
     segPolylines = [];
     fallbackSegs = false;
-    renderSegLabels();         // 换回整条折线，中点按 routeSegs 重算
+    shareRenderSegLabels();         // 换回整条折线，中点按 routeSegs 重算
     if (polyline) polyline.setMap(map);
-    buildRouteOverlay();
+    shareBuildRouteOverlay();
     return;
   }
   segPolylines.forEach(seg => {
     seg.setOptions({ strokeColor: '#2563eb', strokeWeight: 4, strokeOpacity: 1 });
   });
-  buildRouteOverlay();       // 同上：不透明度被改回 1 了，重新压住
+  shareBuildRouteOverlay();       // 同上：不透明度被改回 1 了，重新压住
 }
 
 // ---------- 每段路线的里程标签（与主页面一致） ----------
 // 每一段都常驻一个里程数字，贴在**沿路线走一半**的位置（按累计长度算，不是取中间那个顶点——
 // 真实路线顶点疏密不均，中间顶点常常离视觉中点很远）。
 // 选中某个点时来时路变绿、即将去变橙，其余淡化；颜色已说明归属，所以只留数字。
-function clearSegLabels() {
-  segLabels.forEach(m => m.setMap(null));
-  segLabels = [];
-}
-function segMidPoint(i) {
+function shareSegMidPoint(i) {
   let path = null;
   if (routeSegs && routeSegs[i] && routeSegs[i].length >= 2) {
     path = routeSegs[i].map(v => (Array.isArray(v) ? v : [v.lng, v.lat]));
@@ -654,14 +612,14 @@ function segMidPoint(i) {
     path[k - 1][1] + (path[k][1] - path[k - 1][1]) * t,
   ];
 }
-function renderSegLabels() {
+function shareRenderSegLabels() {
   clearSegLabels();
   const points = shareData ? shareData.points : [];
   const n = (points || []).length - 1;
   if (n < 1) return;
   for (let i = 0; i < n; i++) {
-    const pos = segMidPoint(i);
-    const km = fmtKm(segDistanceMeters(i));
+    const pos = shareSegMidPoint(i);
+    const km = fmtKm(shareSegDistanceMeters(i));
     if (!pos || !km) continue;
     // 零尺寸锚点 + 内部 translate(-50%,-50%)：标签宽度随文字变，只有自己居中才骑得准
     const anchor = el('div', 'seg-label-anchor');
@@ -676,16 +634,16 @@ function renderSegLabels() {
     m.setMap(map);
     segLabels.push(m);
   }
-  styleSegLabels(currentPointId);
+  shareStyleSegLabels(currentPointId);
 }
-function styleSegLabels(pointId) {
-  scheduleRouteDraw();          // 高亮变了，自绘线的配色也要跟着变
+function shareStyleSegLabels(pointId) {
+  shareScheduleRouteDraw();          // 高亮变了，自绘线的配色也要跟着变
   const points = shareData ? shareData.points : [];
   const idx = pointId ? points.findIndex(p => String(p.id) === String(pointId)) : -1;
   segLabels.forEach((m, i) => {
     const pill = m._pill;
     if (!pill) return;
-    // 只给相邻两段上色，其余保持默认蓝——不淡化，理由同 highlightAdjacentSegments
+    // 只给相邻两段上色，其余保持默认蓝——不淡化，理由同 shareHighlightAdjacentSegments
     pill.classList.remove('in', 'out');
     if (idx < 0) return;
     if (i === idx - 1) pill.classList.add('in');
@@ -694,7 +652,7 @@ function styleSegLabels(pointId) {
 }
 
 // 获取第 i 段里程（米）：真实路线取 segDists，直线/兜底用球面距离
-function segDistanceMeters(i) {
+function shareSegDistanceMeters(i) {
   const d = segDists && segDists[i] ? segDists[i] : 0;
   if (d) return d;
   const points = shareData ? shareData.points : [];
@@ -704,13 +662,7 @@ function segDistanceMeters(i) {
   return 0;
 }
 
-// 里程格式化：>=1km 显示 x.x km，<1km 显示整数米
-function fmtKm(m) {
-  if (!m) return '';
-  return m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m';
-}
-
-function drawPolyline(path) {
+function shareDrawPolyline(path) {
   if (polyline) { polyline.setMap(null); polyline = null; }
   if (!path || path.length < 2) return;
   polyline = new AMap.Polyline({
@@ -721,24 +673,12 @@ function drawPolyline(path) {
     zIndex: 50,   // 路线在照片堆(40)之上、轨迹点(100/120)之下
   });
   polyline.setMap(map);
-  buildRouteOverlay();     // 自绘路线层跟着重建
-}
-
-function distKm(a, b) {
-  const R = 6371;
-  const dLat = (b.lat - a.lat) * Math.PI / 180;
-  const dLng = (b.lng - a.lng) * Math.PI / 180;
-  const la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
+  shareBuildRouteOverlay();     // 自绘路线层跟着重建
 }
 
 // 判断坐标是否在中国大陆大致范围内（高德驾车规划仅支持国内）
-function isInChina(lng, lat) {
-  return lng >= 73.5 && lng <= 135.0 && lat >= 18.0 && lat <= 53.5;
-}
 
-function getDriving() {
+function shareGetDriving() {
   return new Promise((resolve) => {
     if (drivingLoaded) return resolve();
     let settled = false;
@@ -753,7 +693,7 @@ function getDriving() {
 }
 
 // 海外线路：高德不支持，走 OSRM 全球路线（后端 /api/route），取最快一条
-async function routeViaOsm(a, b) {
+async function shareRouteViaOsm(a, b) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
@@ -773,7 +713,7 @@ async function routeViaOsm(a, b) {
   }
 }
 
-function driveOnce(policy, from, to) {
+function shareDriveOnce(policy, from, to) {
   return new Promise((resolve) => {
     const driving = new AMap.Driving({ policy, hideMarkers: true });
     driving.search(from, to, (status, result) => {
@@ -800,19 +740,19 @@ async function planSegment(a, b) {
   }
   let seg = null;
   if (isInChina(a.lng, a.lat) && isInChina(b.lng, b.lat)) {
-    seg = await driveOnce(AMap.DrivingPolicy.LEAST_TIME, new AMap.LngLat(a.lng, a.lat), new AMap.LngLat(b.lng, b.lat));
+    seg = await shareDriveOnce(AMap.DrivingPolicy.LEAST_TIME, new AMap.LngLat(a.lng, a.lat), new AMap.LngLat(b.lng, b.lat));
   }
-  if (!seg) seg = await routeViaOsm(a, b);
+  if (!seg) seg = await shareRouteViaOsm(a, b);
   return (seg && seg.path && seg.path.length >= 2)
     ? seg
     : { path: [[a.lng, a.lat], [b.lng, b.lat]], distance: distKm(a, b) * 1000 };
 }
 
 // 并行规划所有段（串行 16 段 OSRM 太慢，导致曲线迟迟不出现）
-async function drawRoute(points, seq) {
+async function shareDrawRoute(points, seq) {
   if (points.length < 2) return;
   try {
-    await getDriving();
+    await shareGetDriving();
     const tasks = points.slice(0, -1).map((a, i) => planSegment(a, points[i + 1]));
     const segs = await Promise.all(tasks);
     if (seq !== renderSeq) return;
@@ -828,7 +768,7 @@ async function drawRoute(points, seq) {
     });
     if (seq !== renderSeq) return;
     if (routePath.length >= 2) {
-      drawPolyline(routePath);
+      shareDrawPolyline(routePath);
       // 真实路线就绪后重新适配视野到完整路线（无选中点时），避免全景下曲线被误认为直线。
       // 但如果这次恢复了上次保存的视野，就不要自适应——否则用户存的视野会被顶掉。
       if (!currentPointId && !viewRestored && typeof map.setFitView === 'function') {
@@ -836,30 +776,30 @@ async function drawRoute(points, seq) {
       }
     }
     // 真实路线就绪后重建里程标签（位置按真实路线算，不能再用直线中点）
-    renderSegLabels();
-    buildRouteOverlay();       // 自绘路线层换成真实路线几何
+    shareRenderSegLabels();
+    shareBuildRouteOverlay();       // 自绘路线层换成真实路线几何
     // 真实路线就绪后，若有点处于选中态则恢复相邻段高亮
-    if (currentPointId) highlightAdjacentSegments(currentPointId);
+    if (currentPointId) shareHighlightAdjacentSegments(currentPointId);
     // 真实路线就绪后刷新统计中的总里程
-    updateStatsDistance();
+    shareUpdateStatsDistance();
   } catch (e) {
-    console.error('drawRoute 失败：', e);
+    console.error('shareDrawRoute 失败：', e);
   }
 }
 
 // ---------- 详情 ----------
-function showDetail(pointId) {
+function shareShowDetail(pointId) {
   // 面板收起时点地图上的点 → 自动展开面板显示详情
-  setPanelCollapsed(false);
+  shareSetPanelCollapsed(false);
   currentPointId = pointId;
   saveShareState({ pointId });
   document.querySelectorAll('#point-list li').forEach(li => {
     li.classList.toggle('active', String(li.dataset.id) === String(pointId));
   });
-  switchTab('detail');
-  highlightMapPoint(pointId);
-  highlightAdjacentSegments(pointId);
-  styleSegLabels(pointId);
+  shareSwitchTab('detail');
+  shareHighlightMapPoint(pointId);
+  shareHighlightAdjacentSegments(pointId);
+  shareStyleSegLabels(pointId);
   const p = shareData.points.find(x => x.id === pointId);
   if (!p) return;
 
@@ -869,21 +809,21 @@ function showDetail(pointId) {
   nameEl.textContent = p.name;
   // 经纬度不再单独占一行，收进 title
   nameEl.title = `${p.name}（${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}）`;
-  $('#detail-date').textContent = fmtDate(p.start_date) +
-    (p.end_date && p.end_date !== p.start_date ? ' ~ ' + fmtDate(p.end_date) : '');
+  $('#detail-date').textContent = shareFmtDate(p.start_date) +
+    (p.end_date && p.end_date !== p.start_date ? ' ~ ' + shareFmtDate(p.end_date) : '');
   $('#detail-desc').textContent = p.description || '';
-  renderMedia(p.media || []);
+  shareRenderMedia(p.media || []);
 }
 
 // 多次经过同一地点（环线）：点击合并 marker 后弹出选择，查看某一次经过
-function showPointPicker(group) {
+function shareShowPointPicker(group) {
   const ov = document.createElement('div');
   ov.className = 'modal';
   const items = group.map(g => `
     <button type="button" class="btn point-pick" data-id="${g.p.id}" style="text-align:left">
       <span class="pick-num">${g.idx + 1}</span>
       <span class="pick-name">${esc(g.p.name)}</span>
-      <span class="pick-date">${fmtDate(g.p.start_date)}</span>
+      <span class="pick-date">${shareFmtDate(g.p.start_date)}</span>
     </button>`).join('');
   ov.innerHTML = `
     <div class="modal-box">
@@ -900,14 +840,14 @@ function showPointPicker(group) {
     if (!btn) return;
     ov.remove();
     if (btn.hasAttribute('data-cancel')) return;
-    showDetail(parseInt(btn.getAttribute('data-id'), 10));
+    shareShowDetail(parseInt(btn.getAttribute('data-id'), 10));
   });
 }
 
 // ---------- 轨迹回放动画 ----------
 // 沿轨迹匀速移动一个小圆点，模拟旅程回放；速度 1x/2x/4x
 // 路径优先取真实路线（routeSegs 逐段拼接），未就绪时用直线兜底
-function buildReplayPath() {
+function shareBuildReplayPath() {
   if (routeSegs && routeSegs.length) {
     const path = [];
     const wayIdx = [0];
@@ -930,10 +870,10 @@ function buildReplayPath() {
   return { path: [], wayIdx: [] };
 }
 
-function startReplay() {
-  const { path, wayIdx } = buildReplayPath();
+function shareStartReplay() {
+  const { path, wayIdx } = shareBuildReplayPath();
   if (path.length < 2) return;
-  stopReplay(false);
+  shareStopReplay(false);
   replayPath = path;
   replayWayIdx = wayIdx;
   replayCum = [0];
@@ -963,65 +903,10 @@ function startReplay() {
   replayMarker.setMap(map);
   ensureReplayLines();
   updateReplayLines();
-  playLoop();
+  sharePlayLoop();
 }
 
-// 播放进度双色线：已走过 → 绿色高亮；未走过 → 灰色压暗（叠加在原路线上方）
-function ensureReplayLines() {
-  if (replayDoneLine && replayTodoLine) return;
-  clearReplayLines();
-  if (!replayPath || replayPath.length < 2) return;
-  replayDoneLine = new AMap.Polyline({
-    path: [replayPath[0]],
-    strokeColor: '#16a34a',
-    strokeWeight: 5,
-    strokeOpacity: 1,
-    zIndex: 130,
-    lineJoin: 'round',
-    lineCap: 'round',
-  });
-  replayTodoLine = new AMap.Polyline({
-    path: replayPath,
-    strokeColor: '#94a3b8',
-    strokeWeight: 4,
-    strokeOpacity: 0.9,
-    zIndex: 129,
-    lineJoin: 'round',
-    lineCap: 'round',
-  });
-  replayDoneLine.setMap(map);
-  replayTodoLine.setMap(map);
-}
-
-// 按 replayT 刷新双色线路径：done = 起点→当前插值点，todo = 当前插值点→终点
-function updateReplayLines() {
-  if (!replayDoneLine || !replayTodoLine || !replayPath.length) return;
-  if (replayT >= replayTotal) {
-    // 播完：全部已走，todo 缩为终点
-    replayDoneLine.setPath(replayPath);
-    replayTodoLine.setPath([replayPath[replayPath.length - 1]]);
-    return;
-  }
-  let i = 1;
-  while (i < replayCum.length - 1 && replayCum[i] < replayT) i++;
-  const segLen = (replayCum[i] - replayCum[i - 1]) || 1;
-  const t = Math.min(Math.max((replayT - replayCum[i - 1]) / segLen, 0), 1);
-  const a = replayPath[i - 1], b = replayPath[i];
-  const pos = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-  const donePath = replayPath.slice(0, i);
-  donePath.push(pos);
-  replayDoneLine.setPath(donePath);
-  const todoPath = replayPath.slice(i);
-  todoPath.unshift(pos);
-  replayTodoLine.setPath(todoPath);
-}
-
-function clearReplayLines() {
-  if (replayDoneLine) { replayDoneLine.setMap(null); replayDoneLine = null; }
-  if (replayTodoLine) { replayTodoLine.setMap(null); replayTodoLine = null; }
-}
-
-function playLoop() {
+function sharePlayLoop() {
   if (!replayActive) return;
   replayRaf = requestAnimationFrame((now) => {
     if (!replayLast) replayLast = now;
@@ -1030,7 +915,7 @@ function playLoop() {
     replayT += replaySpeed * replayTotal * dt / REPLAY_BASE_MS;
     if (replayT >= replayTotal) {
       replayT = replayTotal;
-      finishReplay();
+      shareFinishReplay();
       return;
     }
     let i = 1;
@@ -1041,13 +926,13 @@ function playLoop() {
     replayMarker.setPosition([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
     updateReplayLines();
     $('#replay-fill').style.width = (replayT / replayTotal * 100).toFixed(2) + '%';
-    updateReplayName(replayT);
-    playLoop();
+    shareUpdateReplayName(replayT);
+    sharePlayLoop();
   });
 }
 
 // 进度条下方显示当前已到达的行程点
-function updateReplayName(t) {
+function shareUpdateReplayName(t) {
   let wi = 0;
   for (let i = 1; i < replayWayIdx.length; i++) {
     if (replayCum[replayWayIdx[i]] <= t + 1) wi = i;
@@ -1058,21 +943,21 @@ function updateReplayName(t) {
   if (p) $('#replay-name').textContent = `${wi + 1}/${pts.length} · ${p.name}`;
 }
 
-function pauseReplay() {
+function sharePauseReplay() {
   replayActive = false;
   if (replayRaf) { cancelAnimationFrame(replayRaf); replayRaf = null; }
   $('#replay-toggle').textContent = '▶';
 }
 
-function finishReplay() {
-  pauseReplay();
+function shareFinishReplay() {
+  sharePauseReplay();
   updateReplayLines(); // 播完：整条路线变绿（todo 缩为终点）
   $('#replay-fill').style.width = '100%';
-  updateReplayName(replayTotal); // 播完：进度条落到最后一个行程点（修复 16/17 错觉）
+  shareUpdateReplayName(replayTotal); // 播完：进度条落到最后一个行程点（修复 16/17 错觉）
   $('#replay-toggle').textContent = '↻'; // 播完：点击重播
 }
 
-function stopReplay(hide = true) {
+function shareStopReplay(hide = true) {
   replayActive = false;
   if (replayRaf) { cancelAnimationFrame(replayRaf); replayRaf = null; }
   if (replayMarker) replayMarker.setMap(null);
@@ -1088,20 +973,20 @@ function stopReplay(hide = true) {
   $('#replay-toggle').textContent = '▶';
 }
 
-function toggleReplay() {
-  if (replayActive) { pauseReplay(); return; }
-  if (replayT >= replayTotal) { startReplay(); return; } // 播完或首次 → 从头播
+function shareToggleReplay() {
+  if (replayActive) { sharePauseReplay(); return; }
+  if (replayT >= replayTotal) { shareStartReplay(); return; } // 播完或首次 → 从头播
   if (replayTotal > 0 && replayPath.length >= 2) {
     replayActive = true; // 续播
     replayLast = 0;
     $('#replay-toggle').textContent = '⏸';
-    playLoop();
+    sharePlayLoop();
   } else {
-    startReplay();
+    shareStartReplay();
   }
 }
 
-function renderMedia(media) {
+function shareRenderMedia(media) {
   const grid = $('#media-grid');
   grid.innerHTML = '';
   applyMediaCols();      // 重建后把当前缩放档位重新落到网格上
@@ -1111,7 +996,7 @@ function renderMedia(media) {
     const img = el('img');
     img.src = '/uploads/thumbs/' + m.thumb_filename;
     img.loading = 'lazy';
-    img.onclick = () => openLightbox(idx);
+    img.onclick = () => shareOpenLightbox(idx);
     item.appendChild(img);
     if (m.type === 'video') item.appendChild(el('span', 'video-badge', '▶'));
     if (m.exif_time) item.appendChild(el('span', 'media-date', m.exif_time.slice(0, 10)));
@@ -1136,20 +1021,13 @@ let mediaZoom = (function () {
   } catch (e) {}
   return 2;      // 默认 3 列，和原来一样
 })();
-function applyMediaCols() {
-  const grid = document.getElementById('media-grid');
-  if (!grid) return;
-  const cols = MEDIA_COLS[mediaZoom];
-  grid.style.setProperty('--media-cols', cols);
-  grid.dataset.cols = cols;      // 给 CSS 一个钩子：排得密时把日期和删除钮缩一号
-}
-function setMediaZoom(delta) {
+function shareSetMediaZoom(delta) {
   const next = Math.min(MEDIA_COLS.length - 1, Math.max(0, mediaZoom + delta));
   if (next === mediaZoom) return;
   mediaZoom = next;
   try { localStorage.setItem(MEDIA_ZOOM_KEY, String(next)); } catch (e) {}
   const grid = document.getElementById('media-grid');
-  flipGrid(grid, applyMediaCols);
+  shareFlipGrid(grid, applyMediaCols);
 }
 (function initMediaGridZoom() {
   // 同相册：手势绑在**整个 tab 页**上。网格只到最后一行缩略图为止，
@@ -1169,8 +1047,8 @@ function setMediaZoom(delta) {
     if (e.touches.length !== 2 || !start) return;
     if (e.cancelable) e.preventDefault();
     const d = d2(e), r = d / start;
-    if (r > 1.18) { setMediaZoom(1); start = d; }
-    else if (r < 0.85) { setMediaZoom(-1); start = d; }
+    if (r > 1.18) { shareSetMediaZoom(1); start = d; }
+    else if (r < 0.85) { shareSetMediaZoom(-1); start = d; }
   }, { passive: false });
   view.addEventListener('touchend', () => { start = 0; }, { passive: true });
   view.addEventListener('touchcancel', () => { start = 0; }, { passive: true });
@@ -1178,78 +1056,18 @@ function setMediaZoom(delta) {
   view.addEventListener('wheel', (e) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
-    setMediaZoom(e.deltaY < 0 ? 1 : -1);
+    shareSetMediaZoom(e.deltaY < 0 ? 1 : -1);
   }, { passive: false });
 })();
 
-
 // ---------- 灯箱 ----------
-function openLightbox(idx) {
+function shareOpenLightbox(idx) {
   lightboxIndex = idx;
-  renderLightbox();
+  shareRenderLightbox();
   $('#lightbox').classList.remove('hidden');
 }
 let lightboxTrack = null;   // 当前的三格轨道（prev/cur/next）
 let lbAnimating = false;    // 翻页动画进行中，期间忽略新的翻页请求
-
-// 造一格媒体。只有当前这格的视频才自动播放，相邻格预载但不出声。
-function buildLightboxMedia(m, isCurrent) {
-  if (m.type === 'video') {
-    // 只有「当前这一格」才真的建 <video>。相邻格用缩略图占位——否则浏览器
-    // 会因为页面上存在视频元素而一直挂着「全屏/投屏」悬浮按钮，翻到照片后还在。
-    if (!isCurrent) {
-      const ph = document.createElement('div');
-      ph.className = 'lightbox-media lb-video-poster';
-      if (m.thumb_filename) {
-        const im = document.createElement('img');
-        im.src = '/uploads/thumbs/' + m.thumb_filename;
-        ph.appendChild(im);
-      }
-      ph.appendChild(Object.assign(document.createElement('span'),
-        { className: 'lb-video-poster-play', textContent: '▶' }));
-      return ph;
-    }
-    const v = document.createElement('video');
-    v.src = '/uploads/' + m.filename;
-    v.controls = true;
-    v.autoplay = true;
-    v.preload = 'auto';
-    v.className = 'lightbox-media';
-    return v;
-  }
-  const img = document.createElement('img');
-  img.src = '/uploads/' + m.filename;
-  img.className = 'lightbox-media';
-  // 原图缺失（历史数据/文件丢失）时回退缩略图，避免白屏
-  img.onerror = () => {
-    if (m.thumb_filename && img.src.indexOf('/thumbs/') === -1) {
-      img.src = '/uploads/thumbs/' + m.thumb_filename;
-    }
-  };
-  return img;
-}
-
-// 彻底停掉灯箱里的视频。
-// 直接 innerHTML='' 把 <video> 摘掉是不够的：浏览器仍认为「有媒体在播放」，
-// 于是那个「全屏/投屏」的悬浮按钮会一直挂在页面上——翻到照片后还在，
-// 关掉灯箱后也还在。必须显式 pause + 断源 + load()，并退出画中画。
-function stopLightboxVideos() {
-  const box = document.getElementById('lightbox');
-  if (!box) return;
-  box.querySelectorAll('video').forEach(v => {
-    try {
-      v.pause();
-      v.removeAttribute('src');
-      v.srcObject = null;
-      v.load();                       // 中止加载、释放解码器，媒体会话随之结束
-    } catch (e) { /* 个别内核不支持就算了 */ }
-  });
-  try {
-    if (document.pictureInPictureElement && box.contains(document.pictureInPictureElement)) {
-      document.exitPictureInPicture().catch(() => {});
-    }
-  } catch (e) {}
-}
 
 // ---------- 极简 Markdown（只用于图片说明） ----------
 // 说明文字是用户输入，而且会原样呈现给分享页的访客，所以顺序是**先转义、再解析**：
@@ -1257,92 +1075,8 @@ function stopLightboxVideos() {
 // 不存在把用户写的 <script>/onerror 放进 DOM 的路径。链接另外限制协议白名单。
 // 只做说明文字用得上的那几种语法，不追求完整 CommonMark：
 //   **粗** *斜* ~~删除~~ `代码` [文字](链接) # 标题 - 列表 1. 列表 > 引用 ---
-function mdEscape(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-                  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-// 只放行 http/https/mailto：javascript: data: 这类一律降级成纯文本
-function mdSafeUrl(u) {
-  const t = String(u).trim();
-  return /^(https?:\/\/|mailto:)/i.test(t) ? t : '';
-}
-function mdInline(s) {
-  // 行内代码最先抠走：里面的 * _ [ 都不该再被当成语法。
-  // 占位符用私用区字符 U+E000，正常输入里不会出现。
-  const codes = [];
-  s = s.replace(/`([^`\n]+)`/g, function (_, c) {
-    codes.push(c);
-    return '' + (codes.length - 1) + '';
-  });
-  // 链接目标允许一层括号嵌套：alert(1)、维基那种 ..._(disambiguation) 都能整段吃掉，
-  // 不会在结尾漏出一个孤零零的 )
-  const URLPAT = '((?:[^()\\s]|\\([^()\\s]*\\))+)';
-  s = s.replace(new RegExp('!\\[([^\\]]*)\\]\\(' + URLPAT + '\\)', 'g'), '$1');   // 图片只留 alt，不外链图源
-  s = s.replace(new RegExp('\\[([^\\]]+)\\]\\(' + URLPAT + '\\)', 'g'), function (whole, t, u) {
-    const href = mdSafeUrl(u);
-    // 协议不在白名单里就把原文原样留着，别把用户写的字吃掉一半
-    return href ? '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + t + '</a>' : whole;
-  });
-  s = s.replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>');
-  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
-  // _斜体_ 要求两侧不是字母数字，免得把 file_name_here 这种下划线当成语法
-  s = s.replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
-  s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
-  s = s.replace(/(\d+)/g, function (_, i) { return '<code>' + codes[+i] + '</code>'; });
-  return s;
-}
-function renderMarkdown(src) {
-  const lines = mdEscape(src == null ? '' : src).replace(/\r\n?/g, '\n').split('\n');
-  const out = [];
-  let list = '';          // '' | 'ul' | 'ol'
-  let para = [];
-  function flushPara() {
-    if (!para.length) return;
-    // 段内换行保留成 <br>：大多数人在说明里手动断行就是想要那个断行
-    out.push('<p>' + mdInline(para.join('<br>')) + '</p>');
-    para = [];
-  }
-  function flushList() { if (list) { out.push('</' + list + '>'); list = ''; } }
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].replace(/\s+$/, '');
-    if (!line.trim()) { flushPara(); flushList(); continue; }
-    let m;
-    if ((m = line.match(/^(#{1,4})\s+(.*)$/))) {
-      flushPara(); flushList();
-      // 说明栏就巴掌大，h1 顶格太夸张，整体降两级：# → h3
-      const lv = Math.min(6, m[1].length + 2);
-      out.push('<h' + lv + '>' + mdInline(m[2]) + '</h' + lv + '>');
-      continue;
-    }
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
-      flushPara(); flushList(); out.push('<hr>'); continue;
-    }
-    if ((m = line.match(/^&gt;\s?(.*)$/))) {        // > 转义后已经变成 &gt;
-      flushPara(); flushList();
-      out.push('<blockquote>' + mdInline(m[1]) + '</blockquote>');
-      continue;
-    }
-    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) {
-      flushPara();
-      if (list !== 'ul') { flushList(); out.push('<ul>'); list = 'ul'; }
-      out.push('<li>' + mdInline(m[1]) + '</li>');
-      continue;
-    }
-    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
-      flushPara();
-      if (list !== 'ol') { flushList(); out.push('<ol>'); list = 'ol'; }
-      out.push('<li>' + mdInline(m[1]) + '</li>');
-      continue;
-    }
-    flushList();
-    para.push(line);
-  }
-  flushPara(); flushList();
-  return out.join('');
-}
 
-function renderLightbox() {
+function shareRenderLightbox() {
   const m = lightboxMedia[lightboxIndex];
   if (!m) return;
   const stage = $('#lightbox-stage');
@@ -1402,19 +1136,19 @@ function renderLightbox() {
   $('#lightbox-prev').style.visibility = lightboxIndex > 0 ? 'visible' : 'hidden';
   $('#lightbox-next').style.visibility = lightboxIndex < lightboxMedia.length - 1 ? 'visible' : 'hidden';
 }
-function closeLightbox() {
+function shareCloseLightbox() {
   if (typeof lbExitZoom === 'function') lbExitZoom(false);
   stopLightboxVideos();
   $('#lightbox').classList.add('hidden');
   $('#lightbox-stage').innerHTML = '';
 }
 // 翻页：让轨道继续滑满一屏，滑完再切索引重建。axis 决定横滑还是竖滑。
-function lightboxNav(dir, axis) {
+function shareLightboxNav(dir, axis) {
   if (lbAnimating) return false;
   const next = lightboxIndex + dir;
   if (next < 0 || next >= lightboxMedia.length) return false;   // 到头了，没翻成
   const track = lightboxTrack;
-  if (!track) { lightboxIndex = next; renderLightbox(); return true; }
+  if (!track) { lightboxIndex = next; shareRenderLightbox(); return true; }
   track.classList.toggle('axis-y', axis === 'y');
   track.classList.toggle('axis-x', axis !== 'y');
   lbAnimating = true;
@@ -1428,45 +1162,15 @@ function lightboxNav(dir, axis) {
     track.removeEventListener('transitionend', finish);
     lbAnimating = false;
     lightboxIndex = next;
-    renderLightbox();
+    shareRenderLightbox();
   };
   track.addEventListener('transitionend', finish);
   setTimeout(finish, 500);   // transitionend 偶尔不触发时的兜底
   return true;
 }
-
-// 底部高亮条跟随当前 tab 滑动：量出激活 tab 的宽度与左偏移，写进 CSS 变量由 CSS 过渡。
-function syncTabIndicator() {
-  const tabs = document.querySelector('.tabs');
-  if (!tabs) return;
-  const ind = tabs.querySelector('.tab-indicator');
-  const act = tabs.querySelector('.tab.active');
-  if (!ind || !act) return;
-  const w = act.offsetWidth;
-  if (!w) return;   // 面板收起时量不到，等展开再同步
-  ind.style.setProperty('--tab-w', w + 'px');
-  ind.style.setProperty('--tab-x', act.offsetLeft + 'px');
-  // 首帧先落位再开启过渡，否则高亮条会从最左边"飞"过来
-  requestAnimationFrame(() => tabs.classList.add('ready'));
-}
 window.addEventListener('resize', syncTabIndicator);
 
-// 把三个 tab 页按索引摆到轨道上：当前页在 0，前一页在 -100%，后一页在 +100%。
-// dragPx 是手指的实时横向位移，拖动过程中整条轨道跟着走。
-function positionViews(activeName, dragPx) {
-  const track = document.querySelector('.view-track');
-  if (!track) return;
-  const idx = Math.max(0, TAB_ORDER.indexOf(activeName));
-  TAB_ORDER.forEach((n, i) => {
-    const v = document.getElementById(n + '-view');
-    if (!v) return;
-    const base = (i - idx) * 100;
-    v.style.setProperty('--vx', dragPx ? `calc(${base}% + ${dragPx}px)` : `${base}%`);
-    v.setAttribute('aria-hidden', i === idx ? 'false' : 'true');
-  });
-}
-
-function switchTab(name, slideFrom) {
+function shareSwitchTab(name, slideFrom) {
   // 点击切换没传方向：按两个 tab 的前后关系推出来，让点击也有和滑动一致的动画
   if (slideFrom === undefined) {
     const from = TAB_ORDER.indexOf(currentTab), to = TAB_ORDER.indexOf(name);
@@ -1481,12 +1185,12 @@ function switchTab(name, slideFrom) {
   if (track) track.classList.add('animating');
   positionViews(name);
   syncTabIndicator();
-  if (name === 'albums') loadAlbums();
+  if (name === 'albums') shareLoadAlbums();
   saveShareState({ tab: name });
 }
 
 // 恢复地图视野：优先用上次保存的，没有再按全部点自适应
-function restoreMapView() {
+function shareRestoreMapView() {
   const st = getShareState();
   if (st.zoom != null && st.center && st.center.length === 2) {
     // 第三个参数 immediately=true：直接落位，不做从默认视野飞过去的动画
@@ -1498,7 +1202,7 @@ function restoreMapView() {
 
 // ---------- 事件 ----------
 document.querySelectorAll('.tab').forEach(t => {
-  t.onclick = () => switchTab(t.dataset.tab);
+  t.onclick = () => shareSwitchTab(t.dataset.tab);
 });
 
 // ---------- 面板收起/展开 ----------
@@ -1509,22 +1213,8 @@ document.querySelectorAll('.tab').forEach(t => {
 // display:none 只在动画结束后才加上，否则一上来就没了，动画根本看不见。
 const PANEL_ANIM_MS = 300;
 let panelAnimTimer = null;
-
-function panelReducedMotion() {
-  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-function isMobileLayout() {
-  return !(window.matchMedia && window.matchMedia('(min-width: 769px)').matches);
-}
-// 动画过程中容器在变，高德的画布得跟着重算，否则中途会看到拉伸/留白
-function pumpMapResize() {
-  if (!map || typeof map.resize !== 'function') return;
-  [60, 150, 240, PANEL_ANIM_MS + 40].forEach(t => setTimeout(() => {
-    try { map.resize(); } catch (e) {}
-  }, t));
-}
 // 展开时恢复到的地图高度：优先上次拖到的位置，没有就回默认 55vh
-function restoredMapHeight(full) {
+function shareRestoredMapHeight(full) {
   const st = (typeof getShareState === 'function') ? getShareState() : {};
   const saved = Number(st && st.panelHeight);
   const dflt = Math.round(window.innerHeight * 0.55);
@@ -1532,7 +1222,7 @@ function restoredMapHeight(full) {
   return Math.max(0, Math.min(full - 40, h));
 }
 // 把最终状态一次性落到 DOM 上（不含动画）
-function applyPanelCollapsed(collapsed) {
+function shareApplyPanelCollapsed(collapsed) {
   $('.panel').classList.toggle('collapsed', collapsed);
   $('.layout').classList.toggle('panel-collapsed', collapsed);
   $('#btn-panel-open').classList.toggle('hidden', !collapsed);
@@ -1541,7 +1231,7 @@ function applyPanelCollapsed(collapsed) {
   saveShareState({ collapsed });
 }
 
-function setPanelCollapsed(collapsed, animate) {
+function shareSetPanelCollapsed(collapsed, animate) {
   const layout = $('.layout'), panel = $('.panel');
   const mapEl = document.getElementById('map');
   const already = panel.classList.contains('collapsed');
@@ -1553,9 +1243,9 @@ function setPanelCollapsed(collapsed, animate) {
   // 状态没变 / 不要动画 / 系统要求减弱动效 → 直接落状态
   if (animate === false || panelReducedMotion() || !mapEl || already === collapsed) {
     if (!collapsed && isMobileLayout() && mapEl && !mapEl.style.height) {
-      mapEl.style.height = restoredMapHeight(layout.getBoundingClientRect().height) + 'px';
+      mapEl.style.height = shareRestoredMapHeight(layout.getBoundingClientRect().height) + 'px';
     }
-    applyPanelCollapsed(collapsed);
+    shareApplyPanelCollapsed(collapsed);
     return;
   }
 
@@ -1573,12 +1263,12 @@ function setPanelCollapsed(collapsed, animate) {
       panelAnimTimer = setTimeout(() => {
         layout.classList.remove('panel-animating');
         mapEl.style.height = '';                     // 交回 .layout.panel-collapsed 的规则
-        applyPanelCollapsed(true);
+        shareApplyPanelCollapsed(true);
       }, PANEL_ANIM_MS);
     } else {
       // 展开：先把面板放回 DOM，但地图仍占满，再过渡回上次的高度
-      const target = restoredMapHeight(full);
-      applyPanelCollapsed(false);
+      const target = shareRestoredMapHeight(full);
+      shareApplyPanelCollapsed(false);
       mapEl.style.height = Math.round(full) + 'px';
       void mapEl.offsetHeight;
       layout.classList.add('panel-animating');
@@ -1602,10 +1292,10 @@ function setPanelCollapsed(collapsed, animate) {
     panelAnimTimer = setTimeout(() => {
       panel.classList.remove('sliding-out');
       layout.classList.remove('panel-animating');
-      applyPanelCollapsed(true);
+      shareApplyPanelCollapsed(true);
     }, PANEL_ANIM_MS);
   } else {
-    applyPanelCollapsed(false);
+    shareApplyPanelCollapsed(false);
     panel.classList.add('sliding-out');
     void panel.offsetWidth;
     layout.classList.add('panel-animating');
@@ -1620,18 +1310,18 @@ function setPanelCollapsed(collapsed, animate) {
 
 // 收起按钮有两个（手机端在手柄行、宽屏端在 tab 行），统一按类绑定
 document.querySelectorAll('.panel-toggle').forEach(b =>
-  b.addEventListener('click', () => setPanelCollapsed(true)));
-$('#btn-panel-open').addEventListener('click', () => setPanelCollapsed(false));
-function restorePanelState() {
+  b.addEventListener('click', () => shareSetPanelCollapsed(true)));
+$('#btn-panel-open').addEventListener('click', () => shareSetPanelCollapsed(false));
+function shareRestorePanelState() {
   // 分享页首次打开默认折叠面板（地图全屏展示，点 marker/列表时自动展开看详情）；
   // 来过的话尊重上次的折叠状态。
   const st = getShareState();
   // 首屏恢复不做动画：页面刚出来就滑一下反而像卡了一下
-  setPanelCollapsed(st.collapsed === undefined ? true : !!st.collapsed, false);
+  shareSetPanelCollapsed(st.collapsed === undefined ? true : !!st.collapsed, false);
 }
 
 // 全览：把整条行程（所有轨迹点 + 路线）收进当前视野。
-function fitWholeTrip() {
+function shareFitWholeTrip() {
   if (!map || typeof map.setFitView !== 'function') return;
   const overlays = markers.concat(
     segPolylines.length ? segPolylines : (polyline ? [polyline] : []));
@@ -1641,7 +1331,7 @@ function fitWholeTrip() {
     viewRestored = false;
   } catch (e) {}
 }
-$('#btn-fit-view').addEventListener('click', fitWholeTrip);
+$('#btn-fit-view').addEventListener('click', shareFitWholeTrip);
 
 // ---------- 地图全屏 ----------
 // 与主页面 app.js 的实现保持一致：给 #map 加 .map-fullscreen（fixed 铺满视口），
@@ -1722,7 +1412,7 @@ $('#btn-fit-view').addEventListener('click', fitWholeTrip);
 // 逆变换(Invert) → 下一帧放开让它过渡回原位(Play)。
 // 关键是**不重建 DOM**：重建会让缩略图重走一遍加载，中间闪一下白。
 // 只给视口附近的格子做动画——列表可能上百张，全做会掉帧，看不见的直接归位。
-function flipGrid(grid, mutate) {
+function shareFlipGrid(grid, mutate) {
   if (!grid) return;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const cells = Array.from(grid.children).filter(c => c.nodeType === 1 && !c.classList.contains('empty-hint'));
@@ -1771,22 +1461,7 @@ let photoItems = [];
 let photoShown = [];
 let photoView = loadPhotoView();
 
-function loadPhotoView() {
-  const d = { filter: 'all', sort: 'desc', zoom: 3 };
-  try {
-    const s = JSON.parse(localStorage.getItem(PHOTO_VIEW_KEY) || 'null') || {};
-    return {
-      filter: ['all', 'photo', 'video'].includes(s.filter) ? s.filter : d.filter,
-      sort: s.sort === 'asc' ? 'asc' : d.sort,
-      zoom: Number.isInteger(s.zoom) && s.zoom >= 0 && s.zoom < PHOTO_COLS.length ? s.zoom : d.zoom,
-    };
-  } catch (e) { return d; }
-}
-function savePhotoView() {
-  try { localStorage.setItem(PHOTO_VIEW_KEY, JSON.stringify(photoView)); } catch (e) {}
-}
-
-function loadAlbums() {
+function shareLoadAlbums() {
   if (!shareData) return;
   photoItems = [];
   shareData.points.forEach(p => (p.media || []).forEach(m => {
@@ -1802,19 +1477,10 @@ function loadAlbums() {
   // 统一按拍摄时间升序，和主页面后端返回的顺序一致
   photoItems.sort((a, b) => (a.taken_at || '').localeCompare(b.taken_at || '') || (a.id - b.id));
   syncPhotoToolbar();
-  renderPhotoGrid();
+  shareRenderPhotoGrid();
 }
 
-function syncPhotoToolbar() {
-  document.querySelectorAll('#photo-filter .seg-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.filter === photoView.filter);
-  });
-  $('#btn-photo-sort').textContent = photoView.sort === 'desc' ? '↓ 新→旧' : '↑ 旧→新';
-  $('#btn-photo-zoom-in').disabled = photoView.zoom >= PHOTO_COLS.length - 1;
-  $('#btn-photo-zoom-out').disabled = photoView.zoom <= 0;
-}
-
-function renderPhotoGrid() {
+function shareRenderPhotoGrid() {
   const grid = $('#photo-grid');
   const list = photoItems.filter(m => photoView.filter === 'all' || m.type === photoView.filter);
   photoShown = photoView.sort === 'desc' ? list.slice().reverse() : list;
@@ -1851,14 +1517,14 @@ function renderPhotoGrid() {
     cell.onclick = () => {
       lightboxMedia = photoShown;
       lightboxIndex = idx;
-      renderLightbox();
+      shareRenderLightbox();
       $('#lightbox').classList.remove('hidden');
     };
     grid.appendChild(cell);
   });
 }
 
-function setPhotoZoom(delta) {
+function shareSetPhotoZoom(delta) {
   const next = Math.min(PHOTO_COLS.length - 1, Math.max(0, photoView.zoom + delta));
   if (next === photoView.zoom) return;
   photoView.zoom = next;
@@ -1867,7 +1533,7 @@ function setPhotoZoom(delta) {
   // 只改列数、不重建 DOM——重建会让每张缩略图重走一遍加载，中间闪白。
   // 位置变化交给 FLIP 过渡。
   const grid = $('#photo-grid');
-  flipGrid(grid, function () {
+  shareFlipGrid(grid, function () {
     grid.style.setProperty('--photo-cols', PHOTO_COLS[next]);
   });
 }
@@ -1877,24 +1543,20 @@ document.querySelectorAll('#photo-filter .seg-btn').forEach(b => {
     photoView.filter = b.dataset.filter;
     savePhotoView();
     syncPhotoToolbar();
-    renderPhotoGrid();
+    shareRenderPhotoGrid();
   });
 });
 $('#btn-photo-sort').addEventListener('click', () => {
   photoView.sort = photoView.sort === 'desc' ? 'asc' : 'desc';
   savePhotoView();
   syncPhotoToolbar();
-  renderPhotoGrid();
+  shareRenderPhotoGrid();
 });
-$('#btn-photo-zoom-in').addEventListener('click', () => setPhotoZoom(1));
-$('#btn-photo-zoom-out').addEventListener('click', () => setPhotoZoom(-1));
+$('#btn-photo-zoom-in').addEventListener('click', () => shareSetPhotoZoom(1));
+$('#btn-photo-zoom-out').addEventListener('click', () => shareSetPhotoZoom(-1));
 
 // 双指捏合缩放（手机）
 let pinchStart = 0;
-function pinchDist(e) {
-  const [a, b] = e.touches;
-  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-}
 // 手势绑在**整个 tab 页**上，而不是 #photo-grid 上。
 // 网格只覆盖到最后一行缩略图为止，下面那片空白属于 .view；绑在网格上的话，
 // 手指落在空白处就完全收不到事件，看起来就是「有的地方能缩放、有的地方不能」。
@@ -1910,8 +1572,8 @@ albumsView.addEventListener('touchmove', e => {
   if (e.cancelable) e.preventDefault();
   const d = pinchDist(e);
   const ratio = d / pinchStart;
-  if (ratio > 1.18) { setPhotoZoom(1); pinchStart = d; }
-  else if (ratio < 0.85) { setPhotoZoom(-1); pinchStart = d; }
+  if (ratio > 1.18) { shareSetPhotoZoom(1); pinchStart = d; }
+  else if (ratio < 0.85) { shareSetPhotoZoom(-1); pinchStart = d; }
 }, { passive: false });
 albumsView.addEventListener('touchend', () => { pinchStart = 0; }, { passive: true });
 albumsView.addEventListener('touchcancel', () => { pinchStart = 0; }, { passive: true });
@@ -1920,41 +1582,8 @@ albumsView.addEventListener('touchcancel', () => { pinchStart = 0; }, { passive:
 albumsView.addEventListener('wheel', e => {
   if (!e.ctrlKey && !e.metaKey) return;
   e.preventDefault();
-  setPhotoZoom(e.deltaY < 0 ? 1 : -1);
+  shareSetPhotoZoom(e.deltaY < 0 ? 1 : -1);
 }, { passive: false });
-
-// WGS-84（国际标准坐标，Open-Meteo 等返回）→ GCJ-02（火星坐标，高德地图/Driving 使用）
-function wgs84ToGcj02(lng, lat) {
-  const a = 6378245.0;
-  const ee = 0.00669342162296594323;
-  function outOfChina(l, t) {
-    return l < 72.004 || l > 137.8347 || t < 0.8293 || t > 55.8271;
-  }
-  function transformLat(x, y) {
-    let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
-    ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-    ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
-    ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
-    return ret;
-  }
-  function transformLng(x, y) {
-    let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
-    ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-    ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
-    ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
-    return ret;
-  }
-  if (outOfChina(lng, lat)) return { lng, lat };
-  let dLat = transformLat(lng - 105.0, lat - 35.0);
-  let dLng = transformLng(lng - 105.0, lat - 35.0);
-  const radLat = lat / 180.0 * Math.PI;
-  let magic = Math.sin(radLat);
-  magic = 1 - ee * magic * magic;
-  const sqrtMagic = Math.sqrt(magic);
-  dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
-  dLng = (dLng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
-  return { lng: lng + dLng, lat: lat + dLat };
-}
 
 // ---------- 我的位置 ----------
 // 和各家地图 App 一样：蓝点 + 精度圈，点按钮回到自己的位置。
@@ -1964,133 +1593,8 @@ function wgs84ToGcj02(lng, lat) {
 let myLocMarker = null, myLocCircle = null, myLocLngLat = null, locating = false;
 let myLocVia = '';   // 这次定位是高德插件('amap')还是浏览器原生('browser')给的
 
-function setLocateBtnState(state) {
-  const b = document.getElementById('btn-locate');
-  if (!b) return;
-  b.classList.toggle('locating', state === 'locating');
-  b.classList.toggle('located', state === 'located');
-  b.disabled = state === 'locating';
-}
-
-// 画/移动蓝点。accuracy 是米，用来画精度圈；拿不到就不画圈。
-function showMyLocation(lngLat, accuracy) {
-  myLocLngLat = lngLat;
-  if (!myLocMarker) {
-    const dot = el('div', 'my-loc');
-    dot.appendChild(el('span', 'my-loc-pulse'));
-    dot.appendChild(el('span', 'my-loc-dot'));
-    myLocMarker = new AMap.Marker({
-      position: lngLat,
-      content: dot,
-      offset: new AMap.Pixel(-11, -11),
-      zIndex: 160,          // 高于轨迹点(120)：自己的位置永远要看得见
-      bubble: true,
-    });
-    myLocMarker.setMap(map);
-  } else {
-    myLocMarker.setPosition(lngLat);
-  }
-  // 精度圈：太准（<20m）就不画了，一个小圈没意义反而糊
-  if (accuracy && accuracy > 20) {
-    if (!myLocCircle) {
-      myLocCircle = new AMap.Circle({
-        center: lngLat, radius: accuracy,
-        strokeColor: '#1a73e8', strokeWeight: 1, strokeOpacity: 0.35,
-        fillColor: '#1a73e8', fillOpacity: 0.12,
-        zIndex: 35,         // 压在路线(50)之下，不挡轨迹
-      });
-      myLocCircle.setMap(map);
-    } else {
-      myLocCircle.setCenter(lngLat);
-      myLocCircle.setRadius(accuracy);
-    }
-  } else if (myLocCircle) {
-    myLocCircle.setMap(null); myLocCircle = null;
-  }
-}
-
-// 浏览器原生定位兜底。国内需要 WGS-84 → GCJ-02，否则会偏几百米。
-function locateByBrowser() {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(new Error('浏览器不支持定位'));
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const g = wgs84ToGcj02(pos.coords.longitude, pos.coords.latitude);
-        resolve({ lng: g.lng, lat: g.lat, accuracy: pos.coords.accuracy });
-      },
-      (err) => reject(err),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
-  });
-}
-
 // 高德定位插件。resolve 的坐标已经是 GCJ-02，可以直接喂给地图。
 let _amapGeo = null;
-function locateByAMap() {
-  return new Promise((resolve, reject) => {
-    if (!window.AMap || !AMap.Geolocation) return reject(new Error('插件不可用'));
-    const run = () => {
-      try {
-        if (!_amapGeo) {
-          _amapGeo = new AMap.Geolocation({
-            enableHighAccuracy: true, timeout: 10000,
-            needAddress: false, showButton: false, showMarker: false, showCircle: false,
-          });
-        }
-        _amapGeo.getCurrentPosition((status, r) => {
-          if (status === 'complete' && r && r.position) {
-            resolve({ lng: r.position.getLng(), lat: r.position.getLat(),
-                      accuracy: r.accuracy || 0 });
-          } else {
-            reject(new Error((r && (r.message || r.info)) || '定位失败'));
-          }
-        });
-      } catch (e) { reject(e); }
-    };
-    if (AMap.Geolocation) run();
-    else AMap.plugin('AMap.Geolocation', run);
-  });
-}
-
-function locateErrorText(e) {
-  const msg = String((e && (e.message || e.info)) || e || '');
-  // PositionError.code：1=拒绝 2=不可用 3=超时
-  if (e && e.code === 1) return '定位被拒绝。请在浏览器地址栏的权限设置里允许获取位置';
-  if (e && e.code === 3) return '定位超时，换个信号好一点的地方再试';
-  if (!window.isSecureContext) return '当前不是 HTTPS 访问，浏览器不允许定位';
-  if (/denied|permission/i.test(msg)) return '定位被拒绝。请在浏览器权限设置里允许获取位置';
-  return '定位失败：' + (msg || '未知原因');
-}
-
-async function goToMyLocation() {
-  if (locating) return;
-  // 已经定过位：再点一次就是「回到我的位置」，不重新请求，响应更快
-  if (myLocLngLat) {
-    map.setZoomAndCenter(Math.max(map.getZoom(), 15), myLocLngLat, false, 400);
-  }
-  locating = true;
-  setLocateBtnState('locating');
-  let loc = null;
-  try {
-    loc = await locateByAMap();
-    loc.via = 'amap';
-  } catch (e1) {
-    try {
-      loc = await locateByBrowser();
-      loc.via = 'browser';
-    } catch (e2) {
-      locating = false;
-      setLocateBtnState(myLocLngLat ? 'located' : '');
-      tmToast(locateErrorText(e2));
-      return;
-    }
-  }
-  locating = false;
-  const ll = [loc.lng, loc.lat];
-  myLocVia = loc.via;          // 'amap' | 'browser'，出问题时便于判断走的哪条路
-  showMyLocation(ll, loc.accuracy);
-  setLocateBtnState('located');
-  map.setZoomAndCenter(Math.max(map.getZoom(), 15), ll, false, 400);
-}
 
 (function initLocate() {
   const b = document.getElementById('btn-locate');
@@ -2104,98 +1608,19 @@ async function goToMyLocation() {
 let layerSat = null, layerRoad = null, layerTraffic = null;
 let poiMarkers = [], poiSearch = null, poiTimer = null;
 
-// 景区 POI：以当前视野中心搜索附近景点（仅国内有数据）
-function clearPoiMarkers() {
-  poiMarkers.forEach(function (m) { m.setMap(null); });
-  poiMarkers = [];
-}
-
-function doPoiSearch() {
-  if (map.getZoom() < 6) { clearPoiMarkers(); return; } // 缩太小不搜，避免密密麻麻
-  if (!poiSearch) {
-    AMap.plugin('AMap.PlaceSearch', function () {
-      poiSearch = new AMap.PlaceSearch({ pageSize: 20, pageIndex: 1 });
-      doPoiSearch();
-    });
-    return;
-  }
-  const c = map.getCenter();
-  poiSearch.searchNearBy('景点', [c.lng, c.lat], 60000, function (status, res) {
-    if (status !== 'complete' || !res || !res.poiList) { clearPoiMarkers(); return; }
-    clearPoiMarkers();
-    (res.poiList.pois || []).slice(0, 20).forEach(function (p) {
-      if (!p.location) return;
-      const m = new AMap.Marker({
-        position: [p.location.lng, p.location.lat],
-        content: '<div class="poi-label">' + esc(p.name) + '</div>',
-        offset: new AMap.Pixel(0, 0),
-        zIndex: 75,
-        title: p.name
-      });
-      poiMarkers.push(m);
-      m.setMap(map);
-    });
-  });
-}
-
-function toggleLayerPoi(on) {
-  if (on) {
-    doPoiSearch();
-    map.on('moveend', onPoiMove);
-  } else {
-    map.off('moveend', onPoiMove);
-    clearTimeout(poiTimer);
-    clearPoiMarkers();
-  }
-}
-function onPoiMove() {
-  clearTimeout(poiTimer);
-  poiTimer = setTimeout(doPoiSearch, 800);
-}
-
-// 卫星底图 / 路况
-function toggleLayerSatellite(on) {
-  if (on) {
-    if (!layerSat) { layerSat = new AMap.TileLayer.Satellite(); layerRoad = new AMap.TileLayer.RoadNet(); }
-    map.add([layerSat, layerRoad]);
-  } else if (layerSat) {
-    map.remove([layerSat, layerRoad]);
-  }
-  // 给地图容器打标记：卫星底图是深色的，地图上那几个无底片的图标要换成亮色描边
-  const el = document.getElementById('map');
-  if (el) el.classList.toggle('satellite', !!on);
-}
-function toggleLayerTraffic(on) {
-  if (on) {
-    if (!layerTraffic) layerTraffic = new AMap.TileLayer.Traffic();
-    map.add(layerTraffic);
-  } else if (layerTraffic) {
-    map.remove(layerTraffic);
-  }
-}
-
 // ---------- 照片视频图层（分享页版）----------
 // 主页面那版走 /api/photo-layer，返回的是该用户**所有行程**的照片，分享页绝不能用。
 // 这里改成只用本次分享的 shareData：同一批数据，观感一致，但不会泄露别的行程。
 // 照片堆不再走 AMap.Marker，改由 photoStackItems + 自建图层承载（见 ensurePhotoStackLayer）
 
 // 照片图层开着时，轨迹点旁边的 📷 角标是重复信息，用 CSS 类整体藏掉
-function syncPhotoMarkersVisibility() {
+function shareSyncPhotoMarkersVisibility() {
   const on = !!($('#lay-photos') && $('#lay-photos').checked);
   const el = document.getElementById('map');
   if (el) el.classList.toggle('photo-layer-on', on);
 }
 
 // 照片堆随地图缩放级别变大变小（与主页面同一套公式）
-function syncPhotoStackScale() {
-  const el = document.getElementById('map');
-  if (!el || !map || typeof map.getZoom !== 'function') return;
-  const z = map.getZoom();
-  const s = z <= 14
-    ? Math.max(0.45, 0.45 + (z - 3) * 0.05)
-    : Math.min(2, 1 + (z - 14) * 0.25);
-  el.style.setProperty('--photo-stack-scale', s.toFixed(2));
-}
 
 // ---------- 自绘路线层（方案 B，与主页面同一套实现）----------
 // 背景：照片堆必须压在路线之下，但高德把 DOM marker 全塞进同一个 z-index=300 的
@@ -2214,28 +1639,9 @@ let routePathEls = [];
 let routeDrawRaf = 0;
 let routeOverlayOn = false;
 
-function mercatorXY(lng, lat) {
-  const s = Math.sin(lat * Math.PI / 180);
-  return [lng / 360, -Math.log((1 + s) / (1 - s)) / (4 * Math.PI)];
-}
-
-function ensureRouteSvgLayer() {
-  const host = document.querySelector('#map .amap-layers');
-  if (routeSvgLayer && routeSvgLayer.isConnected) {
-    if (host && routeSvgLayer.parentElement !== host) host.appendChild(routeSvgLayer);
-    return routeSvgLayer;
-  }
-  if (!host) return null;
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'route-svg-layer');
-  host.appendChild(svg);
-  routeSvgLayer = svg;
-  return svg;
-}
-
 // 用 3 个参考点解 Mercator -> 屏幕的仿射变换。
 // 地图有俯仰角时投影不再是仿射的，这时返回 null，调用方退回高德自己的线。
-function routeAffine() {
+function shareRouteAffine() {
   if (!map || !map.lngLatToContainer) return null;
   const c = map.getCenter();
   const d = 0.01 / Math.pow(2, Math.max(0, map.getZoom() - 10));
@@ -2286,10 +1692,10 @@ function routeGeomSource() {
 }
 
 // 取出几何转成 Mercator 存好；同时把高德那条线隐藏
-function buildRouteOverlay() {
+function shareBuildRouteOverlay() {
   routeSegGeom = [];
   const src = routeGeomSource();
-  if (!src.length) { drawRouteOverlay(); return; }
+  if (!src.length) { shareDrawRouteOverlay(); return; }
   src.forEach(s => {
     const pts = [];
     for (const v of s.path) {
@@ -2299,13 +1705,13 @@ function buildRouteOverlay() {
     }
     if (pts.length >= 2) routeSegGeom.push({ i: s.i, pts: pts });
   });
-  setAmapRouteVisible(false);
-  drawRouteOverlay();
+  shareSetAmapRouteVisible(false);
+  shareDrawRouteOverlay();
 }
 
 // 高德原线的显隐。隐藏时保留极低的不透明度而不是 0 —— 完全透明后点击热区在
 // 部分版本上会失效。分享页整线和分段线都要一起处理。
-function setAmapRouteVisible(vis) {
+function shareSetAmapRouteVisible(vis) {
   routeOverlayOn = !vis;
   const all = segPolylines.concat(polyline ? [polyline] : []);
   all.forEach(sp => {
@@ -2316,7 +1722,7 @@ function setAmapRouteVisible(vis) {
 }
 
 // 当前每段该用什么颜色/粗细：与高亮状态保持一致
-function routeSegStyle(i) {
+function shareRouteSegStyle(i) {
   const pts = (shareData && shareData.points) ? shareData.points : [];
   const idx = currentPointId ? pts.findIndex(p => String(p.id) === String(currentPointId)) : -1;
   if (idx >= 0 && i === idx - 1) return ['#16a34a', 6];   // 来时路
@@ -2324,17 +1730,17 @@ function routeSegStyle(i) {
   return ['#2563eb', 4];
 }
 
-function drawRouteOverlay() {
+function shareDrawRouteOverlay() {
   const svg = ensureRouteSvgLayer();
   if (!svg) return;
   if (!routeSegGeom.length) { svg.innerHTML = ''; routePathEls = []; return; }
-  const aff = routeAffine();
+  const aff = shareRouteAffine();
   if (!aff) {                    // 俯仰状态：交还给高德自己画
     svg.innerHTML = ''; routePathEls = [];
-    if (routeOverlayOn) setAmapRouteVisible(true);
+    if (routeOverlayOn) shareSetAmapRouteVisible(true);
     return;
   }
-  if (!routeOverlayOn) setAmapRouteVisible(false);
+  if (!routeOverlayOn) shareSetAmapRouteVisible(false);
   const { A, B } = aff;
   const W = svg.clientWidth || 400, H = svg.clientHeight || 800;
   const MARGIN = 200;            // 视野外留一点余量，避免线头在边缘断掉
@@ -2367,7 +1773,7 @@ function drawRouteOverlay() {
       d += (started ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
       lx = x; ly = y; started = true;
     }
-    const [color, width] = routeSegStyle(seg.i);
+    const [color, width] = shareRouteSegStyle(seg.i);
     const el = routePathEls[s];
     el.setAttribute('d', d);
     el.setAttribute('stroke', color);
@@ -2377,15 +1783,15 @@ function drawRouteOverlay() {
 }
 
 // 地图动就重画。用 rAF 合并，一帧最多画一次。
-function scheduleRouteDraw() {
+function shareScheduleRouteDraw() {
   if (routeDrawRaf) return;
-  routeDrawRaf = requestAnimationFrame(() => { routeDrawRaf = 0; drawRouteOverlay(); });
+  routeDrawRaf = requestAnimationFrame(() => { routeDrawRaf = 0; shareDrawRouteOverlay(); });
 }
 (function initRouteOverlaySync() {
   const bind = () => {
     if (!map || !map.on) return setTimeout(bind, 200);
     ['mapmove', 'zoomchange', 'movend', 'zoomend', 'resize', 'rotatechange', 'pitchchange']
-      .forEach(ev => { try { map.on(ev, scheduleRouteDraw); } catch (e) {} });
+      .forEach(ev => { try { map.on(ev, shareScheduleRouteDraw); } catch (e) {} });
   };
   bind();
 })();
@@ -2401,52 +1807,6 @@ let photoStackLayer = null;      // 自建容器
 let photoStackItems = [];        // [{el, lng, lat}]
 let photoBadgeItems = [];        // 点旁的 📷 角标，[{el, lng, lat, dx, dy}]
 let photoLayerRetry = 0;         // 地图图层树未就绪时的重试计数
-
-// 这一层必须挂在高德的 .amap-layers 里面，才能和瓦片(2)、路线(110)、marker(300)
-// 排在同一个层叠上下文里比大小。
-// 千万不要"找不到宿主就退而挂到 #map 上" —— #map 里 .amap-maps 是 z=0，
-// 挂上去的层不管给多少 z-index 都在整张地图之上，会把路线整片盖住
-// （实测这么做会吃掉 8.67% 的路线像素）。宿主还没就绪就先不画，等重试。
-function ensurePhotoStackLayer() {
-  const host = document.querySelector('#map .amap-layers');
-  if (photoStackLayer && photoStackLayer.isConnected) {
-    // 自愈：万一之前挂错了地方（或高德重建了图层树），搬回正确宿主，子元素跟着走
-    if (host && photoStackLayer.parentElement !== host) {
-      host.appendChild(photoStackLayer);
-      photoStackLayer.classList.remove('fallback');
-    }
-    return photoStackLayer;
-  }
-  if (!host) return null;                 // 地图还没建好，交给调用方重试
-  const box = document.createElement('div');
-  box.className = 'photo-stack-layer';
-  host.appendChild(box);
-  photoStackLayer = box;
-  return box;
-}
-
-// 地图图层自检：把当前渲染方式和层级顺序摊出来。
-// 加 ?diag=map 打开页面就会在右下角显示，用来判断某台设备上路线到底画在哪一层。
-function mapLayerDiag() {
-  const host = document.querySelector('#map .amap-layers');
-  const rows = [];
-  rows.push('AMap ' + ((window.AMap && (AMap.version || AMap.v)) || '?'));
-  rows.push('canvas ' + document.querySelectorAll('#map canvas').length +
-            ' / svg ' + document.querySelectorAll('#map svg').length);
-  if (!host) {
-    rows.push('无 .amap-layers（1.4 结构）');
-  } else {
-    [...host.children].forEach(c => {
-      const kids = [...c.children].map(k => k.tagName.toLowerCase()).slice(0, 2).join(',');
-      rows.push('z=' + getComputedStyle(c).zIndex + ' ' +
-                String(c.className).replace(/amap-layer\s*/, '').slice(0, 22) +
-                (kids ? ' <' + kids + '>' : ''));
-    });
-  }
-  rows.push('堆 ' + document.querySelectorAll('.photo-stack').length +
-            (document.querySelector('.photo-stack-layer.fallback') ? '（降级层）' : ''));
-  return rows.join('\n');
-}
 (function initMapDiag() {
   if (!/[?&]diag=map/.test(location.search)) return;
   const box = document.createElement('pre');
@@ -2458,42 +1818,6 @@ function mapLayerDiag() {
   const tick = () => { try { box.textContent = mapLayerDiag(); } catch (e) { box.textContent = 'diag err'; } };
   setInterval(tick, 1500); setTimeout(tick, 1200);
 })();
-
-// 把每个堆挪到它经纬度对应的屏幕位置。地图一动就要重算，所以要够轻。
-function positionPhotoStacks() {
-  if (!map || !map.lngLatToContainer) return;
-  // 地图每动一次都顺手确认层还挂在正确的地方（高德重建图层树时会掉出来）
-  if (photoStackLayer) ensurePhotoStackLayer();
-  // 📷 角标和照片堆在同一层，一起重排
-  for (let i = 0; i < photoBadgeItems.length; i++) {
-    const b = photoBadgeItems[i];
-    const q = map.lngLatToContainer(new AMap.LngLat(b.lng, b.lat));
-    b.el.style.left = Math.round(q.x + b.dx) + 'px';
-    b.el.style.top = Math.round(q.y + b.dy) + 'px';
-  }
-  if (!photoStackItems.length) return;
-  for (let i = 0; i < photoStackItems.length; i++) {
-    const it = photoStackItems[i];
-    const p = map.lngLatToContainer(new AMap.LngLat(it.lng, it.lat));
-    // 用 left/top 定位而不是 transform：.photo-stack 的 transform 已经被
-    // 「跟随缩放级别放大缩小」占用了（scale(var(--photo-stack-scale))），
-    // 这里再写 transform 会把它覆盖掉，照片堆就不会随地图缩放变大变小了。
-    // 偏移量和原来 AMap.Marker 的 offset(-28,-52) 一致，视觉位置不变。
-    it.el.style.left = Math.round(p.x - 28) + 'px';
-    it.el.style.top = Math.round(p.y - 52) + 'px';
-  }
-}
-
-// 只清照片堆，不动 📷 角标 —— 角标属于 renderMap，和照片图层开关无关
-function clearPhotoStackLayer() {
-  photoStackItems.forEach(it => it.el.remove());
-  photoStackItems = [];
-}
-// 重画地图时清掉旧角标
-function clearPhotoBadges() {
-  photoBadgeItems.forEach(it => it.el.remove());
-  photoBadgeItems = [];
-}
 
 // 照片堆现在在折线层**之下**，而高德的矢量覆盖物层（SVG，pointer-events: auto）
 // 整片盖在上面，命中测试永远落不到照片堆上 —— 实测在堆的范围里取样 64 个点，
@@ -2538,23 +1862,23 @@ function clearPhotoBadges() {
   bind();
 })();
 
-function toggleLayerPhotos(on, silent) {
+function shareToggleLayerPhotos(on, silent) {
   const cb = $('#lay-photos');
   if (on) {
-    if (photoStackItems.length) { positionPhotoStacks(); syncPhotoMarkersVisibility(); syncPhotoStackScale(); return; }
+    if (photoStackItems.length) { positionPhotoStacks(); shareSyncPhotoMarkersVisibility(); syncPhotoStackScale(); return; }
     const pts = (shareData && shareData.points) || [];
     const withMedia = pts.filter(p => p.media && p.media.length);
     if (!withMedia.length) {
       if (!silent) tmToast('这个行程还没有照片或视频');   // 默认开启时不打扰
       cb.checked = false;
-      syncPhotoMarkersVisibility();
+      shareSyncPhotoMarkersVisibility();
       return;
     }
     const layerBox = ensurePhotoStackLayer();
     // 地图图层树还没建好：现在画会挂错地方，等一下重试（最多等 ~6 秒）
     if (!layerBox) {
       photoLayerRetry = (photoLayerRetry || 0) + 1;
-      if (photoLayerRetry <= 12) setTimeout(() => toggleLayerPhotos(true, true), 500);
+      if (photoLayerRetry <= 12) setTimeout(() => shareToggleLayerPhotos(true, true), 500);
       return;
     }
     photoLayerRetry = 0;
@@ -2590,7 +1914,7 @@ function toggleLayerPhotos(on, silent) {
         stackEl.__last = now;
         lightboxMedia = p.media.map(x => Object.assign({ point_name: p.name }, x));
         lightboxIndex = 0;
-        renderLightbox();
+        shareRenderLightbox();
         $('#lightbox').classList.remove('hidden');
       };
       stackEl.addEventListener('click', openStack);
@@ -2604,16 +1928,16 @@ function toggleLayerPhotos(on, silent) {
   } else {
     clearPhotoStackLayer();
   }
-  syncPhotoMarkersVisibility();
+  shareSyncPhotoMarkersVisibility();
   syncPhotoStackScale();
 }
 
 // 图层勾选状态跟着分享 token 一起存，刷新后保留
-function saveLayerState(patch) {
+function shareSaveLayerState(patch) {
   const cur = getShareState().layers || {};
   saveShareState({ layers: Object.assign(cur, patch) });
 }
-function restoreLayerState() {
+function shareRestoreLayerState() {
   const s = getShareState().layers || {};
   const apply = (sel, key, fn) => {
     const cb = $(sel);
@@ -2629,12 +1953,12 @@ function restoreLayerState() {
   if (photoCb) {
     const want = s.photos === undefined ? true : !!s.photos;
     photoCb.checked = want;
-    if (want) { try { toggleLayerPhotos(true, true); } catch (e) {} }
+    if (want) { try { shareToggleLayerPhotos(true, true); } catch (e) {} }
   }
-  syncPhotoMarkersVisibility();
+  shareSyncPhotoMarkersVisibility();
 }
 
-function initLayerControls() {
+function shareInitLayerControls() {
   const btn = $('#btn-layers'), panel = $('#layer-panel');
   if (!btn || !panel) return;
   btn.addEventListener('click', function (e) {
@@ -2654,10 +1978,10 @@ function initLayerControls() {
   document.addEventListener('click', closeIfOutside);
   document.addEventListener('pointerdown', closeIfOutside, true);
   document.addEventListener('touchstart', closeIfOutside, { capture: true, passive: true });
-  $('#lay-poi').addEventListener('change', function () { toggleLayerPoi(this.checked); saveLayerState({ poi: this.checked }); });
-  $('#lay-satellite').addEventListener('change', function () { toggleLayerSatellite(this.checked); saveLayerState({ satellite: this.checked }); });
-  $('#lay-traffic').addEventListener('change', function () { toggleLayerTraffic(this.checked); saveLayerState({ traffic: this.checked }); });
-  $('#lay-photos').addEventListener('change', function () { toggleLayerPhotos(this.checked); saveLayerState({ photos: this.checked }); });
+  $('#lay-poi').addEventListener('change', function () { toggleLayerPoi(this.checked); shareSaveLayerState({ poi: this.checked }); });
+  $('#lay-satellite').addEventListener('change', function () { toggleLayerSatellite(this.checked); shareSaveLayerState({ satellite: this.checked }); });
+  $('#lay-traffic').addEventListener('change', function () { toggleLayerTraffic(this.checked); shareSaveLayerState({ traffic: this.checked }); });
+  $('#lay-photos').addEventListener('change', function () { shareToggleLayerPhotos(this.checked); shareSaveLayerState({ photos: this.checked }); });
 }
 
 // ---------- 移动端：左右滑动切换 tab ----------
@@ -2709,7 +2033,7 @@ const TAB_ORDER = ['points', 'detail', 'albums'];
     const i = TAB_ORDER.indexOf(currentTab);
     const next = Math.abs(dx) >= H_MIN ? TAB_ORDER[i + (dx < 0 ? 1 : -1)] : null;
     if (!next) { positionViews(currentTab); return; }           // 位移不够或已在两端 → 弹回
-    switchTab(next);
+    shareSwitchTab(next);
   }, { passive: true });
 
   panel.addEventListener('touchcancel', () => {
@@ -2814,57 +2138,13 @@ const TAB_ORDER = ['points', 'detail', 'albums'];
   }, { passive: true });
   resizer.addEventListener('contextmenu', (e) => e.preventDefault());
 })();
-$('#lightbox-close').onclick = closeLightbox;
+$('#lightbox-close').onclick = shareCloseLightbox;
 // ---------- 灯箱：滑动翻页 + 点击全屏放大（手机） ----------
 // 两套手势共存，靠 lbZoom.on 分流：
 //   轮播态：单指上下/左右滑 = 翻页（整条轨道跟手）；点一下图 = 进全屏放大态
 //   放大态：双指捏合 = 缩放；单指拖 = 平移（放大后才有意义）；点一下图 = 回到轮播
 // 双指捏合在轮播态下也直接生效——会先自动切进放大态，符合直觉。
 let lbZoom = { on: false, scale: 1, tx: 0, ty: 0, fit: 1 };
-
-function lbCurrentMedia() {
-  return document.querySelector('#lightbox .lb-slide.cur .lightbox-media');
-}
-function lbApplyZoom(animate) {
-  const m = lbCurrentMedia();
-  if (!m) return;
-  m.classList.toggle('zoom-anim', !!animate);
-  m.style.transform = `translate(${lbZoom.tx}px, ${lbZoom.ty}px) scale(${lbZoom.scale})`;
-}
-// 平移量夹住，别把图拖出屏幕外
-function lbClampPan() {
-  const m = lbCurrentMedia();
-  if (!m) return;
-  const w = m.offsetWidth * lbZoom.scale, h = m.offsetHeight * lbZoom.scale;
-  const maxX = Math.max(0, (w - window.innerWidth) / 2);
-  const maxY = Math.max(0, (h - window.innerHeight) / 2);
-  lbZoom.tx = Math.min(maxX, Math.max(-maxX, lbZoom.tx));
-  lbZoom.ty = Math.min(maxY, Math.max(-maxY, lbZoom.ty));
-}
-function lbEnterZoom() {
-  const m = lbCurrentMedia();
-  if (!m || lbZoom.on) return;
-  // 轮播里图片四周有留白，进全屏时先放大到贴住屏幕短边——这就是「放到全屏」的动画
-  const r = m.getBoundingClientRect();
-  const fit = r.width && r.height
-    ? Math.min(window.innerWidth / r.width, window.innerHeight / r.height) : 1;
-  lbZoom.on = true;
-  lbZoom.fit = Math.max(1, fit);
-  lbZoom.scale = lbZoom.fit;
-  lbZoom.tx = 0; lbZoom.ty = 0;
-  document.getElementById('lightbox').classList.add('zoomed');
-  lbApplyZoom(true);
-}
-function lbExitZoom(animate) {
-  const m = lbCurrentMedia();
-  lbZoom.on = false;
-  lbZoom.scale = 1; lbZoom.tx = 0; lbZoom.ty = 0;
-  document.getElementById('lightbox').classList.remove('zoomed');
-  if (m) {
-    m.classList.toggle('zoom-anim', animate !== false);
-    m.style.transform = '';
-  }
-}
 
 (function initLightboxSwipe() {
   const box = document.getElementById('lightbox');
@@ -3023,7 +2303,7 @@ function lbExitZoom(animate) {
     const size = axis === 'y' ? window.innerHeight : window.innerWidth;
     const need = Math.min(MIN, size * 0.25);
     let turned = false;
-    if (Math.abs(d) >= need) turned = lightboxNav(d < 0 ? 1 : -1, axis);
+    if (Math.abs(d) >= need) turned = shareLightboxNav(d < 0 ? 1 : -1, axis);
     if (!turned) springBack();
     mode = '';
   }, { passive: false });
@@ -3034,22 +2314,22 @@ function lbExitZoom(animate) {
   }, { passive: true });
 })();
 
-$('#lightbox-prev').onclick = () => lightboxNav(-1);
-$('#lightbox-next').onclick = () => lightboxNav(1);
+$('#lightbox-prev').onclick = () => shareLightboxNav(-1);
+$('#lightbox-next').onclick = () => shareLightboxNav(1);
 $('#lightbox').addEventListener('click', (e) => {
-  if (e.target === $('#lightbox')) closeLightbox();
+  if (e.target === $('#lightbox')) shareCloseLightbox();
 });
 document.addEventListener('keydown', (e) => {
   if ($('#lightbox').classList.contains('hidden')) return;
-  if (e.key === 'Escape') closeLightbox();
-  else if (e.key === 'ArrowLeft') lightboxNav(-1);
-  else if (e.key === 'ArrowRight') lightboxNav(1);
+  if (e.key === 'Escape') shareCloseLightbox();
+  else if (e.key === 'ArrowLeft') shareLightboxNav(-1);
+  else if (e.key === 'ArrowRight') shareLightboxNav(1);
 });
 
 // ---------- 轨迹回放事件 ----------
-$('#replay-toggle').onclick = toggleReplay;
-$('#replay-launch').onclick = () => startReplay();      // 按需出现：点入口才开始回放
-$('#replay-close').onclick = () => stopReplay(true);    // 关闭回放条，恢复入口按钮
+$('#replay-toggle').onclick = shareToggleReplay;
+$('#replay-launch').onclick = () => shareStartReplay();      // 按需出现：点入口才开始回放
+$('#replay-close').onclick = () => shareStopReplay(true);    // 关闭回放条，恢复入口按钮
 const _spdBtn = $('#replay-speed');
 if (_spdBtn) {
   _spdBtn.onclick = () => {
@@ -3061,7 +2341,7 @@ if (_spdBtn) {
 }
 
 // 按「最上层优先」依次尝试关闭一层，关掉了返回 true。
-function closeTopLayer() {
+function shareCloseTopLayer() {
   const q = (s) => document.querySelector(s);
   const shown = (el) => el && !el.classList.contains('hidden');
 
@@ -3073,7 +2353,7 @@ function closeTopLayer() {
   }
   if (shown(q('#lightbox'))) {
     if (typeof lbZoom !== 'undefined' && lbZoom.on) { lbExitZoom(true); return true; }
-    closeLightbox();
+    shareCloseLightbox();
     return true;
   }
   if (shown(q('#stats-modal'))) { q('#stats-modal').classList.add('hidden'); return true; }
@@ -3114,7 +2394,7 @@ function closeTopLayer() {
   fill();
 
   window.addEventListener('popstate', function () {
-    if (closeTopLayer()) { fill(); return; }      // 关掉一层，这次返回就当成「关闭当前层」
+    if (shareCloseTopLayer()) { fill(); return; }      // 关掉一层，这次返回就当成「关闭当前层」
     // 没有可关的层也不放行：本站是单页应用，退出请用退出登录或直接关标签页。
     const now = Date.now();
     if (now - lastHint > 2500) {                  // 连滑几次只提示一次，不刷屏
@@ -3129,10 +2409,10 @@ function closeTopLayer() {
 })();
 
 // ---------- 启动 ----------
-initMap();
-initLayerControls();
-restorePanelState();
-$('#points-view').addEventListener('scroll', savePointListScroll, { passive: true });
+shareInitMap();
+shareInitLayerControls();
+shareRestorePanelState();
+$('#points-view').addEventListener('scroll', shareSavePointListScroll, { passive: true });
 positionViews(currentTab);   // 首屏先把三页在轨道上摆好（不带过渡）
 syncTabIndicator();
 loadShare();

@@ -1,0 +1,12 @@
+[Unit]
+Description=每天 03:00 / 15:00 同步到冷备机（03:00 那次附带功能验证）
+
+[Timer]
+# 一天两次，RPO 最长 12 小时。
+OnCalendar=*-*-* 03:00:00
+OnCalendar=*-*-* 15:00:00
+Persistent=true
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

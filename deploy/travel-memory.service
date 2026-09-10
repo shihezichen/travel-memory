@@ -1,0 +1,31 @@
+[Unit]
+Description=Travel Memory — 主服务 (uvicorn + TLS)
+After=network.target
+
+[Service]
+# %h 是当前用户的家目录。项目不在家目录下的话，把下面所有 %h/travel-memory 换成实际路径。
+WorkingDirectory=%h/travel-memory
+# 直连 uvicorn 终结 TLS，前面没有 nginx。证书路径见 acme/ 的签发脚本。
+# 只监听 127.0.0.1：公网入口由 frp / 反代隧道转进来，不要直接绑 0.0.0.0。
+ExecStart=%h/travel-memory/.venv/bin/python -m uvicorn app:app \
+    --host 127.0.0.1 --port 8443 \
+    --ssl-certfile %h/travel-memory/acme/ip.crt \
+    --ssl-keyfile %h/travel-memory/acme/ip.key
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=%h/travel-memory
+Environment=PATH=%h/travel-memory/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+# ---- 需要按你自己的环境填写的三个值 ----
+# 1) 高德 Key 的白名单 appname。源码里不写死（本仓库是公开的），由这里注入。
+#    必须和高德控制台给这个 Key 配的白名单**完全一致**，否则地图相关接口会 403。
+#    形如 http://<你的公网地址>:<端口>/
+Environment=AMAP_APPNAME=__AMAP_APPNAME__
+# 2) LLM 供应商：claude-cli | anthropic-api | deepseek
+Environment=TRAVEL_LLM_PROVIDER=claude-cli
+# 3) claude-cli 用哪个模型
+Environment=TRAVEL_CLAUDE_MODEL=sonnet
+
+[Install]
+WantedBy=default.target

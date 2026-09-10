@@ -1,0 +1,13 @@
+[Unit]
+Description=Travel Memory — 每日全量自动化测试（单元 + API + E2E）
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/travel-memory
+# 仓库里自带的是 tests/run.sh；下面这个 wrapper 负责跑完把结论推到通知渠道，
+# 属于本机运维脚本，不入库。只想跑测试的话直接把 ExecStart 换成：
+#   ExecStart=%h/travel-memory/tests/run.sh all
+ExecStart=%h/travel-memory/ops/run-tests-and-report.sh all
+# E2E 会拉起 Chrome，给足超时；卡死就杀掉（脚本内部另有 600s timeout）
+TimeoutStartSec=900

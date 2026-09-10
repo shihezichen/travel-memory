@@ -43,7 +43,7 @@ companion.py（DeepSeek function calling 做意图路由）
 
 | 方式 | 入口 | 适用 |
 |------|------|------|
-| **MCP 远程**（推荐） | `POST https://travel-memory.47.107.66.14.nip.io/mcp`（Streamable HTTP transport） | Claude Desktop / Cursor / 爱马仕总控 / 任意 MCP 客户端 |
+| **MCP 远程**（推荐） | `POST https://top001.xin/mcp`（Streamable HTTP transport） | Claude Desktop / Cursor / 爱马仕总控 / 任意 MCP 客户端 |
 | MCP 本机 | `python3 mcp_server.py`（stdio） | 服务器本机 agent |
 | HTTP 直调 | `GET/POST /api/ai/*` | 任意语言 SDK / curl |
 
@@ -53,7 +53,7 @@ MCP 远程示例（任何 MCP 客户端配置）：
 {
   "mcpServers": {
     "travel-memory": {
-      "url": "https://travel-memory.47.107.66.14.nip.io/mcp",
+      "url": "https://top001.xin/mcp",
       "headers": { "Authorization": "Bearer tm_你的Key" }
     }
   }

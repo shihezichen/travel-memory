@@ -1,0 +1,15 @@
+[Unit]
+Description=Travel Memory — 80 端口 (ACME 验证 + HTTPS 跳转)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/travel-memory/acme
+ExecStart=%h/travel-memory/.venv/bin/python http80.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+# 你的公网域名或 IP，用于 301 跳转到 https://<这里>/
+Environment=TRAVEL_DOMAIN=__PUBLIC_HOST__
+
+[Install]
+WantedBy=default.target

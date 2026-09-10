@@ -1,0 +1,8 @@
+[Unit]
+Description=Travel Memory — 周年回忆唤醒（有命中才推送）
+After=network-online.target
+
+[Service]
+Type=oneshot
+# 同样属于本机运维脚本，不入库。ops/ 目录被 .gitignore 排除。
+ExecStart=%h/travel-memory/ops/daily-recall.sh

@@ -1,0 +1,10 @@
+[Unit]
+Description=每天 02:40 跑一遍全量测试（排在 03:00 同步到冷备之前，坏代码别同步出去）
+
+[Timer]
+OnCalendar=*-*-* 02:40:00
+Persistent=true
+RandomizedDelaySec=3min
+
+[Install]
+WantedBy=timers.target

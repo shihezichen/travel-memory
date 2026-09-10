@@ -70,6 +70,20 @@ media_mod.THUMB_DIR = media_mod.UPLOAD_DIR / "thumbs"
 media_mod.THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
 import app as app_mod  # noqa: E402
+
+# 拆分出来的 router 模块。它们各自持有 UPLOAD_DIR 模块级全局（路由体保持原样未改），
+# 所以隔离和保险丝都要覆盖到；新增 router 时往这里加一行。
+from routers import agent_api as _r_agent_api  # noqa: E402
+from routers import share as _r_share  # noqa: E402
+
+_ROUTER_MODULES = [_r_agent_api, _r_share]
+# 每个 router 模块里需要被重定向到 tmp_path 的目录型全局。
+# 不是每个模块两个都有，所以按 hasattr 挑。
+_ROUTER_DIR_ATTRS = ("UPLOAD_DIR", "_TILE_DIR")
+
+
+def _router_dir_targets():
+    return [(m, a) for m in _ROUTER_MODULES for a in _ROUTER_DIR_ATTRS if hasattr(m, a)]
 from domain import rate_limit  # noqa: E402
 
 PROD_DB = REPO_ROOT / "data.db"
@@ -81,8 +95,12 @@ def _assert_not_production():
     assert Path(db.DB_PATH).resolve() != PROD_DB.resolve(), \
         "测试试图使用生产数据库 data.db —— 已中止"
     prod_up = PROD_UPLOADS.resolve()
-    for mod, attr in ((app_mod, "UPLOAD_DIR"), (app_mod, "_TILE_DIR"),
-                      (media_mod, "UPLOAD_DIR"), (media_mod, "THUMB_DIR")):
+    targets = [(app_mod, "UPLOAD_DIR"),
+               (media_mod, "UPLOAD_DIR"), (media_mod, "THUMB_DIR")]
+    # 路由拆进 routers/* 之后，UPLOAD_DIR / _TILE_DIR 变成了各 router 模块自己的全局，
+    # 必须一并纳入保险丝 —— 漏了哪个，测试就会静默写进生产 uploads/。
+    targets += _router_dir_targets()
+    for mod, attr in targets:
         q = Path(getattr(mod, attr)).resolve()
         assert prod_up not in (q, *q.parents), \
             f"{mod.__name__}.{attr} 指向生产 uploads/（{q}）—— 已中止"
@@ -106,7 +124,8 @@ def isolated_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(app_mod, "UPLOAD_DIR", uploads)
-    monkeypatch.setattr(app_mod, "_TILE_DIR", tiles)
+    for _m, _a in _router_dir_targets():
+        monkeypatch.setattr(_m, _a, tiles if _a == "_TILE_DIR" else uploads)
     monkeypatch.setattr(media_mod, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(media_mod, "THUMB_DIR", thumbs)
 
