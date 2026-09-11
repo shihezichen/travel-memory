@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)
-![MCP](https://img.shields.io/badge/MCP-34%20tools-7c3aed)
+![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-7c3aed)
 
 **English** · [中文](README.zh-CN.md)
 
@@ -16,248 +16,225 @@
 
 ## What is this
 
-Travel Memory is a self-hosted, multi-user travel memory system with two faces:
+A month after a trip, the photos are buried in a camera roll of thousands, the route is a vague
+impression, and whatever you were thinking at the time is gone. That is the problem Travel Memory
+tries to solve: **capture a trip completely, and let you walk through it again whenever you want.**
 
-- **For humans**: a mobile-first web app. Pin every stop of a trip on a map, attach photos and videos, write down what you were thinking. Later, replay the whole route, browse the trip's album, or hand a friend a read-only share link.
-- **For agents**: an **MCP (Model Context Protocol) Streamable HTTP** endpoint exposing 34 tools. Any remote agent connects with its own API key, fully tenant-isolated. Let an AI read your travel memories, find patterns, write an annual report, or answer "when was I last in Kyoto?"
+It is self-hosted — the data lives on your own machine and is uploaded to nobody. Once installed
+you get a web app that works well on a phone, plus an endpoint that lets an AI assistant reach
+into those memories directly.
 
-The stack is deliberately boring: **FastAPI + SQLite + vanilla JavaScript**. No frontend build step, no ORM, no Redis. Clone it, install a handful of Python packages, run it.
+## What you can do with it
 
-## Features
+### 📍 Record a trip
 
-**Trips & map**
+Drop the places you stopped onto a map in order, and the system works out the **real driving
+route** between them (not straight lines), labels each leg with its distance and each point with
+its elevation. A trip moves through planning → traveling → completed → archived, so you can lay
+out where you want to go before you leave and keep editing it on the road.
 
-- Multiple trips, each an ordered list of points; four statuses (planning / traveling / completed / archived)
-- Real driving routes (AMap Driving, OSRM fallback), per-segment clickable with alternate routes, results cached
-- Distance labelled at the midpoint of every segment; selecting a point highlights the inbound leg (green) and outbound leg (orange)
-- Elevation shown next to each point (OpenTopoData / SRTM 90m, fetched once then cached)
-- Layers: administrative boundaries / scenic POIs / satellite imagery / live traffic / photos & videos / footprint heatmap
-- Route replay animation along the real route, with speed control
-- Map fullscreen, one-tap fit-whole-trip
-- My location: blue dot with accuracy ring, one tap to recentre on yourself (uses AMap geolocation so the coordinate system matches the tiles)
+Every place holds photos and videos. Shoot on your phone and upload straight away — the
+**capture time and coordinates are read out of the photo automatically**. Big videos don't need
+babysitting: pause the upload, go do something else, come back and resume; if the connection
+drops, re-pick the same file and it continues from where it stopped. You can play your local copy
+while it is still going up.
 
-**Photos & video**
+Every photo takes a caption with **Markdown support**, so you can actually write something rather
+than just title it.
 
-- Upload photos/videos, automatic thumbnails, EXIF time and coordinates extracted
-- Files over 8 MB switch to chunked upload: parallel chunks, exponential-backoff retries, an
-  aggregate progress ring. An upload in flight can be **paused, resumed or cancelled**, and you
-  can play the local copy of the file while it is still going up. If the connection drops, the
-  point keeps an "unfinished upload" placeholder — **re-pick the same file** and it continues
-  from where it stopped (browsers do not let a page persist local file handles, so fully
-  automatic resume is impossible). Sessions idle for 24 h are reclaimed together with their
-  temp chunks (`scripts/prune_upload_sessions.py`)
-- **Video quality ladder**: after upload a background worker remuxes the original for faststart
-  and transcodes 1080p / 720p / 480p rungs by short edge (never upscaling). The player picks a
-  rung from network + screen + DPR, you can switch manually and the choice is remembered; rungs
-  still encoding are greyed out as "transcoding" and appear as soon as they are ready
-- Photos cluster into "stacks" at each point on the map, scaling with zoom level; the 📷 badge
-  next to a point carries a media count that updates the moment you add or delete something
-- Album: a flat whole-trip grid (iOS Photos style), pinch to change columns, filter by type, sort by time
-- Point detail: a WeChat-moments-style grid — long-press to drag-reorder, edit a caption right in the cell
-- Save to device: a download button in the lightbox corner — photos download the original,
-  videos let you pick a quality. Filenames are built from date/place/index
-  (`旅行记忆-20260910-京都-01.mp4`). Anonymous share-page visitors can download too,
-  with exactly the same permissions as viewing. WeChat's in-app browser blocks downloads,
-  so there it degrades to a "long-press to save" hint rather than pretending
-- Lightbox: finger-tracking carousel, tap for fullscreen, pinch zoom and pan, drag past the edge
-  to page (Android gallery behaviour). Controls (close / download / quality / paging) fade out
-  after a few idle seconds and come back on the next tap
-- Every photo can carry a caption **with Markdown support** (bold/italic, lists, quotes, links, inline code)
+### 🔁 Go back through it
 
-**Sharing**
+- **Route replay** — play the whole trip back along the real route, with speed control. It brings
+  the day back in a way a pile of stills doesn't
+- **Album** — the trip's photos as one flat wall (iOS Photos style); pinch to change how many per
+  row, sort by time, filter by type
+- **Photo stacks** — photos cluster onto each place on the map and scale with zoom, so you can see
+  at a glance where you shot the most
+- **Footprint heatmap** — every trip laid over each other: everywhere you have been, over the years
+- **Lightbox** — finger-tracking paging, tap for fullscreen, pinch to zoom, drag past the edge to
+  keep paging. The same feel as your phone's gallery
+- **Save back to your device** — photos download as the original, videos let you pick a quality,
+  and the filename is built for you from date, place and index
 
-- Read-only share links with optional expiry and password, revocable at any time
-- The share page mirrors the main UI (layers, fullscreen, replay, album, lightbox) but deliberately **excludes cross-trip data** — the footprint heatmap and the global photo layer never appear on a public page
-- Generates a portrait share card with a QR code; on mobile it saves straight to the photo library
+### 👥 Share with people
 
-**AI & open platform**
+Generate a **read-only link**. Whoever you send it to doesn't need an account, and gets the same
+interactions you do (layers, replay, album). Set an expiry and a password, revoke it any time.
+You can also generate a portrait share card with a QR code, which saves straight to the photo
+library on mobile.
 
-- **34 MCP tools** covering trip CRUD, memory generation, pattern discovery, annual reports, time
-  travel, memory recall and semantic search. The catalogue, the argument schemas, the scope
-  grading and **whether each individual tool actually runs** are all guarded by automated tests
-  (`./test.sh -k mcp`) — break one and it goes red immediately
-- API key management (scopes: read / write / share / admin, with expiry and revocation) built into the developer console
-- Pluggable LLM provider: Claude CLI / Anthropic API / DeepSeek (`TRAVEL_LLM_PROVIDER`)
+A share page contains **only that one trip** — your footprint heatmap and the photos from your
+other trips never leak out with it.
 
-**Mobile polish**
+### 🤖 Let your AI assistant dig through your memories
 
-More effort went into mobile interaction than into features: draggable panel height, card-carousel tab swiping, directional trip-switch animation, gesture arbitration (long-press drag vs. tab swipe vs. pinch zoom), back-navigation interception (edge swipe won't drop you out of the site), a collapsible top bar that hands its height back to the map, and icon legibility under dark mode and satellite basemaps.
+Connect Claude, Cursor, or any client that speaks **MCP**, and you can just ask:
+
+> "When was I last in Kyoto? Where did I stay that night?"
+> "How many cities have I been to in the last two years, and which one do I go back to most?"
+> "Organise last week's photos by day and write me a short summary for each."
+> "Write an annual report for my 2026 travel."
+> "It's September 11th — where was I on this day in previous years?"
+
+The agent reads **your own** data: a key only ever sees the account that issued it, permissions
+come in four grades (read / write / share / admin), keys can carry an expiry and be revoked at
+any time.
+
+To connect: sign an API key in the developer console after logging in, and paste it into your MCP
+client. Step-by-step in [MCP-ACCESS.md](MCP-ACCESS.md).
+
+### 📱 About phones
+
+More effort went into mobile interaction than into features: a panel you drag to resize, trips
+that swipe sideways with a sense of direction, long-press-drag and swipe-to-switch-tab that never
+fight each other, a back gesture that won't throw you out of the site, a top bar that folds away
+and hands the screen back to the map, and icons that stay legible in dark mode and over satellite
+imagery.
 
 ## Quick start
 
-All you need is **Python 3.10+**. Two commands:
+You need **Python 3.10+**, then one command:
 
 ```bash
 git clone https://github.com/shihezichen/travel-memory.git
 cd travel-memory
-
-./setup.sh      # venv, dependencies, database, and a set of demo data
-./start.sh      # run (development only — see "Running it" below)
+./start.sh
 ```
 
-Open `http://localhost:8084`. `data.db` is created and migrated automatically — no schema
-setup, no config files to edit.
+Open `http://localhost:8084` and you're in.
 
-`setup.sh` also seeds a demo dataset (3 trips, 12 points, 28 synthetic photos, 1 video,
-24 Markdown captions) under the account **`test` / `test1234`**, with a one-tap login button
-on the sign-in page — so you can see what the thing looks like without recording a trip
-first. Skip it with `./setup.sh --no-demo`; add it later (or reset it to factory state)
-with `./setup.sh --demo`.
+The first run creates a virtualenv, installs dependencies and initialises the database; every run
+after that notices the environment is already there and just starts. No schema to create by hand,
+no config file to edit.
 
-**The one thing you must configure by hand: an AMap key.** It starts fine without one —
-trips, photos and sharing all work — the map area is just blank, and a banner at the top
-of the page tells you where to put the key. Once you have it:
+That first run also brings **a set of demo data** (3 trips, 12 points, 28 photos, 1 video) under
+the account `test` / `test1234`, with a one-tap button on the sign-in page — so you can see what
+the thing looks like without recording a trip first.
+
+## The one thing to configure by hand: an AMap key
+
+It starts fine without one. Trips, photos and sharing all work; the map area is just blank, and a
+banner at the top of the page tells you so. Once you set it, the map appears:
+
+1. Get a **Web (JS API)** key from the [AMap console](https://console.amap.com/dev/key/app). You
+   also get a paired **securityJsCode** with it;
+2. Write both to files and restart:
 
 ```bash
 echo 'your-key'            > amap_key.txt
 echo 'your-security-code'  > amap_security.txt
-# restart to apply
 ```
 
-> Optional: `ffmpeg`. Needed to extract poster frames and to build the video quality ladder;
-> photos work regardless. `sudo apt install ffmpeg` / `brew install ffmpeg`.
+> ⚠️ **Set a domain allowlist on the key in the AMap console.** JS API 2.0 ships the key and the
+> security code to the browser by design, so without an allowlist anyone can take it and burn
+> through your quota.
 
-### Optional environment variables
+> Optional: install `ffmpeg` (`sudo apt install ffmpeg` / `brew install ffmpeg`). It is what
+> extracts video poster frames and builds the quality ladder; photos work regardless.
 
-None are required. Add them as you need them:
+> Elevation comes from the public [OpenTopoData](https://www.opentopodata.org/) instance
+> (SRTM 90m), capped at 1000 calls/day. Each point is fetched once and cached, so normal use stays
+> far below that; bulk-importing hundreds of points wants your own instance or another source.
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `AMAP_APPNAME` | Whitelist appname for your AMap key; only needed for the administrative-boundary layer, must match what you set in the AMap console | `http://localhost:8084/` |
-| `TRAVEL_BASE_URL` | Where the MCP endpoint calls its own domain API. **Must match the scheme/port the process actually listens on** (see "Running it") | `http://127.0.0.1:8084` |
-| `TRAVEL_LLM_PROVIDER` | Which model backs the AI features: `auto` / `claude-cli` / `anthropic-api` / `deepseek` | `auto` |
-| `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | Key for the chosen provider; unnecessary if you don't use AI features | empty |
-| `TRAVEL_MEDIA_BASE_URL` | Origin that serves media (object storage / CDN). Empty = the app serves `/uploads/` itself | empty (or put it in `media_base.txt`) |
-| `TRAVEL_OSS_DIRECT` | Master switch for browser-to-object-storage direct upload. `0` = off, fully back to relaying through the server | `1` (auto-disabled when the config is incomplete) |
-| `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK` | AK/SK used to sign direct uploads. Unset = read `~/.ossutilconfig` | empty |
-| `TRAVEL_OSS_PART_SIZE` | Direct-upload part size, in bytes | `8388608` (8 MB) |
-| `TRAVEL_OSS_BACKFILL_WORKERS` | Concurrency of pulling originals back for archival. Deliberately 1 — do not race someone who is watching a video | `1` |
-| `DEMO_USER` | Account name the daily reset targets (see below) | `test` |
+## Keeping it running
 
-### Daily demo-account reset (optional)
+The `./start.sh` above is for a first look: plain HTTP, dies with your terminal. Once you actually
+start using it, **set up the following from day one** rather than waiting until you "go to
+production". Not out of ceremony — these bite while you are still the only user:
 
-A public demo account gets edited by everyone; after a day the data is a mess. The repo
-ships a pair of systemd user units that restore it to factory state at 03:00 daily —
-nothing from that day is kept:
+1. **Without TLS, half the features are crippled.** Browsers lock the clipboard, geolocation and
+   `crypto.subtle` behind a secure context (https or localhost). Reach the site from your phone
+   over a LAN IP and copying a share link, locating yourself, and hashing a file on upload all
+   take the degraded path.
+2. **Without process supervision the site is gone after a reboot**, and so is any video transcode
+   that was halfway through.
+3. **Two different environments are themselves a bug source** — cookie `Secure`, `X-Forwarded-*`
+   and path prefixes all behave differently over plain HTTP than over TLS.
 
-```bash
-cp deploy/travel-memory-demo-reset.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now travel-memory-demo-reset.timer
-```
-
-Run it once by hand: `./.venv/bin/python scripts/reset_demo.py`. Don't install the timer if
-you don't want a demo account.
-
-## About the AMap key
-
-The map uses AMap JS API 2.0. Get a **Web (JS API)** key from the [AMap console](https://console.amap.com/dev/key/app) along with its paired **securityJsCode**.
-
-Both are delivered to the browser (that's how JS API 2.0 works), so:
-
-> ⚠️ **Configure a domain allowlist for your key in the AMap console**, or anyone can lift it and burn your quota.
-
-Elevation comes from the public [OpenTopoData](https://www.opentopodata.org/) instance (SRTM 90m), rate-limited to 1000 calls/day. Points are few and results are cached, so you won't hit it in normal use; self-host or swap the source if you bulk-import trips.
-
-## Running it
-
-`./start.sh` is only good for a first look: plain HTTP, dies with your terminal.
-**Set up the real thing from your development environment onwards** — not because it is tidier,
-but because these three things bite during development, not after launch:
-
-1. **Without TLS, half the app is running in a degraded mode.** Browsers gate the clipboard API,
-   geolocation and `crypto.subtle` behind a secure context (https or localhost). Debug on a
-   phone over a LAN IP and copying a share link, "locate me" and the upload fingerprint all take
-   the fallback branch. You test the fallback; your users get the real path; the difference only
-   shows up in production.
-2. **Without process supervision, every code change is a manual restart** — and when the service
-   dies nothing brings it back, taking any in-flight transcode with it.
-3. **Two different environments are themselves a bug source.** Production is uvicorn on loopback
-   behind a TLS-terminating proxy; `0.0.0.0:8084` in the clear behaves differently for path
-   prefixes, `X-Forwarded-*` and the `Secure` cookie attribute.
-
-### 1. Supervise the process with a systemd user service
+### 1. Supervise the process with systemd
 
 ```bash
 cp deploy/travel-memory.service ~/.config/systemd/user/
 # edit the three placeholders it documents (AMAP_APPNAME / LLM provider / paths)
 systemctl --user daemon-reload
 systemctl --user enable --now travel-memory
-systemctl --user status travel-memory
-loginctl enable-linger "$USER"      # keep running when you are not logged in
+loginctl enable-linger "$USER"      # keep running while you are logged out
 ```
 
 Logs: `journalctl --user -u travel-memory -f`.
 
-> `deploy/` carries nine more unit pairs: certificate renewal, demo reset, the daily recall
-> push, upload-session pruning, health checks, a nightly full test run, media sync to object
-> storage. All optional — copy what you need.
+> `deploy/` holds 9 more optional units: certificate renewal, the daily demo reset, daily memory
+> push, upload-session reclamation, health checks, a nightly full test run, media sync to object
+> storage. Copy whichever you want.
 
 ### 2. Put Caddy / Nginx in front for TLS
 
-`deploy/Caddyfile.example` is a minimal working config (Caddy issues and renews certificates
-for you):
+`deploy/Caddyfile.example` is a minimal working config; Caddy issues and renews certificates on
+its own:
 
 ```bash
 cp deploy/Caddyfile.example /etc/caddy/Caddyfile   # set your domain
 sudo systemctl reload caddy
 ```
 
-No public domain on your dev box? Use Caddy's internal CA (`tls internal`) to sign a
-certificate for `localhost` or your LAN IP, install the root cert on your phone, and you get
-the full https path on a real device — see the comments in the example file.
+No public domain on your dev box? Use Caddy's internal CA (`tls internal`) to sign a certificate
+for `localhost` / a LAN IP, install the root on your phone, and you can exercise the full https
+path on a real device — see the comments in the example file.
 
-**If you use MCP**: once the app moves to a TLS port, the address the `/mcp` endpoint uses to
-call its own domain API has to move with it, or all 34 tools report "domain API unreachable":
+**If you use MCP**: once the app moves to a TLS port, the address `/mcp` uses to call its own
+domain API has to move with it, or every tool reports "domain API unreachable":
 
 ```ini
 Environment=TRAVEL_BASE_URL=https://127.0.0.1:8443
 ```
 
-(A loopback certificate never matches the hostname; `mcp_http.py` skips verification for
+(A hostname mismatch on a loopback certificate is expected; `mcp_http.py` skips verification for
 loopback only.)
 
 ### 3. Backups
 
-Three things are enough: `data.db` + `uploads/` + the key files (`amap_key.txt`,
-`amap_security.txt`, `token.txt`). `./backup.sh` packages them using SQLite's `backup()` API,
-which gives a consistent snapshot even under WAL.
+Take these and you have everything: `data.db` + `uploads/` + the three secret files
+(`amap_key.txt`, `amap_security.txt`, `token.txt`). `./backup.sh` packages them using SQLite's
+`backup()` API, which gets a consistent snapshot even under WAL.
 
-### 4. Serve media from object storage (optional, recommended)
+## Optional: make photos and video faster
 
-By default every image and video is served by the application process out of `/uploads/`.
-That competes with the API for the same uplink — very visible if your public entry point is a
-tunnel (frp / cloudflared), where one person watching a video slows the whole site down.
+Using it alone on your LAN? Skip this section entirely. If you put the site on the public internet
+and share links with people, **bandwidth** is the only thing that really hurts.
 
-Put your bucket's origin in `media_base.txt` (or `TRAVEL_MEDIA_BASE_URL`) and every
-`/uploads/` link points at object storage instead, taking media traffic off the app entirely:
+### Downlink: serve media from object storage
+
+By default the app process serves every image and video itself, competing with the API for the
+same uplink. It is very visible when your public entry point is a tunnel (frp / cloudflared):
+one person watching a video slows the whole site down.
+
+Put your bucket's origin in `media_base.txt` and every media link points at object storage:
 
 ```bash
 echo 'https://your-bucket.oss-cn-qingdao.aliyuncs.com' > media_base.txt
 ```
 
-It is **one switch**: blank it out and everything falls back to local serving, no other code
-changes. `deploy/travel-memory-oss-sync.{service,timer}` keeps the bucket in sync. Note that
-`/static/` is deliberately *not* offloaded — the frontend JS/CSS must ship with the code.
+It is **one switch**: blank it out and everything falls back to local serving, no code changes.
+`deploy/travel-memory-oss-sync.{service,timer}` keeps the bucket in sync. Note that `/static/` is
+deliberately *not* offloaded — the frontend JS/CSS must ship with the code.
 
-### 5. Direct media upload to object storage (faster uploads, optional)
+### Uplink: upload straight to object storage
 
-The previous section fixes the **downlink** (other people viewing your photos and video). The
-uplink is just as congested: the browser pushes the file to the server, and the whole transfer
-competes for the same uplink — lethal behind a tunnel, where a 150 MB video takes several
-minutes at best while every API call queues behind it.
+The previous section fixes other people viewing your photos. The uplink is just as congested: the
+browser pushes the file to the server and the whole transfer competes for the same uplink — a
+150 MB video takes several minutes at best while every API call queues behind it.
 
-With direct upload on, the browser **PUTs parts straight to OSS**; the server only signs and
-finalises, and never touches a byte of media. The original is pulled back to the box afterwards
-by a background queue that builds thumbnails, transcodes and archives it
-(`oss_backfill.py`, concurrency 1, so it never races anyone).
+With direct upload on, the browser **PUTs parts straight to object storage**; the server only
+signs and finalises, and never touches a byte of media. The original is pulled back afterwards by
+a background queue that builds thumbnails, transcodes and archives it (`oss_backfill.py`,
+concurrency 1, so it never races anyone).
 
 Three things are needed:
 
 1. `media_base.txt` is already filled in (the same switch as the previous section — the bucket
    name and endpoint are derived from it);
-2. AK/SK — read from `~/.ossutilconfig` by default (the same credentials the media sync script
-   uses), overridable with `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK`;
+2. AK/SK — read from `~/.ossutilconfig` by default, overridable with `TRAVEL_OSS_AK` /
+   `TRAVEL_OSS_SK`;
 3. **CORS enabled on the bucket.** This is the only hard prerequisite:
 
 The easiest route is the console: **OSS -> your bucket -> Permissions -> CORS -> create rule**,
@@ -290,15 +267,76 @@ curl -i -X OPTIONS "https://your-bucket.oss-cn-qingdao.aliyuncs.com/uploads/_pro
 ```
 
 `ETag` does not need to be exposed: the server queries ListParts when completing the multipart
-upload and never trusts a client-reported ETag, so the frontend does not read that response
-header at all — one less CORS setting to get wrong.
+upload and never trusts a client-reported ETag, so the frontend does not read that response header
+at all — one less CORS setting to get wrong.
 
 Nothing breaks if CORS is missing: the first part fails with a zero-byte error and the frontend
-falls the whole upload back to server-relayed mode (`ossDirectGiveUp`); the user simply does not
-get the speed-up. To turn direct upload off temporarily: `TRAVEL_OSS_DIRECT=0`.
+falls the whole upload back to server-relayed mode; the user simply does not get the speed-up. To
+turn direct upload off temporarily: `TRAVEL_OSS_DIRECT=0`.
 
 `/health` reports `oss_direct` and the `oss_backfill` queue depth, so you can see at a glance
 whether direct upload is live and how many originals are still to be pulled back.
+
+## Other optional settings
+
+### Environment variables
+
+None are required. Add them as you need them:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `PORT` / `HOST` | What `./start.sh` listens on (or use `./start.sh --port 9000`) | `8084` / `0.0.0.0` |
+| `AMAP_APPNAME` | Whitelist appname for your AMap key; only needed for the administrative-boundary layer, must match what you set in the AMap console | `http://localhost:8084/` |
+| `TRAVEL_BASE_URL` | Where the MCP endpoint calls its own domain API. **Must match the scheme/port the process actually listens on** | `http://127.0.0.1:8084` |
+| `TRAVEL_LLM_PROVIDER` | Which model backs the AI features: `auto` / `claude-cli` / `anthropic-api` / `deepseek` | `auto` |
+| `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | Key for the chosen provider; unnecessary if you don't use AI features | empty |
+| `TRAVEL_MEDIA_BASE_URL` | Origin that serves media (object storage / CDN). Empty = the app serves `/uploads/` itself | empty (or put it in `media_base.txt`) |
+| `TRAVEL_OSS_DIRECT` | Master switch for browser-to-object-storage direct upload. `0` = off, fully back to relaying through the server | `1` (auto-disabled when the config is incomplete) |
+| `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK` | AK/SK used to sign direct uploads. Unset = read `~/.ossutilconfig` | empty |
+| `TRAVEL_OSS_PART_SIZE` | Direct-upload part size, in bytes | `8388608` (8 MB) |
+| `TRAVEL_OSS_BACKFILL_WORKERS` | Concurrency of pulling originals back for archival. Deliberately 1 — do not race someone who is watching a video | `1` |
+| `DEMO_USER` | Account name the daily reset targets (see below) | `test` |
+
+### Resetting the demo account daily
+
+If you let other people play with the demo account, a day of that leaves it a mess. The repo ships
+a pair of systemd user units that restore it to factory state at 03:00 daily:
+
+```bash
+cp deploy/travel-memory-demo-reset.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now travel-memory-demo-reset.timer
+```
+
+Reset once by hand: `./start.sh --demo` (touches only the demo account). Don't want demo data at
+all: `./start.sh --no-demo`.
+
+## Known limits
+
+- **SQLite is single-writer.** WAL is on, so readers and writers no longer block each other and
+  the write lock is only held at commit; that is plenty for personal or small-team use. It is not
+  built for heavy write concurrency (dozens of people recording trips at once) — that scale wants
+  Postgres.
+- Media is served by the app process by default and competes with the API for bandwidth. Point
+  `media_base.txt` at object storage (previous section) and that limit disappears.
+- Transcoding is a local ffmpeg background thread handling one video at a time; a bulk import of
+  dozens of videos takes a while. Without ffmpeg you simply get the original rung only.
+- Routing depends on AMap/OSRM; some regions outside China fall back to straight lines.
+- "Reopen the file picker where you left it" relies on the File System Access API (desktop Chrome
+  / Edge). Firefox and Safari get the ordinary file dialog and behave as before; on phones it is
+  **deliberately** not used — the system photo picker is better than a file manager.
+
+---
+
+# For developers
+
+Everything below is only needed if you want to change the code. If you just want to use it, the
+sections above are enough.
+
+## Stack
+
+**FastAPI + SQLite + vanilla JavaScript.** No frontend build step, no ORM, no Redis — clone it,
+install a handful of Python packages, run it. Edit a line of JS and reload the page.
 
 ## Layout
 
@@ -312,7 +350,7 @@ download.py            media "save as": filename building, RFC 5987, quality whi
 oss.py                 OSS V1 signing + multipart direct upload (browser -> OSS, never via the app)
 oss_backfill.py        pulls directly-uploaded objects back for archival (background queue:
                        thumbnails / EXIF / transcode)
-mcp_http.py            MCP Streamable HTTP endpoint (routing table: 34 tools → domain API)
+mcp_http.py            MCP Streamable HTTP endpoint (routing table: tools -> domain API)
 mcp_server.py          MCP stdio variant
 companion.py           companion process (scheduled jobs) + the single definition of TOOLS
 routers/
@@ -332,92 +370,84 @@ scripts/               seeding, demo reset, secret scanning and utilities
 deploy/                systemd unit samples (11 services + 9 timers) + a Caddyfile sample
 tests/                 automated tests (unit / api / e2e)
 .githooks/             pre-commit checks (secret scan + fast suite)
-test.sh setup.sh start.sh   test / one-command install / run
+start.sh               install + run, merged into one idempotent script
+test.sh                test entry point
 ```
 
 ## Tests
 
 ```bash
-./test.sh                # fast suite: unit + API, ~20s (run this after any change)
-./test.sh all            # everything incl. end-to-end browser tests, ~90s
+./test.sh                # fast suite: unit + API, ~20 s (run this after every change)
+./test.sh all            # everything, including browser end-to-end, ~90 s (before committing)
 ./test.sh unit           # unit layer only
 ./test.sh api            # API integration layer only
 ./test.sh e2e            # end-to-end only (needs system Chrome)
-./test.sh -k keyword -vv # remaining args are passed straight to pytest
-./test.sh secrets        # scan for hard-coded credentials
-./test.sh install-hooks  # enable the pre-commit checks (run once per clone)
+./test.sh -k keyword -vv # any other argument is passed straight to pytest
+./test.sh secrets        # scan for hardcoded secrets
+./test.sh install-hooks  # enable the pre-commit checks (run once per clone, see below)
 ```
 
-**Run `./test.sh install-hooks` once after cloning.** Git does not carry
-`core.hooksPath` across a clone, so without this step the pre-commit checks
-(secret scan + fast suite) silently never run.
+**Run `./test.sh install-hooks` once after cloning.** Git does not carry `core.hooksPath` across a
+clone, so without this step the pre-commit checks in `.githooks/` (secret scan + fast suite) are
+silently inactive.
 
-One-time setup: `.venv/bin/pip install -r requirements-dev.txt`. E2E reuses the
-system `/usr/bin/google-chrome` via Playwright's `channel="chrome"`, so there is
-no `playwright install` download step.
+First-time prep: `.venv/bin/pip install -r requirements-dev.txt`. E2E drives the already-installed
+`/usr/bin/google-chrome`, so no `playwright install` download is needed.
 
-**Tests never touch production data.** Everything runs against a temporary
-SQLite file and a temporary uploads directory, and `tests/conftest.py` patches
-`sqlite3.connect` so that any attempt to open the production `data.db` raises
-instead of silently writing to it.
+**Tests never touch production data.** Everything runs against a temporary SQLite database and a
+temporary uploads directory, and `tests/conftest.py` hijacks `sqlite3.connect` so that any attempt
+to open the production `data.db` raises instead of quietly writing to it.
 
 ### MCP tool regression
 
-Between `/mcp` and the domain API sits a hand-written routing table
-(`mcp_http.TOOL_ROUTES`), and nothing at compile time ties it to the real routes in
-`routers/agent_api.py`. Rename an endpoint, change a field, adjust a scope, and the tool goes
-mute while the Web UI is entirely unaffected (the frontend never calls `/api/ai/*`). So
-`tests/api/test_mcp_tools.py` does three things:
+Between `/mcp` and the domain API sits a hand-written routing table (`mcp_http.TOOL_ROUTES`), and
+nothing at compile time ties it to the real routes in `routers/agent_api.py`: change an endpoint
+path, rename a field, adjust a scope, and a tool goes dead while the Web UI is completely fine
+(the frontend never calls `/api/ai/*`). So `tests/api/test_mcp_tools.py` does three things:
 
-1. neither the catalogue (`companion.TOOLS`) nor the routing table may contain orphans, and no
-   declared argument may be missing from a tool's schema;
-2. every `(method, path)` the table points at must actually be registered on the FastAPI app;
-3. **all 34 tools are really invoked** through `tools/call`, end to end (auth → scope →
-   argument assembly → domain API → result); any `isError` is a regression.
+1. no orphans in either direction between the catalogue (`companion.TOOLS`) and the routing table,
+   and no missing fields in the argument schemas;
+2. every `(method, path)` the routing table points at is actually registered on FastAPI;
+3. **every tool is really invoked** through `tools/call`, end to end (auth → scope → argument
+   assembly → domain API → result); any `isError` counts as a regression.
 
 ```bash
 ./test.sh -k mcp
 ```
 
+The tool count lives in `EXPECTED_TOOL_COUNT` in `tests/api/test_mcp_tools.py`: add or remove a
+tool and that assertion goes red first, reminding you to update the docs with it.
+
 ### Pre-commit checks
 
 ```bash
-./test.sh install-hooks     # run once after cloning
+./test.sh install-hooks     # once per clone; after that every git commit runs them
 ```
 
-This points `core.hooksPath` at the in-repo `.githooks/`. Every commit then runs:
+This points `core.hooksPath` at `.githooks/` in the repo, so each commit runs, in order:
 
-1. `scripts/scan-secrets.sh --staged` — hard-coded credentials in staged lines
-2. `./tests/run.sh` — the fast suite, skipped for docs-only commits
+1. `scripts/scan-secrets.sh --staged` — scan the staged diff for hardcoded secrets (milliseconds)
+2. `./tests/run.sh` — the fast suite; automatically skipped for docs/image-only changes
 
-Either failure blocks the commit and prints **which test failed and why**. E2E is
-too slow for a hook; the nightly job covers it.
+Either failing blocks the commit and prints **which test failed and why**. End-to-end is too slow
+for a hook and is left to the nightly timer.
 
-Escape hatches: `git commit --no-verify` skips both (a `post-commit` hook prints a
-loud warning afterwards), `TM_SKIP_TESTS=1 git commit` skips only the tests and
-still scans for secrets. Never force past a secret-scan hit — a pushed credential
-has to be revoked and rotated.
+Escape hatches:
+
+| How | Skips | Notice |
+| --- | --- | --- |
+| `git commit --no-verify` | secret scan + tests | `post-commit` prints a loud warning afterwards |
+| `TM_SKIP_TESTS=1 git commit` | tests only, secrets still scanned | warns at commit time and after |
+
+**Do not** force past a secret-scan hit with `--no-verify`: once a secret is pushed, the only fix
+is to revoke and reissue it.
 
 ### About xfail
 
-Tests marked `@pytest.mark.xfail` are documented known defects. They are an
-expected state: never counted as failures, never alerted on, and the count
-changing as defects get fixed is not an incident. If an xfail test starts
-passing (xpass), the defect was probably fixed — drop the marker so the test
+A test marked `@pytest.mark.xfail` is a **documented known defect**: expected state, not a
+failure, and the count changing as defects get fixed is not an incident. Conversely, if an xfail
+test suddenly passes (xpass), the defect was probably fixed in passing — drop the marker so it
 becomes a real regression guard.
-
-## Known limits
-
-- **SQLite is single-writer.** WAL is on, so readers and writers no longer block each other and
-  the write lock is only held at commit; that is plenty for personal or small-team use. It is
-  not built for heavy write concurrency (dozens of people recording trips at once) — that scale
-  wants Postgres.
-- Media is served by the app process by default and competes with the API for bandwidth. Point
-  `media_base.txt` at object storage (see "Running it · 4") and that limit disappears.
-- Transcoding is a local ffmpeg background thread handling one video at a time; a bulk import of
-  dozens of videos takes a while. Without ffmpeg you simply get the original rung only.
-- Routing depends on AMap/OSRM; some regions outside China fall back to straight lines.
-- End-to-end tests drive the system Chrome (`channel="chrome"`); without it only the unit and API layers can run.
 
 ## License
 
