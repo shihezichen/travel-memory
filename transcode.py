@@ -19,14 +19,18 @@
 - 档位按**短边**算，横竖屏分别处理。竖屏 1080x1438 的「720p」是短边 720，
   即 720x958 —— 写死 `scale=-2:720` 会把竖屏视频算错。
 - **只降不升**：源短边不大于目标档位时，不生成该档（不做上采样）。
-- 转码在后台线程池里跑，**全局限流**（默认 2 并发 × 每任务 4 线程），
-  因为这台机器上还跑着别的服务，不能把 CPU 吃满。
+- 转码在后台线程池里跑，**全局按核数限流**（默认留 20% 的核给别的服务，
+  见 CPU_BUDGET）。闸门记的是「同时几路 x264」，所以并发从哪来都算得清。
+- **一个视频的多档是一遍解码编出来的**（SINGLE_PASS_LADDER）。逐档转的话源要
+  重复解码 N 遍，而解码常常比编码还贵：实测 4K/60fps 三档，逐档串行 23.4s、
+  逐档并行 18.0s、一遍解码多档编码 15.1s。快路全成或全败，失败回落逐档转。
 - 某一档失败不影响播放：前端永远可以回退到原画档。失败可重试。
 """
 import os
 import re
 import json
 import shutil
+import contextlib
 import struct
 import logging
 import subprocess
@@ -56,10 +60,36 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-# 同时最多几个转码任务。这台机器上还有别的服务，别把 CPU 吃满。
-MAX_CONCURRENT_TRANSCODES = _env_int("TM_TRANSCODE_CONCURRENCY", 2)
-# 每个 ffmpeg 进程用几个线程。2 × 4 = 最多占 8 核（本机 20 核）。
+def _cpu_count() -> int:
+    """可用核数。优先 sched_getaffinity —— 容器里 cpu_count() 会报宿主机的核数。"""
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return os.cpu_count() or 2
+
+
+_NPROC = _cpu_count()
+
+# 每个 ffmpeg 进程用几个线程。
 FFMPEG_THREADS = _env_int("TM_TRANSCODE_THREADS", 4)
+# **真正的闸门**：转码总共可以占几个核。给系统留 20%（至少 2 核）——
+# 这台机器上还有 uvicorn、飞书桥等别的服务，不能让转码把 CPU 吃干净。
+# 以前是拿「同时几个任务」当闸门，但一个任务占几个核取决于 FFMPEG_THREADS，
+# 两个参数一起调才说得清总占用；直接按核数记账更直观，也不会算错。
+CPU_BUDGET = _env_int("TM_TRANSCODE_CPU_BUDGET", max(1, _NPROC - max(2, _NPROC // 5)))
+# 由预算换算出「同时最多几个 ffmpeg 进程」。
+MAX_PARALLEL_FFMPEG = max(1, CPU_BUDGET // max(1, FFMPEG_THREADS))
+# 同时最多几个视频在转。比 ffmpeg 闸门略宽：某个视频的档位转完了在推 OSS
+# （不吃 CPU）的时候，下一个视频能立刻顶上闸门的空位。
+MAX_CONCURRENT_TRANSCODES = _env_int("TM_TRANSCODE_CONCURRENCY", MAX_PARALLEL_FFMPEG)
+# 一个视频内部，几个清晰度档位同时转。以前是死板的串行：单个视频上传时
+# 只跑一个 ffmpeg、占 4 核，20 核的机器闲着，而用户要等三档依次转完。
+LADDER_CONCURRENCY = _env_int("TM_TRANSCODE_LADDER_CONCURRENCY", 3)
+# 快路开关：一个 ffmpeg 进程把源**解码一次**、同时编出所有档位。
+# 逐档转的话源要被重复解码 N 遍，而解码往往比编码还贵 —— 实测 4K/60fps 三档：
+# 逐档串行 23.4s、逐档并行 18.0s、一遍解码多档编码 15.1s。
+# 代价是这条命令全成或全败，所以失败要回落到逐档转（那条路单档失败不连坐）。
+SINGLE_PASS_LADDER = _env_int("TM_TRANSCODE_SINGLE_PASS", 1) != 0
 # x264 质量/速度。CRF 24 + veryfast 是实测的甜点：820kbps、画质够用、25 秒的片子 1.5 秒转完。
 CRF = _env_int("TM_TRANSCODE_CRF", 24)
 PRESET = os.environ.get("TM_TRANSCODE_PRESET", "veryfast")
@@ -283,13 +313,56 @@ def variant_filename(src_name: str, label: str) -> str:
     return f"{Path(src_name).stem}_{label}.mp4"
 
 
+# ---------------------------------------------------------------- CPU 预算闸门
+class _CpuBudget:
+    """按「同时几路 x264 编码」记账的闸门。
+
+    所有真正跑转码的地方都得先拿号，不管并行来自「多个视频同时转」、
+    「一个视频的多个档位同时转」，还是「一个进程里同时编好几档」——
+    有这一道，上面几个并发度就可以放心往大了调，总 CPU 占用始终有上界。
+
+    比 threading.Semaphore 多一件事：**一次原子地拿 n 个名额**。用普通信号量
+    循环 acquire n 次的话，两个都想拿 3 个的调用方可能各拿到一半互相等死。
+    """
+
+    def __init__(self, total: int):
+        self._total = max(1, total)
+        self._free = self._total
+        self._cv = threading.Condition()
+
+    @contextlib.contextmanager
+    def take(self, n: int = 1):
+        # 要得比总量还多就按总量算 —— 否则这一路永远等不到，直接饿死。
+        n = max(1, min(n, self._total))
+        with self._cv:
+            while self._free < n:
+                self._cv.wait()
+            self._free -= n
+        try:
+            yield
+        finally:
+            with self._cv:
+                self._free += n
+                self._cv.notify_all()
+
+
+_CPU_GATE = _CpuBudget(MAX_PARALLEL_FFMPEG)
+
+
 # ---------------------------------------------------------------- 转码执行
 def transcode_one(src_path, dest_path, width: int, height: int) -> dict:
     """把 src 转成指定分辨率的 H.264/AAC + faststart mp4。
 
-    同步执行（调用方负责放到线程池里）。返回 {"ok": bool, "error": str|None}。
+    同步执行（调用方负责放到线程池里），并且**自带 CPU 预算闸门**：
+    拿不到号就在这儿等，所以任何调用方都不可能绕过总量限制。
+    返回 {"ok": bool, "error": str|None}。
     先写临时文件再 rename，避免前端读到写了一半的档位文件。
     """
+    with _CPU_GATE.take(1):
+        return _transcode_one_locked(src_path, dest_path, width, height)
+
+
+def _transcode_one_locked(src_path, dest_path, width: int, height: int) -> dict:
     src_path, dest_path = Path(src_path), Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest_path.with_name(dest_path.stem + ".partial.mp4")
@@ -316,6 +389,70 @@ def transcode_one(src_path, dest_path, width: int, height: int) -> dict:
         return {"ok": False, "error": str(e)[:300]}
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def build_ladder_cmd(src_path, jobs):
+    """拼「解码一次、同时编出多档」的 ffmpeg 命令。jobs = [(tmp_path, w, h), ...]
+
+    用 filter_complex 的 split 把解出来的帧分成 N 路，每路各自 scale 到目标档位，
+    再接 N 个输出。编码参数和 transcode_one 逐字一致，产物应当完全等价。
+    """
+    n = len(jobs)
+    chains = [f"[0:v]split={n}" + "".join(f"[s{i}]" for i in range(n))]
+    chains += [f"[s{i}]scale={w}:{h}[v{i}]" for i, (_, w, h) in enumerate(jobs)]
+    cmd = [_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
+           "-i", str(src_path), "-filter_complex", ";".join(chains)]
+    for i, (tmp, _w, _h) in enumerate(jobs):
+        cmd += [
+            "-map", f"[v{i}]",
+            # `0:a?` 的问号：没有音轨的视频也别整条命令失败
+            "-map", "0:a?",
+            "-c:v", "libx264", "-preset", PRESET, "-crf", str(CRF),
+            "-profile:v", "high", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+            "-movflags", "+faststart",
+            "-threads", str(FFMPEG_THREADS),
+            str(tmp),
+        ]
+    return cmd
+
+
+def transcode_ladder(src_path, targets) -> dict:
+    """一个 ffmpeg 进程解码一次、同时编出所有档位。**快路**。
+
+    targets = [(dest_path, width, height), ...]，返回 {"ok", "error"}。
+    **全成或全败**：任何一档出问题整条命令都失败，调用方必须能回落到
+    逐档的 transcode_one（那条路才能做到单档失败不连坐）。
+
+    占的 CPU 名额按档位数算——这一个进程里跑着 N 路 x264。
+    """
+    src_path = Path(src_path)
+    targets = [(Path(d), w, h) for d, w, h in targets]
+    if not targets:
+        return {"ok": True, "error": None}
+    for dest, _w, _h in targets:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    # 同样先写 .partial 再整体 rename：中途失败不会在 variants 目录留下半截文件，
+    # 也不会让前端读到一个正在写的档位。
+    tmps = [d.with_name(d.stem + ".partial.mp4") for d, _w, _h in targets]
+    cmd = build_ladder_cmd(src_path, [(t, w, h) for t, (_d, w, h) in zip(tmps, targets)])
+    try:
+        with _CPU_GATE.take(len(targets)):
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0 or any(not t.exists() or t.stat().st_size == 0
+                                    for t in tmps):
+            return {"ok": False, "error": (r.stderr or "ffmpeg 失败")[:300]}
+        for tmp, (dest, _w, _h) in zip(tmps, targets):
+            os.replace(tmp, dest)
+        return {"ok": True, "error": None}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"转码超时（>{FFMPEG_TIMEOUT}s）"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+    finally:
+        for t in tmps:
+            t.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------- 任务闸门
@@ -382,7 +519,8 @@ def process_media(media_id: int, src_path, force: bool = False) -> dict:
     于是档位转好了页面也不会自己刷出来，非得手动刷新。先登记就没这个空窗。
     """
     src_path = Path(src_path)
-    result = {"media_id": media_id, "faststart": False, "variants": [], "skipped": []}
+    result = {"media_id": media_id, "faststart": False, "variants": [], "skipped": [],
+              "single_pass": False}
     if not src_path.exists():
         result["error"] = "源文件不存在"
         return result
@@ -422,25 +560,59 @@ def process_media(media_id: int, src_path, force: bool = False) -> dict:
     if not plan:
         return result          # 源本来就小（或探测失败）→ 只有原画档，正常
 
-    # 4) 逐档转码（todo 里已经排除了「已经转好且文件还在」的那些）
-    for label, w, h in todo:
-        out_name = variant_filename(src_path.name, label)
-        out_path = VARIANT_DIR / out_name
+    # 4) 各档并行转（todo 里已经排除了「已经转好且文件还在」的那些）。
+    #    真正的 CPU 上限由 transcode_one 里的 _CPU_GATE 把着，这里的并发度只决定
+    #    「最多同时往闸门前排几个档」。档位之间互不依赖，都从源文件读，可以随便并行。
+    def _out_path(label):
+        return VARIANT_DIR / variant_filename(src_path.name, label)
+
+    def _mark_done(label, out_path, w, h):
+        vinfo = probe_video(out_path)
+        db.upsert_variant(
+            media_id, label, filename=out_path.name, width=w, height=h,
+            bitrate=vinfo.get("bitrate"), filesize=out_path.stat().st_size,
+            status="done", error=None)
+        _publish(out_path)          # 同上：刚转好的档位也别让它先走一趟隧道
+        return {"label": label, "status": "done"}
+
+    def _one(label, w, h):
+        out_path = _out_path(label)
         db.set_variant_status(media_id, label, "running")
         r = transcode_one(src_path, out_path, w, h)
         if r["ok"]:
-            vinfo = probe_video(out_path)
-            db.upsert_variant(
-                media_id, label, filename=out_name, width=w, height=h,
-                bitrate=vinfo.get("bitrate"), filesize=out_path.stat().st_size,
-                status="done", error=None)
-            _publish(out_path)      # 同上：刚转好的档位也别让它先走一趟隧道
-            result["variants"].append({"label": label, "status": "done"})
-        else:
-            db.set_variant_status(media_id, label, "failed", error=r["error"])
-            result["variants"].append({"label": label, "status": "failed",
-                                       "error": r["error"]})
-            log.warning("转码失败 media=%s label=%s: %s", media_id, label, r["error"])
+            return _mark_done(label, out_path, w, h)
+        db.set_variant_status(media_id, label, "failed", error=r["error"])
+        log.warning("转码失败 media=%s label=%s: %s", media_id, label, r["error"])
+        return {"label": label, "status": "failed", "error": r["error"]}
+
+    # 4a) 快路：一个 ffmpeg 解码一次、同时编出所有档位。省掉 N-1 遍重复解码。
+    if SINGLE_PASS_LADDER and len(todo) > 1:
+        for label, _w, _h in todo:
+            db.set_variant_status(media_id, label, "running")
+        r = transcode_ladder(src_path, [(_out_path(label), w, h)
+                                        for label, w, h in todo])
+        if r["ok"]:
+            result["single_pass"] = True
+            result["variants"] = [_mark_done(label, _out_path(label), w, h)
+                                  for label, w, h in todo]
+            return result
+        # 快路是全成或全败，失败原因可能只出在某一档。回落到逐档转，
+        # 那条路能把失败限制在单档，剩下的档位照样能转出来。
+        log.warning("一遍解码多档编码失败，回落到逐档转 media=%s: %s",
+                    media_id, r["error"])
+        result["single_pass"] = False
+
+    # 4b) 逐档转（也是快路失败后的兜底）
+    if len(todo) <= 1 or LADDER_CONCURRENCY <= 1:
+        result["variants"] = [_one(*t) for t in todo]
+    else:
+        # 每个视频用自己的小线程池，用完就收。线程创建的开销相对 ffmpeg 可以忽略，
+        # 换来的是不用去操心一个全局池怎么分配才不会把某个视频饿死。
+        with ThreadPoolExecutor(max_workers=min(LADDER_CONCURRENCY, len(todo)),
+                                thread_name_prefix=f"ladder{media_id}") as ex:
+            futures = [ex.submit(_one, *t) for t in todo]
+            # 按 todo 的顺序收结果（高档在前），跟串行时代的返回顺序保持一致。
+            result["variants"] = [f.result() for f in futures]
     return result
 
 

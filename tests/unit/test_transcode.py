@@ -5,6 +5,7 @@ ensure_faststart / probe_video）都被 monkeypatch 掉了：真跑转码要几�
 机器上有没有 libx264，那属于端到端验证，不该拖慢单元层。
 """
 import struct
+from pathlib import Path
 
 import pytest
 
@@ -383,7 +384,8 @@ def video_media(make_user):
 def fake_ffmpeg(monkeypatch):
     """把 process_media 依赖的三个重活全换成假的，只留编排逻辑。"""
     state = {"probe": {"width": 1080, "height": 1438, "duration": 6.0, "bitrate": 5629},
-             "transcoded": [], "faststart_called": 0, "fail_labels": set()}
+             "transcoded": [], "faststart_called": 0, "fail_labels": set(),
+             "ladder_calls": []}
 
     def _probe(path):
         return dict(state["probe"])
@@ -401,9 +403,29 @@ def fake_ffmpeg(monkeypatch):
         dest.write_bytes(b"fake mp4 " * 10)
         return {"ok": True, "error": None}
 
+    def _label_of(dest):
+        return str(dest).rsplit("_", 1)[-1].split(".")[0]
+
+    def _ladder(src, targets):
+        """假的快路。语义必须和真的一致：**全成或全败**。
+
+        任何一档在 fail_labels 里就整条命令失败，调用方该回落到逐档转 ——
+        真实的 ffmpeg split 多输出命令就是这个行为。
+        """
+        items = [(_label_of(d), Path(d), w, h) for d, w, h in targets]
+        state["ladder_calls"].append([lab for lab, *_ in items])
+        if any(lab in state["fail_labels"] for lab, *_ in items):
+            return {"ok": False, "error": "假装有一档挂了"}
+        for lab, dest, w, h in items:
+            state["transcoded"].append((lab, w, h))
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"fake mp4 " * 10)
+        return {"ok": True, "error": None}
+
     monkeypatch.setattr(transcode, "probe_video", _probe)
     monkeypatch.setattr(transcode, "ensure_faststart", _faststart)
     monkeypatch.setattr(transcode, "transcode_one", _one)
+    monkeypatch.setattr(transcode, "transcode_ladder", _ladder)
     return state
 
 
@@ -628,3 +650,90 @@ def test_attach_qualities_single_query_for_many_videos(video_media, isolated_env
 def test_variant_url_is_versioned():
     """带 v= 才能命中 immutable 长缓存分支（档位文件内容永不改变）。"""
     assert transcode.variant_url("v_720p.mp4") == "/uploads/variants/v_720p.mp4?v=1"
+
+
+# ------------------------------------------------ 一遍解码多档编码（快路）
+def test_ladder_cmd_decodes_once_and_writes_every_rung(tmp_path):
+    """快路的命令：一个 -i、一个 split，N 个输出，编码参数和逐档转逐字一致。"""
+    src = tmp_path / "s.mp4"
+    jobs = [(tmp_path / "s_1080p.partial.mp4", 1080, 1920),
+            (tmp_path / "s_720p.partial.mp4", 720, 1280),
+            (tmp_path / "s_480p.partial.mp4", 480, 852)]
+    cmd = transcode.build_ladder_cmd(src, jobs)
+
+    assert cmd.count("-i") == 1                       # 源只解一遍，这就是快路的全部意义
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "split=3" in fc
+    for w, h in [(1080, 1920), (720, 1280), (480, 852)]:
+        assert f"scale={w}:{h}" in fc                 # 显式宽高，横竖屏都不会算错
+    for tmp, _w, _h in jobs:
+        assert str(tmp) in cmd                        # 每一档都有自己的输出
+    assert cmd.count("libx264") == 3 and cmd.count("+faststart") == 3
+    assert cmd.count("-map") == 6                     # 每档一路视频 + 一路音频
+    assert "0:a?" in cmd                              # 问号：没音轨的视频也别整条挂掉
+
+
+def test_ladder_is_all_or_nothing_and_leaves_no_partials(tmp_path, monkeypatch):
+    """快路失败时不能留下半截档位文件——否则前端会拿到一个播不了的档。"""
+    def _run(cmd, *a, **kw):
+        # 只写出第一个输出就「挂了」
+        outs = [c for c in cmd if str(c).endswith(".partial.mp4")]
+        open(outs[0], "wb").write(b"x" * 100)
+
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "boom"
+        return R()
+    monkeypatch.setattr(transcode.subprocess, "run", _run)
+
+    src = tmp_path / "s.mp4"
+    src.write_bytes(b"src")
+    targets = [(tmp_path / "out" / "s_720p.mp4", 720, 958),
+               (tmp_path / "out" / "s_480p.mp4", 480, 640)]
+    r = transcode.transcode_ladder(src, targets)
+
+    assert r["ok"] is False and "boom" in r["error"]
+    for dest, _w, _h in targets:
+        assert not dest.exists()
+        assert not dest.with_name(dest.stem + ".partial.mp4").exists()
+
+
+def test_process_media_uses_single_pass_when_there_are_several_rungs(
+        video_media, fake_ffmpeg, isolated_env):
+    src = transcode.UPLOAD_DIR / "v.mp4"
+    src.write_bytes(b"src")
+    r = transcode.process_media(video_media["media_id"], src)
+
+    assert r["single_pass"] is True
+    assert fake_ffmpeg["ladder_calls"] == [["720p", "480p"]]   # 一次搞定两档
+    assert [v["label"] for v in r["variants"]] == ["720p", "480p"]
+    rows = {v["label"]: v for v in db.list_variants(video_media["media_id"])}
+    assert all(rows[lab]["status"] == "done" for lab in ("720p", "480p"))
+
+
+def test_process_media_falls_back_to_per_rung_when_single_pass_fails(
+        video_media, fake_ffmpeg, isolated_env, monkeypatch):
+    """快路是全成或全败，所以它失败之后必须逐档重来，把损失关在单档里。"""
+    fake_ffmpeg["fail_labels"] = {"720p"}
+    src = transcode.UPLOAD_DIR / "v.mp4"
+    src.write_bytes(b"src")
+    r = transcode.process_media(video_media["media_id"], src)
+
+    assert r["single_pass"] is False
+    assert fake_ffmpeg["ladder_calls"] == [["720p", "480p"]]   # 试过快路
+    got = {v["label"]: v["status"] for v in r["variants"]}
+    assert got == {"720p": "failed", "480p": "done"}           # 只坏了该坏的那一档
+    assert fake_ffmpeg["transcoded"] == [("480p", 480, 638)]   # 好的那档确实逐档转出来了
+
+
+def test_cpu_budget_takes_several_slots_atomically():
+    """一次要 n 个名额必须原子：各拿一半互相等死是这类闸门的经典死法。"""
+    b = transcode._CpuBudget(4)
+    with b.take(3):
+        assert b._free == 1
+    assert b._free == 4
+    # 要得比总量多不该饿死，按总量给
+    with b.take(99):
+        assert b._free == 0
+    assert b._free == 4
