@@ -93,7 +93,10 @@ _STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 # 参与版本号计算的文件。只放**会被 ?v= 引用**的那几个，别把整个 static/ 扫一遍
 # （里面有图标、places-zh-en.json 这些几百 KB 的东西，每次请求都 stat 一遍不值当）。
 _VERSIONED_ASSETS = ("app.js", "common.js", "share.js", "style.css")
-_ASSET_V_RE = re.compile(r"(?<=[?&])v=[0-9A-Za-z._-]+")
+# 只认 /static/ 自己的资源。早先这里写的是裸 `(?<=[?&])v=...`，把高德 SDK 的
+# `https://webapi.amap.com/maps?v=2.0` 也一起改掉了 —— SDK 当场加载失败，
+# window.AMap 没了，initMap() 一抛异常整条启动链断掉，页面永远停在「载入中」。
+_ASSET_V_RE = re.compile(r"(?<![\w./-])(/static/[\w./-]+\?)v=[0-9A-Za-z._-]+")
 _asset_v_cache = {"at": 0.0, "value": ""}
 
 
@@ -121,9 +124,12 @@ def asset_version() -> str:
 
 
 def stamp_assets(html: str) -> str:
-    """把 HTML 里所有 `?v=xxx` 换成当前的资源版本号。
+    """把 HTML 里 `/static/xxx?v=...` 的版本号换成当前的资源版本号。
 
     直接正则替换而不是留一个 `__ASSET_V__` 占位符：占位符同样要靠人记得写，
     而模板里本来就已经有 `?v=` 了 —— 认这个既有写法，漏不掉。
+
+    只动 `/static/` 开头的 URL：第三方 SDK 的 `?v=` 是它自己的 API 版本号，
+    改了就加载不出来（见 _ASSET_V_RE 上面那段）。
     """
-    return _ASSET_V_RE.sub("v=" + asset_version(), html)
+    return _ASSET_V_RE.sub(r"\1v=" + asset_version(), html)
