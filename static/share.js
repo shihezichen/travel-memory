@@ -994,7 +994,10 @@ function shareRenderMedia(media) {
   media.forEach((m, idx) => {
     const item = el('div', 'media-item');
     const img = el('img');
-    img.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
+    img.src = mediaSrc(m, 'thumb');
+    img.classList.add('thumb-loading');
+    img.onload = () => img.classList.remove('thumb-loading');
+    mediaFallbackToLocal(img, '/uploads/thumbs/' + m.thumb_filename);
     img.loading = 'lazy';
     img.onclick = () => shareOpenLightbox(idx);
     item.appendChild(img);
@@ -1088,6 +1091,8 @@ function shareRenderLightbox() {
     const item = lightboxMedia[lightboxIndex + off];
     const slide = el('div', 'lb-slide ' + cls);
     if (item) {
+      // 视频格打个标记：说明栏得给原生控制条让位，见 tmReserveCaptionSpace
+      if (item.type === 'video' && off === 0) slide.classList.add('has-video');
       slide.appendChild(buildLightboxMedia(item, off === 0));
       // 分享页只读。相册是整个行程的，所以不管有没有描述都先给出「地点 · 时间」，
       // 让人知道这张图属于哪个轨迹点；有描述的再接在下面。
@@ -1127,6 +1132,7 @@ function shareRenderLightbox() {
         more.onclick = toggle;
         slide.appendChild(box);
       }
+      tmReserveCaptionSpace(slide);
     }
     track.appendChild(slide);
   });
@@ -1469,8 +1475,8 @@ function shareLoadAlbums() {
     photoItems.push({
       id: m.id, type: m.type, point_id: p.id, point_name: p.name,
       filename: m.filename, thumb_filename: m.thumb_filename,
-      url: mediaUrl('/uploads/' + m.filename),
-      thumb_url: m.thumb_filename ? mediaUrl('/uploads/thumbs/' + m.thumb_filename) : null,
+      url: mediaSrc(m, 'full'),
+      thumb_url: m.thumb_filename ? mediaSrc(m, 'thumb') : null,
       taken_at: m.exif_time || m.created_at || '',
       caption: m.caption || '',
       qualities: m.qualities,        // 视频清晰度档位，相册页点开也要能选

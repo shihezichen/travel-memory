@@ -181,3 +181,22 @@ def make_subtitle_png(text: str, out_path, width: int = 1920, font_size: int = 5
         img = canvas
     img.save(out_path, "PNG")
     return True
+
+
+def attach_urls(media_list):
+    """给一批媒体行挂上 `url` / `thumb_url`（服务端算好的对外地址）。
+
+    为什么必须由服务端算：媒体先落本地磁盘、再每 2 分钟同步到 OSS，
+    「这个文件到底传上去没有」只有服务端知道（config.media_url 查同步水位）。
+    前端那个 mediaUrl() 是无脑拼前缀，拼不出这个判断，于是刚上传的照片
+    在同步之前一律裂图。
+
+    就地修改并返回同一个 list，跟 transcode.attach_qualities 一个用法。
+    """
+    from config import media_url
+    for m in media_list or []:
+        if m.get("filename"):
+            m["url"] = media_url("/uploads/" + m["filename"])
+        if m.get("thumb_filename"):
+            m["thumb_url"] = media_url("/uploads/thumbs/" + m["thumb_filename"])
+    return media_list

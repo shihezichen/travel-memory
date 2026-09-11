@@ -80,7 +80,11 @@ from routers import share as _r_share  # noqa: E402
 # 漏了它，转码测试就会把档位文件写进生产 uploads/variants/。
 import transcode as _transcode  # noqa: E402
 
-_ROUTER_MODULES = [_r_agent_api, _r_share, _transcode]
+# oss_backfill 同理：它有自己的 UPLOAD_DIR，回源时往那里写文件。
+# 漏了它，回源测试就会把对象写进生产 uploads/。
+import oss_backfill as _oss_backfill  # noqa: E402
+
+_ROUTER_MODULES = [_r_agent_api, _r_share, _transcode, _oss_backfill]
 # 每个模块里需要被重定向到 tmp_path 的目录型全局。
 # 不是每个模块都全有，所以按 hasattr 挑。
 _ROUTER_DIR_ATTRS = ("UPLOAD_DIR", "_TILE_DIR", "VARIANT_DIR")

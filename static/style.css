@@ -625,9 +625,14 @@ body.map-fullscreen-on { overflow: hidden; }
   -webkit-tap-highlight-color: transparent;
 }
 .up-act:active { background: #fff; }
+.up-act svg { width: 11px; height: 11px; display: block; }
 .up-act-cancel { background: rgba(239, 68, 68, .94); color: #fff; font-size: 14px; }
+/* 暂停中的「继续上传」再染成琥珀色：图标已经不同了，颜色只是多一道保险，
+   五列小格子下图标只有 9px，光看形状容易糊 */
+.up-act-pause.is-paused { background: rgba(245, 158, 11, .96); color: #fff; }
 .media-grid[data-cols="5"] .up-acts { gap: 3px; padding: 2px 0; }
 .media-grid[data-cols="5"] .up-act { width: 17px; height: 17px; font-size: 8px; }
+.media-grid[data-cols="5"] .up-act svg { width: 9px; height: 9px; }
 /* 字节全传完之后就没什么可暂停/取消的了（服务端已经在处理），只留本地预览 */
 .media-uploading.processing .up-act-pause,
 .media-uploading.processing .up-act-cancel { display: none; }
@@ -659,6 +664,10 @@ body.map-fullscreen-on { overflow: hidden; }
 .local-preview-note {
   position: absolute; left: 14px; top: 18px;
   color: rgba(255, 255, 255, .72); font-size: 12px;
+}
+.local-preview-err {
+  max-width: 78vw; padding: 0 12px;
+  color: rgba(255, 255, 255, .9); font-size: 14px; line-height: 1.7; text-align: center;
 }
 .local-preview-close {
   position: absolute; right: 12px; top: 12px;
@@ -774,6 +783,14 @@ body.map-fullscreen-on { overflow: hidden; }
 }
 .media-item { position: relative; aspect-ratio: 1; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
 .media-item img { width: 100%; height: 100%; object-fit: cover; }
+/* 缩略图还在路上（刚上传，OSS 还没同步到 / 视频转码中缩略图还没生成）：
+   先铺一层斜纹占位。原来什么都不铺，浏览器就把 <img> 画成一块碎图图标。 */
+.media-item img.thumb-loading {
+  background: repeating-linear-gradient(
+    -45deg, #e5e7eb 0 8px, #eef1f5 8px 16px);
+}
+/* 真的取不到缩略图时把碎图图标藏掉，只留占位纹 —— 碎图比空着更难看 */
+.media-item img.thumb-loading { color: transparent; text-indent: -9999px; }
 .media-item .del { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 20px; text-align: center; }
 .media-item .video-badge { position: absolute; bottom: 3px; left: 3px; font-size: 16px; }
 
@@ -1285,6 +1302,13 @@ body.map-fullscreen-on { overflow: hidden; }
   display: block;
   cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
+/* 视频格：说明栏不再压在 <video> 的原生控制条上（padding-bottom 由
+   common.js 的 tmReserveCaptionSpace 按说明栏实际高度算出来）。
+   顶部那 46px 只是渐变过渡用的留白，压在视频上没意义还白吃高度，收到 12px。 */
+.lb-slide.has-video .lb-caption {
+  padding-top: 12px;
+  background: linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,.66));
+}
 /* 「地点 · 时间」小字：相册是整条行程的，这一行说明当前图属于哪个轨迹点 */
 .lb-caption-meta {
   font-size: 12px; color: rgba(255, 255, 255, .72);
@@ -1387,7 +1411,13 @@ body.map-fullscreen-on { overflow: hidden; }
 .lb-video-wrap {
   position: relative;
   display: flex; align-items: center; justify-content: center;
-  max-width: 100%; max-height: 100%;
+  max-width: 100%;
+  /* height 必须是**确定值**，不能只写 max-height。
+     里面那个 <video> 是 max-height:100%，而百分比要有一个确定的父高度才算得出来；
+     父高度是 auto 时这条约束直接退化成 none —— 于是竖屏视频（手机拍的绝大多数）
+     按 1080×1920 的原始尺寸铺开，上下双双溢出灯箱，原生控制条整条跑到屏幕外，
+     根本点不到。写死 height:100% 之后百分比有了参照，视频才会真的被缩进来。 */
+  height: 100%; min-height: 0;
 }
 /* 放左上角：右上是关闭/下载、正上方是计数、下方是视频原生控制条，只有这儿是空的。
    高度和右上角那两枚圆形控件对齐（都是 --lb-ctl），三者放在同一条视觉基线上。 */

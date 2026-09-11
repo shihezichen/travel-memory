@@ -25,6 +25,8 @@ from PIL import Image, ImageDraw, ImageFont
 import db
 import download  # 媒体「另存为」（Content-Disposition: attachment，见 download.py）
 import media as media_mod
+import oss           # OSS 直传签名（见 oss.py）
+import oss_backfill  # 直传之后把对象拉回本机存档（见 oss_backfill.py）
 import transcode  # 视频清晰度分层转码（后台线程，见 transcode.py 顶部的诊断说明）
 import mcp_http  # MCP Streamable HTTP 远程端点（开放平台：远程 Agent 接入）
 
@@ -131,6 +133,8 @@ PUBLIC_PATHS = ("/", "/api/login", "/api/register", "/logout", "/api/route",
 # 一个 200MB 的视频就是 200MB RSS 峰值，并发几个就能把进程打到 OOM。
 MAX_UPLOAD_PHOTO = int(os.environ.get("TRAVEL_MAX_UPLOAD_PHOTO_MB", "30")) * 1024 * 1024
 MAX_UPLOAD_VIDEO = int(os.environ.get("TRAVEL_MAX_UPLOAD_VIDEO_MB", "200")) * 1024 * 1024
+# 浏览器自己抽的那张缩略图的上限。512px 的 JPEG 撑死一两百 KB，2MB 已经很宽松了。
+CLIENT_THUMB_MAX = int(os.environ.get("TRAVEL_CLIENT_THUMB_MAX_KB", "2048")) * 1024
 
 
 def is_public_path(path: str) -> bool:
@@ -242,8 +246,25 @@ def health():
     except Exception:
         db_ok = False
     body = {"status": "ok" if db_ok else "degraded", "db": db_ok,
-            "llm_provider": llm_provider.resolve_provider()}
+            "llm_provider": llm_provider.resolve_provider(),
+            # 直传是否可用 + 还有多少对象没拉回本机存档
+            "oss_direct": oss.direct_upload_enabled(),
+            "oss_backfill": oss_backfill.queue_status() if db_ok else None}
     return JSONResponse(body, status_code=200 if db_ok else 503)
+
+
+@app.on_event("startup")
+def _startup_resume_backfill():
+    """把上次没拉完的 OSS 回源任务重新排进队列。
+
+    直传的媒体在回源完成之前，本机是没有原件的 —— 缩略图、清晰度档位、备份
+    全都还欠着。进程重启把这件事忘掉的话，那些文件会永远只存在于 OSS。
+    不能让它影响启动：任何异常都只记一条日志。
+    """
+    try:
+        oss_backfill.resume_pending()
+    except Exception as e:                                   # noqa: BLE001
+        print("[startup] OSS 回源队列恢复失败:", e)
 
 
 # ---------- 访问口令门禁（方案 A） ----------
@@ -453,6 +474,9 @@ def index(request: Request):
     html = html.replace("__AMAP_KEY__", AMAP_KEY)
     html = html.replace("__AMAP_SECURITY__", AMAP_SECURITY)
     html = html.replace("__MEDIA_BASE__", MEDIA_BASE_URL)
+    # 前端据此决定走直传还是走隧道分片上传。任何一环没配好都回落到 ""（关闭），
+    # 上传链路完整保留原样。
+    html = html.replace("__OSS_DIRECT__", "1" if oss.direct_upload_enabled() else "")
     html = html.replace("__AMAP_VERSION__", amap_version(request))
     html = html.replace("__ICP_FOOTER__", icp_footer_html())
     html = html.replace("<body>", "<body>" + amap_key_notice_html(), 1)
@@ -869,7 +893,8 @@ def media_type_for(filename: str) -> str:
 @app.get("/api/points/{point_id}/media")
 def api_list_media(request: Request, point_id: int):
     require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")
-    return transcode.attach_qualities(db.list_media(point_id))
+    # attach_urls 要在最后：url 由服务端算（要查 OSS 同步水位），前端别自己拼
+    return media_mod.attach_urls(transcode.attach_qualities(db.list_media(point_id)))
 
 
 @app.post("/api/points/{point_id}/media")
@@ -993,9 +1018,29 @@ def _expected_chunk_size(sess: dict, idx: int) -> int:
 
 
 def _session_payload(sess: dict, resumed: bool = False) -> dict:
-    received = db.list_upload_chunks(sess["session_id"]) \
-        if sess["status"] == "uploading" else []
+    """一个上传会话对外的样子。直传和隧道两条路共用它。
+
+    直传会话的分片在 OSS 上，本机的 upload_chunks 表里一条都没有 —— 「传到哪儿了」
+    得去问 OSS。这里**按需**问（只对还在传的直传会话），问失败就当 0，
+    不能让一次 OSS 抖动把整个点详情的加载带崩。
+    """
+    oss_mode = bool(sess.get("oss_upload_id"))
+    received = []
+    received_bytes = 0
+    if sess["status"] == "uploading":
+        if oss_mode:
+            try:
+                parts = oss.list_parts(sess["oss_key"], sess["oss_upload_id"])
+                # 对外统一用 0 基的分片序号（隧道那条就是 0 基），OSS 是 1 基
+                received = [p["number"] - 1 for p in parts]
+                received_bytes = sum(p["size"] for p in parts)
+            except Exception:
+                pass
+        else:
+            received = db.list_upload_chunks(sess["session_id"])
+            received_bytes = db.upload_chunks_total_size(sess["session_id"])
     return {
+        "mode": "oss" if oss_mode else "chunk",
         "session_id": sess["session_id"],
         "point_id": sess["point_id"],
         "filename": sess["filename"],
@@ -1007,7 +1052,7 @@ def _session_payload(sess: dict, resumed: bool = False) -> dict:
         "status": sess["status"],
         "media_id": sess["media_id"],
         "received": received,
-        "received_bytes": db.upload_chunks_total_size(sess["session_id"]),
+        "received_bytes": received_bytes,
         "updated_at": sess["updated_at"],
         "resumed": resumed,
     }
@@ -1030,7 +1075,16 @@ def prune_upload_sessions(hours: int = UPLOAD_SESSION_TTL_HOURS) -> dict:
     比如手工删库、或者进程在建目录和写库之间被杀）。
     """
     removed = 0
+    aborted = 0
     for s in db.list_stale_upload_sessions(hours):
+        # 直传会话过期时必须去 OSS 那边把没拼起来的碎片也撤掉 ——
+        # 未完成的 multipart 分片会一直占空间计费，谁也不会主动去清。
+        if s.get("oss_upload_id") and s.get("oss_key"):
+            try:
+                oss.abort_multipart(s["oss_key"], s["oss_upload_id"])
+                aborted += 1
+            except Exception:
+                pass
         _drop_session_files(s["session_id"])
         db.delete_upload_session(s["session_id"])
         removed += 1
@@ -1048,7 +1102,7 @@ def prune_upload_sessions(hours: int = UPLOAD_SESSION_TTL_HOURS) -> dict:
                 orphans += 1
             except OSError:
                 continue
-    return {"sessions": removed, "orphan_dirs": orphans}
+    return {"sessions": removed, "orphan_dirs": orphans, "oss_aborted": aborted}
 
 
 def _prune_upload_sessions_throttled():
@@ -1246,6 +1300,271 @@ def api_abort_upload_session(request: Request, session_id: str):
     return {"ok": True}
 
 
+# ---------- OSS 直传（浏览器 → OSS，绕开 frp 隧道） ----------
+# 为什么要这条路：媒体从浏览器传到本机，全程挤在 4Mbps 的 frp 隧道里
+# （见 ops/sync-oss.sh 顶部的实测）。一段 150MB 的视频理论最快也要 5 分钟，
+# 期间整站 API 跟着排队。直传之后这段流量走用户自己的上行，一个字节都不进隧道。
+#
+# 服务端在这条路上**只做三件事**，一个字节的媒体都不经手：
+#   1) 建 OSS 分片上传，签一批只对「这一个对象的这一片」有效的临时 URL；
+#   2) 客户端传完之后，**以 OSS 的 ListParts 为准**核对，再让 OSS 把片拼起来；
+#   3) 写 media 行，并把「把对象拉回本机存档」排进后台队列（oss_backfill）。
+#
+# 安全边界：对象名（key）永远由服务端生成，客户端报的只有文件名和大小；
+# 签出去的 URL 只能 PUT 那一个 key 的那一片，且 1 小时过期。
+# 归属校验和分片上传一样，**每个请求都做**，不是只在建会话时查一次。
+
+OSS_URL_BATCH = 64          # 一次最多签这么多片的 URL，剩下的客户端再来要
+
+
+def _oss_session(request: Request, session_id: str) -> dict:
+    """取直传会话并校验归属。非直传会话（没有 oss_upload_id）一律拒。"""
+    sess = _load_session(request, session_id)
+    if not sess.get("oss_upload_id") or not sess.get("oss_key"):
+        raise HTTPException(400, "这不是一个 OSS 直传会话")
+    return sess
+
+
+def _oss_session_payload(sess: dict, parts: list = None, urls: dict = None,
+                         resumed: bool = False) -> dict:
+    return {
+        "mode": "oss",
+        "session_id": sess["session_id"],
+        "filename": sess["filename"],
+        "filesize": int(sess["filesize"]),
+        "part_size": int(sess["chunk_size"]),
+        "total_parts": int(sess["total_chunks"]),
+        "mtype": sess["mtype"],
+        "received": parts or [],
+        "urls": urls or {},
+        "resumed": resumed,
+    }
+
+
+def _sign_parts(sess: dict, numbers) -> dict:
+    total = int(sess["total_chunks"])
+    out = {}
+    for n in numbers:
+        n = int(n)
+        if 1 <= n <= total:
+            out[str(n)] = oss.sign_part_url(sess["oss_key"], sess["oss_upload_id"], n)
+    return out
+
+
+@app.post("/api/points/{point_id}/oss-uploads")
+def api_create_oss_upload(request: Request, point_id: int,
+                          fingerprint: str = Form(...),
+                          filename: str = Form(...),
+                          filesize: int = Form(...)):
+    """建（或复用）一个直传会话，顺带签第一批分片 URL。
+
+    复用的判断和隧道分片上传一致：同一个 (点, 属主, 指纹) 且声明的大小没变，
+    就接着上次那个 uploadId 传 —— 断点续传靠的就是这个。
+    """
+    if not oss.direct_upload_enabled():
+        raise HTTPException(503, "OSS 直传未启用")
+    user = current_user(request)
+    require_owner(user, db.get_point_owner_id(point_id), "地点")
+    if not db.get_point(point_id):
+        raise HTTPException(404, "点不存在")
+
+    mtype = media_type_for(filename)
+    filesize = int(filesize or 0)
+    if filesize <= 0:
+        raise HTTPException(400, "空文件")
+    limit = MAX_UPLOAD_PHOTO if mtype == "photo" else MAX_UPLOAD_VIDEO
+    if filesize > limit:
+        raise HTTPException(413, f"文件过大，上限 {limit // (1024 * 1024)}MB")
+
+    fp = (fingerprint or "").strip()[:128]
+    if not fp:
+        raise HTTPException(400, "缺少文件指纹")
+
+    _prune_upload_sessions_throttled()
+
+    old = db.find_upload_session(point_id, user["id"], fp)
+    if old and old.get("oss_upload_id"):
+        if int(old["filesize"]) == filesize:
+            try:
+                parts = oss.list_parts(old["oss_key"], old["oss_upload_id"])
+            except oss.OSSError:
+                # uploadId 在云上没了（过期/被清理）：作废重来，别让客户端拿着
+                # 一个已经不存在的 uploadId 一直传 404
+                db.abort_upload_session(old["session_id"])
+                parts = None
+            if parts is not None:
+                got = {p["number"] for p in parts}
+                todo = [n for n in range(1, int(old["total_chunks"]) + 1) if n not in got]
+                return _oss_session_payload(old, parts,
+                                            _sign_parts(old, todo[:OSS_URL_BATCH]),
+                                            resumed=True)
+        else:
+            # 声明变了（指纹撞车但文件其实不同）→ 老的作废，否则会把两个文件的片拼一起
+            try:
+                oss.abort_multipart(old["oss_key"], old["oss_upload_id"])
+            except Exception:
+                pass
+            db.abort_upload_session(old["session_id"])
+
+    part_size, total_parts = oss.plan_parts(filesize)
+    ext = Path(filename or "unknown").suffix.lower()
+    key = f"uploads/{uuid.uuid4().hex}{ext}"
+    try:
+        upload_id = oss.init_multipart(key, filename)
+    except oss.OSSError as e:
+        raise HTTPException(502, f"OSS 初始化失败：{e}")
+
+    sid = uuid.uuid4().hex
+    db.create_oss_upload_session(sid, point_id, user["id"], fp, filename,
+                                 filesize, part_size, total_parts, mtype,
+                                 key, upload_id)
+    sess = db.get_upload_session(sid)
+    return _oss_session_payload(sess, [],
+                                _sign_parts(sess, range(1, min(total_parts, OSS_URL_BATCH) + 1)))
+
+
+@app.post("/api/oss-uploads/{session_id}/sign")
+def api_sign_oss_parts(request: Request, session_id: str, parts: str = Form(...)):
+    """再要一批分片 URL。URL 有 1 小时时效，传到一半过期了也从这里续。"""
+    sess = _oss_session(request, session_id)
+    if sess["status"] != "uploading":
+        raise HTTPException(409, "上传会话已结束")
+    try:
+        nums = [int(x) for x in (parts or "").split(",") if x.strip()][:OSS_URL_BATCH]
+    except ValueError:
+        raise HTTPException(400, "parts 只能是逗号分隔的分片序号")
+    return {"urls": _sign_parts(sess, nums)}
+
+
+@app.get("/api/oss-uploads/{session_id}")
+def api_get_oss_upload(request: Request, session_id: str):
+    """查这个会话在 OSS 那边已经收到哪些片（断点续传用）。"""
+    sess = _oss_session(request, session_id)
+    try:
+        parts = oss.list_parts(sess["oss_key"], sess["oss_upload_id"])
+    except oss.OSSError as e:
+        raise HTTPException(502, f"OSS 查询失败：{e}")
+    got = {p["number"] for p in parts}
+    todo = [n for n in range(1, int(sess["total_chunks"]) + 1) if n not in got]
+    return _oss_session_payload(sess, parts, _sign_parts(sess, todo[:OSS_URL_BATCH]))
+
+
+@app.post("/api/oss-uploads/{session_id}/complete")
+def api_complete_oss_upload(request: Request, session_id: str):
+    """让 OSS 把分片拼成对象，然后写 media 行、把回源存档排进后台队列。
+
+    **不接受客户端报的分片清单** —— 一律现查 ListParts。客户端说了不算，
+    它可能少报、错报，甚至报一个根本没传上去的 ETag。
+    """
+    sess = _oss_session(request, session_id)
+    with _session_lock(sess["session_id"]):
+        sess = db.get_upload_session(sess["session_id"])
+        if not sess:
+            raise HTTPException(404, "上传会话不存在")
+        # 幂等：重复 complete（客户端超时重试）把上次的结果原样还回去
+        if sess["status"] == "completed" and sess["media_id"]:
+            m = db.get_media(sess["media_id"])
+            if m:
+                return {"id": m["id"], "type": m["type"], "filename": m["filename"],
+                        "thumb": m["thumb_filename"], "exif_time": m["exif_time"],
+                        "exif_lat": m["exif_lat"], "exif_lng": m["exif_lng"],
+                        "duplicate": True}
+        if sess["status"] != "uploading":
+            raise HTTPException(409, "上传会话已结束")
+
+        total = int(sess["total_chunks"])
+        try:
+            parts = oss.list_parts(sess["oss_key"], sess["oss_upload_id"])
+        except oss.OSSError as e:
+            raise HTTPException(502, f"OSS 查询分片失败：{e}")
+        got = {p["number"]: p for p in parts}
+        missing = [n for n in range(1, total + 1) if n not in got]
+        if missing:
+            raise HTTPException(409, {"error": "分片不全", "missing": missing[:64]})
+        size_sum = sum(p["size"] for p in parts)
+        if size_sum != int(sess["filesize"]):
+            raise HTTPException(400, "分片总大小与声明不符")
+
+        mtype = sess["mtype"] or media_type_for(sess["filename"])
+        limit = MAX_UPLOAD_PHOTO if mtype == "photo" else MAX_UPLOAD_VIDEO
+        if size_sum > limit:
+            oss.abort_multipart(sess["oss_key"], sess["oss_upload_id"])
+            db.abort_upload_session(sess["session_id"])
+            raise HTTPException(413, f"文件过大，上限 {limit // (1024 * 1024)}MB")
+
+        try:
+            oss.complete_multipart(sess["oss_key"], sess["oss_upload_id"],
+                                   [{"number": n, "etag": got[n]["etag"]}
+                                    for n in range(1, total + 1)])
+            head = oss.head_object(sess["oss_key"])
+        except oss.OSSError as e:
+            raise HTTPException(502, f"OSS 合并失败：{e}")
+        if head["size"] != int(sess["filesize"]):
+            raise HTTPException(500, f"合并结果大小不符：{head['size']}")
+
+        stored_name = sess["oss_key"].split("/")[-1]
+        # 缩略图和 EXIF 都要读原件，而原件此刻只在 OSS 上 —— 留空，等回源补
+        # （前端会先把自己在本地抽的那一帧传上来，见 /api/media/{id}/thumb）。
+        mid = db.add_media(sess["point_id"], mtype, stored_name, None, None, None, None)
+        db.finish_upload_session(sess["session_id"], mid)
+    oss_backfill.enqueue(mid, sess["oss_key"], int(sess["filesize"]), mtype)
+    return {
+        "id": mid, "type": mtype, "filename": stored_name,
+        "thumb": None, "exif_time": None, "exif_lat": None, "exif_lng": None,
+        "url": media_url("/uploads/" + stored_name),
+        # 前端据此知道「原件还没回本机，缩略图/清晰度档位会晚一点到」
+        "pending_backfill": True,
+    }
+
+
+@app.delete("/api/oss-uploads/{session_id}")
+def api_abort_oss_upload(request: Request, session_id: str):
+    """用户点「放弃」：会话作废，并让 OSS 把已传的碎片删掉（不然会一直计费）。"""
+    sess = _oss_session(request, session_id)
+    oss.abort_multipart(sess["oss_key"], sess["oss_upload_id"])
+    db.abort_upload_session(sess["session_id"])
+    return {"ok": True}
+
+
+@app.post("/api/media/{media_id}/thumb")
+def api_put_client_thumb(request: Request, media_id: int, file: UploadFile = File(...)):
+    """浏览器在本地抽好的那张缩略图。
+
+    直传的原件要等回源才回到本机，缩略图也就要等那么久 —— 相册里会先空一大片。
+    而浏览器上传前本来就已经解码过这个文件（占位格里那张预览就是），
+    把那一帧顺手传上来即可：几十 KB，走隧道毫无压力。
+
+    **只在还没有缩略图时接受**：回源生成的那张才是权威的，不能被客户端顶掉。
+    """
+    require_owner(current_user(request), db.get_media_owner_id(media_id), "媒体")
+    m = db.get_media(media_id)
+    if not m:
+        raise HTTPException(404, "媒体不存在")
+    if m["thumb_filename"]:
+        return {"ok": True, "thumb": m["thumb_filename"], "skipped": True}
+
+    raw = file.file.read(CLIENT_THUMB_MAX + 1)
+    if not raw:
+        raise HTTPException(400, "空文件")
+    if len(raw) > CLIENT_THUMB_MAX:
+        raise HTTPException(413, "缩略图过大")
+    # 必须真的是一张能解码的图：别人传什么进来都往 uploads/thumbs/ 里落，
+    # 那目录是公开可读的静态目录。用 PIL 解一遍再重存，顺手把 EXIF 之类的附加
+    # 数据剥掉，落盘的永远是我们自己编码出来的 JPEG。
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except Exception:
+        raise HTTPException(400, "不是有效的图片")
+    img.thumbnail(media_mod.THUMB_SIZE)
+    name = Path(m["filename"]).stem + ".jpg"
+    dest = UPLOAD_DIR / "thumbs" / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(dest, "JPEG", quality=82)
+    db.set_media_thumb(media_id, name)
+    return {"ok": True, "thumb": name, "thumb_url": media_url("/uploads/thumbs/" + name)}
+
+
 @app.put("/api/media/{media_id}/caption")
 def api_set_media_caption(request: Request, media_id: int, caption: str = Form("")):
     """给单张照片/视频写一段文字描述（需本人或管理员）"""
@@ -1290,8 +1609,18 @@ def api_media_variants(media_id: int):
     m = db.get_media(media_id)
     if not m:
         raise HTTPException(404, "媒体不存在")
+    # 直传的媒体在回源之前，本机既没有原件也没有缩略图。前端上传完之后就靠
+    # 这两个字段等它们出现 —— 否则要等下一次打开点详情才看得到封面。
+    # 和档位信息一样不鉴权：缩略图本来就落在公开的 /uploads/thumbs/ 下。
+    bf = db.get_oss_backfill(media_id)
+    common = {
+        "backfilling": bool(bf and bf["status"] in ("pending", "running")),
+        "thumb_url": (media_url("/uploads/thumbs/" + m["thumb_filename"])
+                      if m["thumb_filename"] else None),
+    }
     if m["type"] != "video":
-        return {"media_id": media_id, "type": m["type"], "qualities": []}
+        return {"media_id": media_id, "type": m["type"], "qualities": [],
+                "transcoding": False, **common}
     qualities = transcode.build_quality_list(m, db.list_variants(media_id))
     pending = [q for q in qualities if q["status"] in ("pending", "running")]
     return {
@@ -1299,6 +1628,7 @@ def api_media_variants(media_id: int):
         "qualities": qualities,
         # 前端据此决定要不要继续轮询
         "transcoding": bool(pending),
+        **common,
     }
 
 

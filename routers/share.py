@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
 import download
+import media
 import transcode
 from config import AMAP_KEY, AMAP_SECURITY, OSRM_URL, MEDIA_BASE_URL
 from routers.deps import (
@@ -97,7 +98,7 @@ def api_share_view(token: str, password: str = ""):
     points = db.list_points(share["trip_id"])
     for p in points:
         # 带上视频清晰度档位，分享页也能选清晰度 / 自动降级
-        p["media"] = transcode.attach_qualities(db.list_media(p["id"]))
+        p["media"] = media.attach_urls(transcode.attach_qualities(db.list_media(p["id"])))
     return {
         "trip": {
             "id": trip["id"], "name": trip["name"],

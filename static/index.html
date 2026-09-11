@@ -17,6 +17,9 @@
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
     window.MEDIA_BASE = "__MEDIA_BASE__";
+    // 非空 = 媒体直接从浏览器传到 OSS，不走 frp 隧道（见 oss.py）。
+    // 空 = 完整回退到原来的隧道分片上传，前端逻辑一行不变。
+    window.OSS_DIRECT = "__OSS_DIRECT__";
   </script>
   <script src="https://webapi.amap.com/maps?v=__AMAP_VERSION__&key=__AMAP_KEY__&plugin=AMap.AutoComplete,AMap.Autocomplete,AMap.Geocoder,AMap.Driving,AMap.Geolocation"></script>
 </head>

@@ -1734,7 +1734,13 @@ function buildMediaItem(m) {
   const item = el('div', 'media-item');
   item.dataset.mid = String(m.id);
   const img = el('img');
-  img.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
+  // 用服务端算好的地址：刚上传的文件还没同步到 OSS，拼出来的 OSS 地址是 404，
+  // 界面上就是一块裂图（照片传完 / 视频转码中最容易撞上）。
+  img.src = mediaSrc(m, 'thumb');
+  // 缩略图还没生成好（视频转码中）或者同步慢了半拍：给个占位，别留裂图
+  img.classList.add('thumb-loading');
+  img.onload = () => img.classList.remove('thumb-loading');
+  mediaFallbackToLocal(img, '/uploads/thumbs/' + m.thumb_filename);
   img.loading = 'lazy';
   img.draggable = false;                 // 交给我们自己的指针拖拽，不用浏览器原生 DnD
   item.appendChild(img);
@@ -1956,21 +1962,51 @@ function cancelUploadJob(job) {
   // 服务端那边的临时分片一并作废，不然要等 24 小时的回收任务才清得掉
   const sid = job.session && job.session.session_id;
   if (sid) {
-    api('/api/upload-sessions/' + sid, { method: 'DELETE' }).catch(() => {});
+    api(uploadSessionUrl(job.session), { method: 'DELETE' }).catch(() => {});
     forgetUpload(sid);
   }
 }
+
+// 上传操作条的图标：全部走内联 SVG。
+// 之前「继续上传」和「本地播放」都是字符 ▶，两个圆钮并排长得一模一样，
+// 根本分不出哪个是放视频、哪个是接着传 —— 所以继续上传单独给一个上传箭头。
+const UP_ACT_ICONS = {
+  play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72c0 .8.87 1.3 1.56.88l10.6-6.86a1.05 1.05 0 0 0 0-1.76L9.56 4.26A1.04 1.04 0 0 0 8 5.14z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/></svg>',
+  // 继续上传：向上的箭头顶着一条横线（「接着往上传」），和播放的实心三角不会认错
+  resume: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.6 18.4 9h-4v7.2h-4.8V9h-4z"/><path d="M4.6 19h14.8v2.4H4.6z"/></svg>',
+};
 
 // 本地预览：传到一半也能先看看自己选的到底是哪一段。
 // 放的是浏览器里的那份 File（blob: URL），完全不碰网络。
 function openLocalPreview(file) {
   const url = URL.createObjectURL(file);
   const ov = el('div', 'local-preview');
-  const close = () => { ov.remove(); URL.revokeObjectURL(url); };
-  const media = isVideoFile(file)
-    ? Object.assign(document.createElement('video'),
-                    { src: url, controls: true, autoplay: true, playsInline: true })
-    : Object.assign(document.createElement('img'), { src: url });
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey);
+    ov.remove();
+    URL.revokeObjectURL(url);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const video = isVideoFile(file);
+  let media;
+  if (video) {
+    // 属性一个个写，不用 Object.assign：playsinline / webkit-playsinline 这两个
+    // 老 iOS 只认 HTML 属性，写成 property 它当没看见，于是被顶成全屏播放器。
+    media = document.createElement('video');
+    media.controls = true;
+    media.playsInline = true;
+    media.setAttribute('playsinline', '');
+    media.setAttribute('webkit-playsinline', '');
+    media.preload = 'metadata';
+    media.src = url;
+  } else {
+    media = document.createElement('img');
+    media.src = url;
+  }
   media.className = 'local-preview-media';
   ov.appendChild(el('div', 'local-preview-note', '本地文件预览 · 上传仍在继续'));
   const x = el('button', 'local-preview-close', '×');
@@ -1979,8 +2015,35 @@ function openLocalPreview(file) {
   x.onclick = (e) => { e.stopPropagation(); close(); };
   ov.appendChild(x);
   ov.appendChild(media);
+  // 放不了的时候必须说话。之前解码失败就是一块纯黑，用户只会以为「点了没反应」。
+  const err = el('div', 'local-preview-err');
+  err.style.display = 'none';
+  ov.appendChild(err);
+  const fail = (msg) => {
+    err.textContent = msg;
+    err.style.display = '';
+    media.style.display = 'none';
+  };
+  media.onerror = () => {
+    fail(video
+      ? '这个视频浏览器解不了码（多半是 iPhone 拍的 HEVC/MOV）。上传完服务端会转码，到时候就能在线播放了。'
+      : '这张图片浏览器打不开。');
+  };
   ov.onclick = (e) => { if (e.target === ov) close(); };
+  document.addEventListener('keydown', onKey);
   document.body.appendChild(ov);
+  // 起播要等元素进了 DOM 再手动调 play()：原来挂的是 autoplay 属性，
+  // 带声音的自动播放会被浏览器的 autoplay policy 直接拒掉 —— 画面就停在第一帧不动，
+  // 看起来正是「点了播放放不出来」。手动 play() 失败就退一步静音再试一次，
+  // 还不行就把 controls 留给用户自己点，至少不是死的。
+  if (video) {
+    const tryPlay = () => media.play().catch(() => {
+      media.muted = true;
+      return media.play().catch(() => {});
+    });
+    if (media.readyState >= 2) tryPlay();
+    else media.addEventListener('loadeddata', tryPlay, { once: true });
+  }
 }
 
 function buildUploadCell(file, job) {
@@ -2018,21 +2081,24 @@ function buildUploadCell(file, job) {
   // 少了它，两个视频一起传的时候用户什么都做不了 —— 既停不掉传错的那个，
   // 也没法确认自己选的到底是哪一段。
   const acts = el('div', 'up-acts');
-  const mkAct = (cls, text, title, fn) => {
-    const b = el('button', 'up-act ' + cls, text);
+  const mkAct = (cls, html, title, fn) => {
+    const b = el('button', 'up-act ' + cls);
     b.type = 'button';
+    b.innerHTML = html;
     b.title = title;
+    b.setAttribute('aria-label', title);
     b.onclick = (e) => { e.stopPropagation(); fn(b); };
     acts.appendChild(b);
     return b;
   };
-  mkAct('up-act-play', '▶', '播放本地文件（还没传完，放的是你设备里那一份）',
+  mkAct('up-act-play', UP_ACT_ICONS.play,
+        '播放本地文件（还没传完，放的是你设备里那一份）',
         () => openLocalPreview(file));
   // 暂停只对走分片的大文件有意义 —— 小文件是一次性请求，"暂停"等于从头再来，
   // 与其给一个骗人的按钮，不如不给
   let pauseBtn = null;
   if (file.size >= CHUNK_THRESHOLD) {
-    pauseBtn = mkAct('up-act-pause', '⏸', '暂停上传', () => {
+    pauseBtn = mkAct('up-act-pause', UP_ACT_ICONS.pause, '暂停上传', () => {
       const j = cell._job;
       if (!j) return;
       if (j.paused) { resumeUploadJob(j); cell._setPaused(false); }
@@ -2055,8 +2121,11 @@ function buildUploadCell(file, job) {
   cell._setPaused = (on) => {
     cell.classList.toggle('paused', !!on);
     if (pauseBtn) {
-      pauseBtn.textContent = on ? '▶' : '⏸';
+      // 继续用上传箭头，不用播放三角 —— 左边那颗才是「放本地视频」
+      pauseBtn.innerHTML = on ? UP_ACT_ICONS.resume : UP_ACT_ICONS.pause;
       pauseBtn.title = on ? '继续上传' : '暂停上传';
+      pauseBtn.setAttribute('aria-label', pauseBtn.title);
+      pauseBtn.classList.toggle('is-paused', !!on);
     }
     stage.textContent = on ? '已暂停' : '';
   };
@@ -2151,6 +2220,275 @@ function putOneChunk(sessionId, idx, blob, onLoaded, job) {
 
 // 分片上传全流程：建/复用会话 → 并发传缺的片（失败指数退避重试）→ 合并。
 // session 已经存在时（续传）只传服务端还没收到的那些片。
+// ---------- OSS 直传（浏览器 → OSS，不经过 frp 隧道） ----------
+// 为什么要有这条路：媒体走服务器中转时，全程挤在 4Mbps 的隧道里（见 ops/sync-oss.sh
+// 顶部的实测），一段 150MB 的视频最快也要 5 分钟，而且期间整站的 API 跟着排队。
+// 直传把这段流量挪到用户自己的上行带宽上，隧道只剩下签名和 complete 这两个小请求。
+//
+// 和隧道分片上传共用同一套外壳：同样的并发闸门、暂停/继续、取消、指数退避重试、
+// 断点续传。区别只有两点 ——
+//   · 分片 PUT 到 OSS 签出来的临时 URL，不带 cookie，服务端一个字节都不经手；
+//   · 「传到哪儿了」以 OSS 的 ListParts 为准，客户端说了不算（见 app.py 的 complete）。
+//
+// **走不通就回落**：桶没配 CORS、网络策略挡住 OSS 这类情况下，第一片就会失败，
+// 这时整条链路回退到原来的隧道上传 —— 用户最多觉得慢，不会传不上去。
+const OSS_DIRECT = !!(window.OSS_DIRECT || '');
+const OSS_PART_PARALLEL = 4;     // 直传不占服务端资源，比隧道那条(3)可以再放开一点
+const OSS_URL_BATCH = 64;        // 和服务端 OSS_URL_BATCH 对齐
+let ossDirectBroken = false;     // 本次会话里已经确认直传走不通，别再试第二次
+
+function ossDirectUsable() { return OSS_DIRECT && !ossDirectBroken; }
+
+function ossDirectGiveUp(why) {
+  if (ossDirectBroken) return;
+  ossDirectBroken = true;
+  // 不弹提示：对用户来说「变慢了」比「跳出一个看不懂的错误」好得多。
+  // 真要排查时这条日志说明了一切。
+  console.warn('[upload] OSS 直传不可用，本次会话回落到服务器中转：' + why);
+}
+
+// 会话是直传的还是隧道的。恢复上传时靠它决定后面所有请求该发去哪条路。
+function isOssSession(sess) { return !!(sess && sess.mode === 'oss'); }
+function uploadSessionUrl(sess) {
+  return (isOssSession(sess) ? '/api/oss-uploads/' : '/api/upload-sessions/')
+         + sess.session_id;
+}
+
+// PUT 一片到 OSS 的临时 URL。
+// 刻意**不读 ETag**：服务端 complete 时现查 ListParts，客户端报的 ETag 一概不信，
+// 于是也就不需要桶去 ExposeHeader: ETag —— 少一项 CORS 配置就少一处会配错的地方。
+function putOnePartToOss(url, blob, onLoaded, job) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    if (job) job.chunkXhrs.add(xhr);
+    let progressed = false;
+    xhr.open('PUT', url);
+    // 必须和服务端签名时用的 Content-Type 一字不差，否则 OSS 判签名不符（403）
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) { progressed = e.loaded > 0; onLoaded(e.loaded); }
+    };
+    const done = (r) => { if (job) job.chunkXhrs.delete(xhr); resolve(r); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { onLoaded(blob.size); done({ ok: true }); return; }
+      // 403 基本都是签名过期（URL 只活 1 小时），换一张新的就好，不算失败
+      done({ ok: false, expired: xhr.status === 403, status: xhr.status,
+             msg: 'OSS 拒绝了这一片（HTTP ' + xhr.status + '）' });
+    };
+    // status 0 = 请求根本没发出去或被浏览器拦下（CORS 预检没过最常见）。
+    // progressed 用来区分「一个字节都没出去」和「传到一半断网」。
+    xhr.onerror = () => done({ ok: false, status: 0, noBytes: !progressed,
+                               msg: progressed ? '网络中断' : '连不上 OSS' });
+    xhr.onabort = () => done({ ok: false, status: 0, cancelled: true, msg: '已取消' });
+    xhr.send(blob);
+  });
+}
+
+// 把浏览器本地已经解出来的那一帧/那张图传给服务端当缩略图。
+// 直传的原件要等后台回源才回到本机，缩略图本来得跟着一起等 —— 相册里会空一大片。
+// 这张图只有几十 KB，走隧道毫无压力。失败就安静放弃，回源时服务端自己会生成。
+async function uploadClientThumb(mediaId, file, cell) {
+  try {
+    const dataUrl = await clientThumbDataUrl(file, cell);
+    if (!dataUrl) return null;
+    const blob = await (await fetch(dataUrl)).blob();
+    if (!blob || blob.size < 64) return null;
+    const fd = new FormData();
+    fd.append('file', blob, 'thumb.jpg');
+    const r = await api('/api/media/' + mediaId + '/thumb', { method: 'POST', body: fd });
+    return r && r.thumb ? r.thumb : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 拿一张能当缩略图用的 dataURL。
+// 视频：占位格里那张预览就是抽好的第一帧（grabVideoPoster 存的是 dataURL），直接拿来用。
+// 照片：现画一张小的 —— 原图可能有十几 MB，不能原样当缩略图传回去。
+function clientThumbDataUrl(file, cell) {
+  const prev = cell && cell.querySelector && cell.querySelector('.up-prev');
+  if (prev && /^data:image\//.test(prev.src || '')) return Promise.resolve(prev.src);
+  if (isVideoFile(file)) return Promise.resolve(null);   // 封面没抽出来（多半是 HEVC），等回源
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    const finish = (v) => { URL.revokeObjectURL(url); resolve(v); };
+    img.onload = () => {
+      try {
+        const max = 512;
+        const s = Math.min(1, max / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round((img.naturalWidth || max) * s));
+        c.height = Math.max(1, Math.round((img.naturalHeight || max) * s));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        finish(c.toDataURL('image/jpeg', 0.8));
+      } catch (e) { finish(null); }
+    };
+    img.onerror = () => finish(null);       // HEIC 之类浏览器解不了的，等回源
+    setTimeout(() => finish(null), 4000);
+    img.src = url;
+  });
+}
+
+async function uploadDirectOss(pointId, file, cell, job) {
+  job.chunkXhrs = job.chunkXhrs || new Set();
+  let sess = isOssSession(job.session) ? job.session : null;
+  if (sess && !sess.urls) {
+    // 从「未完成」占位格恢复过来的会话只有基本信息，问一次服务端拿已传分片和 URL
+    try { sess = await api('/api/oss-uploads/' + sess.session_id); }
+    catch (err) { sess = null; }
+  }
+  if (!sess) {
+    try {
+      const fp = job.fingerprint || (job.fingerprint = await fileFingerprint(file));
+      const fd = new FormData();
+      fd.append('fingerprint', fp);
+      fd.append('filename', file.name || 'unknown');
+      fd.append('filesize', String(file.size));
+      sess = await api('/api/points/' + pointId + '/oss-uploads',
+                       { method: 'POST', body: fd });
+    } catch (err) {
+      // 建会话就失败：可能是没配 OSS（503），也可能是真出错了。
+      // 无论哪种都回落到隧道，别让用户传不上去。
+      ossDirectGiveUp('建会话失败：' + err.message);
+      return { fallback: true };
+    }
+    job.session = sess;
+  }
+  job.session = sess;
+  if (job.cancelled) return { ok: false, cancelled: true, msg: '已取消' };
+
+  const partSize = sess.part_size;
+  const total = sess.total_parts;
+  const partLen = (n) => (n < total ? partSize : file.size - partSize * (total - 1));
+  const done = new Set((sess.received || []).map((p) => p.number));
+  const flying = new Map();
+  const urls = Object.assign({}, sess.urls || {});
+
+  const persist = () => rememberUpload({
+    session_id: sess.session_id, point_id: pointId, fingerprint: job.fingerprint,
+    filename: file.name, filesize: file.size, mode: 'oss',
+    chunk_size: partSize, total_chunks: total,
+    received: Array.from(done).map((n) => n - 1),
+  });
+  const bump = () => {
+    let sent = 0;
+    done.forEach((n) => { sent += partLen(n); });
+    flying.forEach((v) => { sent += v; });
+    cell._setProgress(Math.min(1, sent / Math.max(1, file.size)));
+  };
+  persist();
+  bump();
+
+  // 按需补签 URL。一次多要一批，省往返；并发下重复要几次也无害（签名是纯计算）。
+  const signMore = async (must) => {
+    const want = [];
+    if (must) want.push(must);
+    for (let n = 1; n <= total && want.length < OSS_URL_BATCH; n++) {
+      if (n !== must && !done.has(n) && !urls[n]) want.push(n);
+    }
+    const fd = new FormData();
+    fd.append('parts', want.join(','));
+    const r = await api('/api/oss-uploads/' + sess.session_id + '/sign',
+                        { method: 'POST', body: fd });
+    Object.assign(urls, (r && r.urls) || {});
+  };
+  const urlFor = async (n) => {
+    // 过期的那张在 res.expired 分支里已经从 urls 里删掉了，这里直接重签
+    if (!urls[n]) await signMore(n);
+    return urls[n];
+  };
+
+  const queue = [];
+  for (let n = 1; n <= total; n++) if (!done.has(n)) queue.push(n);
+  let failure = null;
+  let fallback = false;
+  const it = queue[Symbol.iterator]();
+  const workers = [];
+  for (let w = 0; w < Math.min(OSS_PART_PARALLEL, queue.length || 1); w++) {
+    workers.push((async () => {
+      for (const n of it) {
+        if (failure || fallback || job.cancelled) return;
+        const blob = file.slice((n - 1) * partSize, (n - 1) * partSize + partLen(n));
+        let ok = false;
+        for (let attempt = 0; attempt <= CHUNK_RETRIES; attempt++) {
+          if (job.cancelled) return;
+          // 暂停挂在 acquire 之前：暂停中的任务不该占着连接名额
+          await uploadWaitResume(job);
+          if (job.cancelled) return;
+          let url;
+          try { url = await urlFor(n); }
+          catch (err) { failure = failure || ('签名失败：' + err.message); return; }
+          if (!url) { failure = failure || ('拿不到分片 ' + n + ' 的上传地址'); return; }
+          await uploadGate.acquire();
+          let res;
+          try {
+            res = await putOnePartToOss(url, blob,
+                                        (b) => { flying.set(n, b); bump(); }, job);
+          } finally {
+            uploadGate.release();
+          }
+          if (res.ok) { ok = true; break; }
+          flying.delete(n);
+          bump();
+          if (res.cancelled && job.paused && !job.cancelled) { attempt--; continue; }
+          if (job.cancelled) return;
+          // 一个字节都没出去 = 浏览器根本没让这个请求发出（CORS 预检没过最常见）。
+          // 再重试多少次都是一样的结果，直接整条链路回落到隧道上传。
+          if (res.noBytes && done.size === 0 && attempt >= 1) {
+            fallback = true;
+            ossDirectGiveUp(res.msg);
+            return;
+          }
+          if (res.expired) { delete urls[n]; continue; }   // 换张签名重来，不算一次失败
+          if (attempt < CHUNK_RETRIES) {
+            await uploadSleep(Math.min(8000, 500 * Math.pow(2, attempt))
+                              + Math.random() * 300);
+          }
+        }
+        if (!ok) {
+          if (fallback) return;
+          failure = failure || ('分片 ' + n + '/' + total + ' 上传失败');
+          return;
+        }
+        flying.delete(n);
+        done.add(n);
+        bump();
+        persist();
+      }
+    })());
+  }
+  await Promise.all(workers);
+
+  if (job.cancelled) return { ok: false, cancelled: true, msg: '已取消' };
+  if (fallback) {
+    // 回落之前把这个没用上的 OSS 会话撤掉，别让碎片留在云上
+    api('/api/oss-uploads/' + sess.session_id, { method: 'DELETE' }).catch(() => {});
+    forgetUpload(sess.session_id);
+    job.session = null;
+    return { fallback: true };
+  }
+  if (failure) return { ok: false, msg: failure, session: sess };
+
+  cell._setProgress(1);
+  // 直传的 complete 很轻：服务端只是让 OSS 把片拼起来，不搬字节。
+  // 真正慢的那步（把原件拉回本机）已经挪到后台了，用户不用等。
+  cell._setProcessing('收尾中…');
+  try {
+    const d = await api('/api/oss-uploads/' + sess.session_id + '/complete',
+                        { method: 'POST' });
+    forgetUpload(sess.session_id);
+    // 缩略图顺手补上（几十 KB），否则要等后台回源完才有图
+    if (d && d.id && !d.thumb) {
+      const t = await uploadClientThumb(d.id, file, cell);
+      if (t) d.thumb = t;
+    }
+    return { ok: true, data: d };
+  } catch (err) {
+    return { ok: false, msg: '收尾失败：' + err.message, session: sess };
+  }
+}
+
 async function uploadChunked(pointId, file, cell, job) {
   job.chunkXhrs = job.chunkXhrs || new Set();
   let sess = job.session;
@@ -2316,18 +2654,33 @@ function placeUploadCell(cell) {
 // 上传完只是「文件到了」。视频还要在后台转出 1080p/720p/480p 三档（transcode.py），
 // 期间只有原画可播 —— 在弱网上正是最卡的那一档。格子上挂个「转码中」的小标，
 // 转完自己消失，人就知道再等一会儿播放会变顺。
-function watchTranscode(cell, mediaId) {
+// 直传的媒体还多一段「回源存档」：原件此刻只在 OSS 上，本机要先把它拉回来，
+// 缩略图、EXIF、清晰度档位都得等那之后。所以这个轮询同时管两件事 ——
+// 把状态小标从「存档中」推进到「转码中」再到消失，以及**封面一好就换上去**
+// （直传完成时服务端还没有缩略图，格子里是空的）。
+function watchTranscode(cell, mediaId, opts) {
   if (!cell || !mediaId) return;
-  const tag = el('span', 'media-transcoding', '转码中');
+  const o = opts || {};
+  const tag = el('span', 'media-transcoding', o.backfilling ? '存档中' : '转码中');
   cell.appendChild(tag);
+  const img = cell.querySelector('img');
+  const needThumb = !!o.needThumb;
   let tries = 0;
   const tick = () => {
-    if (!cell.isConnected || tries++ > 60) { tag.remove(); return; }
+    if (!cell.isConnected || tries++ > 120) { tag.remove(); return; }
     fetch('/api/media/' + encodeURIComponent(mediaId) + '/variants')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d) { tag.remove(); return; }
-        if (d.transcoding) { setTimeout(tick, 5000); return; }
+        // 封面出来了就立刻换上，不用等用户重新打开这个点
+        if (img && d.thumb_url && (!img.getAttribute('src') || needThumb)) {
+          img.src = d.thumb_url;
+        }
+        if (d.backfilling) { tag.textContent = '存档中'; setTimeout(tick, 5000); return; }
+        if (d.transcoding) { tag.textContent = '转码中'; setTimeout(tick, 5000); return; }
+        // 回源刚做完、转码还没来得及登记档位时，d.transcoding 会短暂地是 false。
+        // 再看一眼，别把小标撤早了。
+        if (o.type === 'video' && tries < 4) { setTimeout(tick, 3000); return; }
         tag.remove();
       })
       .catch(() => { tag.remove(); });
@@ -2356,7 +2709,12 @@ function finishUploadCell(pointId, cell, m) {
     if (addCell) grid.insertBefore(real, addCell);
     else grid.appendChild(real);
   }
-  if (m.type === 'video') watchTranscode(real, m.id);
+  // 视频要盯转码；直传上来的（pending_backfill）不管照片视频都要盯回源 ——
+  // 原件还没回本机，缩略图可能也还没有。
+  if (m.type === 'video' || m.pending_backfill || !m.thumb_filename) {
+    watchTranscode(real, m.id, { type: m.type, backfilling: !!m.pending_backfill,
+                                 needThumb: !m.thumb_filename });
+  }
   detailMedia.push(m);
   lightboxMedia = detailMedia;
   syncDetailMediaOrder();
@@ -2379,7 +2737,17 @@ async function runUpload(pointId, file, cell, job) {
   };
   let res;
   try {
-    if (file.size >= CHUNK_THRESHOLD) {
+    // 先试直传。它自己判断走不通时返回 { fallback: true }，这里接着往下走老路 ——
+    // 用户看到的最多是「慢了点」，绝不会因为 OSS 配置没到位就传不上去。
+    // job.session 已经是一条隧道会话时（上一次走的老路，现在点了「↻ 重来」），
+    // 就接着老路续传，别丢掉已经传上去的那些分片改走直传。
+    if (ossDirectUsable() && (!job.session || isOssSession(job.session))) {
+      res = await uploadDirectOss(pointId, file, cell, job);
+      if (res && res.fallback) res = null;
+    }
+    if (res) {
+      /* 直传已经出结果（成功或真失败），下面两条老路都不用走 */
+    } else if (file.size >= CHUNK_THRESHOLD) {
       res = await uploadChunked(pointId, file, cell, job);
     } else {
       // 不分片的也要占一个连接名额，否则「3 个整文件 + 4 个分片」还是 7 条连接
@@ -2419,6 +2787,9 @@ async function runUpload(pointId, file, cell, job) {
     id: d.id, type: d.type, filename: d.filename,
     thumb_filename: d.thumb, caption: '',
     exif_time: d.exif_time, point_id: pointId,
+    // 直传：原件还在 OSS 上，本机要慢慢拉回来。格子据此显示「存档中」并等封面。
+    pending_backfill: !!d.pending_backfill,
+    url: d.url || undefined,
   };
   finishUploadCell(pointId, cell, m);
 }
@@ -2519,7 +2890,7 @@ function buildResumeCell(pointId, sess) {
     e.stopPropagation();
     if (!await tmConfirm('放弃这个没传完的上传？已经传上去的分片会被删除。',
                          '放弃上传', { danger: true, okText: '放弃' })) return;
-    try { await api('/api/upload-sessions/' + sess.session_id, { method: 'DELETE' }); }
+    try { await api(uploadSessionUrl(sess), { method: 'DELETE' }); }
     catch (err) { /* 会话可能已经被清理过了，照样把格子撤掉 */ }
     forgetUpload(sess.session_id);
     cell.remove();
@@ -3058,8 +3429,11 @@ function renderLightbox() {
     const item = lightboxMedia[lightboxIndex + off];
     const slide = el('div', 'lb-slide ' + cls);
     if (item) {
+      // 视频格打个标记：说明栏得给原生控制条让位，见 tmReserveCaptionSpace
+      if (item.type === 'video' && off === 0) slide.classList.add('has-video');
       slide.appendChild(buildLightboxMedia(item, off === 0));
       slide.appendChild(buildLightboxCaption(item, lightboxIndex + off));
+      tmReserveCaptionSpace(slide);
     }
     track.appendChild(slide);
   });
@@ -5496,7 +5870,8 @@ async function toggleLayerPhotos(on, silent) {
       for (let i = stackN - 1; i >= 0; i--) {
         const rot = (i - (stackN - 1)) * 7;   // 最上层 0deg，越往下越斜
         const off = (i - (stackN - 1)) * -9;  // 向下堆叠偏移
-        inner += '<img src="' + mediaUrl('/uploads/thumbs/' + photos[i].thumb) + '" ' +
+        inner += '<img src="' + (photos[i].thumb_url
+                    || mediaUrl('/uploads/thumbs/' + photos[i].thumb)) + '" ' +
                  'style="transform: translate(' + off + 'px,' + (-off) + 'px) rotate(' + rot + 'deg); z-index:' + (10 + i) + ';">';
       }
       // 角标就是「这个点一共多少张」。原来 >3 时前面多加了个 '+'（显示成 "+5"），

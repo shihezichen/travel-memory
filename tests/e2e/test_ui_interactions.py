@@ -9,6 +9,7 @@
 - 手机上顶部两条（顶栏 + 账号信息）占地方，没法收起来
 """
 import hashlib
+import json
 
 import pytest
 
@@ -194,6 +195,16 @@ def test_uploading_cell_pause_and_resume(chunky_page, e2e_user, tmp_path):
     page.wait_until(f"document.querySelector('{UPLOADING}').classList.contains('paused')",
                     timeout=5000)
     assert "已暂停" in page.text(f"{UPLOADING} .up-stage")
+    # 暂停之后「继续上传」不能长得跟旁边的「本地播放」一样 —— 以前两颗都是 ▶
+    icons = page.eval(
+        "JSON.stringify(["
+        f"document.querySelector('{UPLOADING} .up-act-play').innerHTML,"
+        f"document.querySelector('{UPLOADING} .up-act-pause').innerHTML])")
+    play_icon, resume_icon = json.loads(icons)
+    assert play_icon and resume_icon
+    assert play_icon != resume_icon, "继续上传和本地播放用了同一个图标"
+    assert "继续上传" in page.eval(
+        f"document.querySelector('{UPLOADING} .up-act-pause').title")
 
     # 暂停之后进度不许再涨（在飞的分片被 abort，也不会有新的发出去）。
     # 先等 300ms 让「点下去那一刻正好传完的那一片」落定，再取基准值。
@@ -222,8 +233,25 @@ def test_uploading_cell_plays_the_local_file(page, e2e_user, tmp_path):
     # 放的是本地那份，不是服务端的地址
     assert page.eval("document.querySelector('.local-preview video').src")\
         .startswith("blob:")
+    # 播起来了才算数：autoplay 属性会被自动播放策略拦下，必须是手动 play()
+    page.wait_until("!document.querySelector('.local-preview video').paused"
+                    " || document.querySelector('.local-preview-err')"
+                    ".style.display !== 'none'", timeout=5000)
     page.eval("document.querySelector('.local-preview-close').click()")
     page.wait_until("document.querySelectorAll('.local-preview').length === 0")
+
+
+def test_local_preview_says_so_when_the_codec_is_unsupported(page, e2e_user, tmp_path):
+    """解不了码的时候要给一句人话，不能只留一块黑屏。"""
+    _open_detail(page, e2e_user, idx=1)
+    _throttle(page)
+    page.p.set_input_files("#file-input", [_fake_video(tmp_path / "bad.mp4", 7)])
+    page.wait_for(f"{UPLOADING} .up-act-play")
+    page.eval(f"document.querySelector('{UPLOADING} .up-act-play').click()")
+    page.wait_for(".local-preview video")
+    page.wait_until("document.querySelector('.local-preview-err')"
+                    ".style.display !== 'none'", timeout=8000)
+    assert "转码" in page.text(".local-preview-err")
 
 
 def test_progress_shows_what_the_server_is_doing_after_100pct(page, e2e_user, tmp_path):

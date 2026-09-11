@@ -31,7 +31,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 import db
 import transcode
@@ -185,12 +185,46 @@ def resolve_file(media_row, quality: str, upload_dir: Path):
     return real, quality
 
 
+def _oss_redirect(media_row, quality: str):
+    """本地没有这个文件、但它在 OSS 上时，重定向过去下载。
+
+    直传上来的媒体在「回源存档」跑完之前，本机是**一个字节都没有**的
+    （见 oss_backfill.py）。这时候按老逻辑只能回 404 —— 用户刚传完想存一份
+    就说文件不存在，说不过去。OSS 对 public-read 的对象认 response-content-*
+    这组参数，所以重定向过去照样是「另存为」而不是内联播放。
+
+    只对原片这么做：转码档位本来就只存在于本机，云上没有对应对象。
+    """
+    from urllib.parse import quote as _q
+    from config import MEDIA_BASE_URL
+    if quality != "original" or not MEDIA_BASE_URL:
+        return None
+    name = media_row["filename"]
+    ext = Path(name).suffix.lower()
+    utf8_name, ascii_name = build_filenames(media_row, ext, quality)
+    disp = content_disposition(utf8_name, ascii_name)
+    url = (f"{MEDIA_BASE_URL}/uploads/{_q(name, safe='')}"
+           f"?response-content-disposition={_q(disp, safe='')}")
+    # 307 而不是 302：语义上是「同一个请求换个地址再发一次」，别让中间层把它
+    # 改写成 GET（这条本来就是 GET，但 307 的意图更明确，也不会被缓存成永久跳转）
+    return RedirectResponse(url, status_code=307)
+
+
 def build_response(media_id: int, quality: str, upload_dir: Path) -> FileResponse:
     """组装下载响应。调用方**必须**在此之前完成鉴权。"""
     m = db.get_media(media_id)
     if not m:
         raise HTTPException(404, "媒体不存在")
-    path, quality = resolve_file(m, quality, upload_dir)
+    try:
+        path, quality = resolve_file(m, quality, upload_dir)
+    except HTTPException as e:
+        # 只接「文件不存在」，别把 400/越权也顺手转成重定向
+        if e.status_code != 404:
+            raise
+        redirect = _oss_redirect(m, (quality or "original").strip() or "original")
+        if redirect is None:
+            raise
+        return redirect
 
     utf8_name, ascii_name = build_filenames(m, path.suffix.lower(), quality)
     mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"

@@ -173,3 +173,19 @@ def test_media_search_endpoint(auth_client, seeded_trip, jpeg_bytes):
     assert r.json()["count"] == 0
     r = auth_client.get(f"/api/trips/{tid}/media/search", params={"q": "西湖"})
     assert r.json()["count"] == 1
+
+
+def test_media_list_carries_server_computed_urls(auth_client, seeded_trip, jpeg_bytes):
+    """媒体列表必须带服务端算好的 url / thumb_url。
+
+    前端的 mediaUrl() 只会无脑拼 OSS 前缀，「这个文件同步上去没有」只有服务端
+    知道（config.media_url 查同步水位）。少了这两个字段，刚上传的照片在同步
+    之前一律裂图。
+    """
+    pid = seeded_trip["point_ids"][0]
+    _upload(auth_client, pid, content=jpeg_bytes())
+    items = auth_client.get(f"/api/points/{pid}/media").json()
+    assert len(items) == 1
+    m = items[0]
+    assert m["url"].endswith("/uploads/" + m["filename"])
+    assert m["thumb_url"].endswith("/uploads/thumbs/" + m["thumb_filename"])

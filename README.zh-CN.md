@@ -120,6 +120,10 @@ echo '你的安全密钥'  > amap_security.txt
 | `TRAVEL_LLM_PROVIDER` | AI 功能走哪个模型：`auto` / `claude-cli` / `anthropic-api` / `deepseek` | `auto` |
 | `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | 对应 provider 的密钥，不用 AI 功能就不用配 | 空 |
 | `TRAVEL_MEDIA_BASE_URL` | 媒体分发前缀（对象存储 / CDN 的 origin）。留空 = 媒体走本机 `/uploads/` | 空（也可写进 `media_base.txt`） |
+| `TRAVEL_OSS_DIRECT` | 浏览器直传对象存储的总开关。`0` = 关掉，完整回落到服务器中转上传 | `1`（但配置不全时自动关闭） |
+| `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK` | 直传签名用的 AK/SK。不设就读 `~/.ossutilconfig` | 空 |
+| `TRAVEL_OSS_PART_SIZE` | 直传分片大小（字节） | `8388608`（8MB） |
+| `TRAVEL_OSS_BACKFILL_WORKERS` | 回源存档的并发度。刻意留 1，别跟正在播放的人抢带宽 | `1` |
 | `DEMO_USER` | 每日重置的演示账号名（见下） | `test` |
 
 ### 演示账号每日重置（可选）
@@ -219,6 +223,61 @@ echo 'https://your-bucket.oss-cn-qingdao.aliyuncs.com' > media_base.txt
 `deploy/travel-memory-oss-sync.{service,timer}` 负责把新文件同步上去。
 注意 `/static/` **不会**进对象存储 —— 前端 JS/CSS 必须跟着代码版本走。
 
+### 5. 媒体直传对象存储（上传提速，可选）
+
+上一节解决的是**下行**（别人看你的照片/视频）。上行同样堵：浏览器把文件传到
+服务器，全程挤在同一条出口带宽上 —— 隧道入口尤其致命，一段 150MB 的视频
+理论最快也要好几分钟，期间整站 API 跟着排队。
+
+打开直传之后，浏览器把分片**直接 PUT 给 OSS**，服务端只签名和收尾，一个字节的
+媒体都不经手；原件由后台队列慢慢拉回本机做缩略图、转码和备份
+（`oss_backfill.py`，并发度 1，不跟任何人抢带宽）。
+
+需要三样东西：
+
+1. `media_base.txt` 已经填好（和上一节同一个开关，桶名/endpoint 从它反推）；
+2. AK/SK —— 默认读 `~/.ossutilconfig`（和媒体同步脚本用的是同一份凭据），
+   也可以用 `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK` 覆盖；
+3. **桶开 CORS**。这是唯一的前置条件：
+
+最省事的是去控制台点：**OSS → 选中桶 → 权限控制 → 跨域设置 → 创建规则**，
+来源填站点域名，方法勾 `PUT` / `GET` / `HEAD`，Header 填 `*`，其余默认。
+
+命令行等价写法（需要一把有 `oss:PutBucketCors` 权限的 AK，受限子账号会被拒）：
+
+```bash
+cat > cors.xml <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<CORSConfiguration>
+  <CORSRule>
+    <AllowedOrigin>https://你的域名</AllowedOrigin>
+    <AllowedMethod>PUT</AllowedMethod>
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>HEAD</AllowedMethod>
+    <AllowedHeader>*</AllowedHeader>
+    <MaxAgeSeconds>600</MaxAgeSeconds>
+  </CORSRule>
+</CORSConfiguration>
+XML
+ossutil cors --method put oss://你的桶 cors.xml
+
+# 验证：应当返回 200，而不是 "CORS is not enabled for this bucket"
+curl -i -X OPTIONS "https://你的桶.oss-cn-qingdao.aliyuncs.com/uploads/_probe" \
+     -H "Origin: https://你的域名" \
+     -H "Access-Control-Request-Method: PUT" \
+     -H "Access-Control-Request-Headers: content-type"
+```
+
+不用暴露 `ETag`：服务端合并分片时现查 ListParts，客户端报的 ETag 一概不信，
+所以前端根本不读这个响应头 —— 少一项 CORS 配置就少一处会配错的地方。
+
+没配 CORS 也不会坏：前端第一片就会拿到「零字节失败」，自动整条回落到原来的
+服务器中转上传（`ossDirectGiveUp`），用户只是感觉不到提速。
+想临时关掉直传：`TRAVEL_OSS_DIRECT=0`。
+
+`/health` 会报 `oss_direct` 和 `oss_backfill` 队列水位，能一眼看出直传有没有生效、
+还有多少原件没拉回本机。
+
 ## 项目结构
 
 ```
@@ -228,6 +287,8 @@ config.py              跨模块共享的静态配置（高德 Key、OSRM、媒�
 media.py               缩略图 / EXIF / 视频抽帧
 transcode.py           视频清晰度分层转码（faststart + 1080p/720p/480p，后台线程）
 download.py            媒体「另存为」：文件名拼装 + RFC 5987 编码 + quality 白名单
+oss.py                 OSS V1 签名 + 分片直传（浏览器 → OSS，不经过服务器）
+oss_backfill.py        直传之后把对象拉回本机存档（后台队列，补缩略图/EXIF/转码）
 mcp_http.py            MCP Streamable HTTP 端点（34 个工具 → 领域 API 的路由表）
 mcp_server.py          MCP stdio 版本
 companion.py           伴随进程（定时任务）+ 工具清单（TOOLS）的唯一定义处

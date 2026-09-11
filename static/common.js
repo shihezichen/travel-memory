@@ -21,6 +21,34 @@ function mediaUrl(path) {
   return base && path.indexOf('/uploads/') === 0 ? base + path : path;
 }
 
+// 一条媒体的对外地址。优先用服务端算好的 m.url / m.thumb_url ——
+// 只有服务端知道这个文件同步到 OSS 没有（见 config.media_url 的水位判断）；
+// 前端这个 mediaUrl 是无脑拼前缀，刚传完的文件拼出来就是 404。
+// 老接口 / 没带 url 字段的旧数据退回自己拼，保持能用。
+function mediaSrc(m, kind, qs) {
+  const q = qs || '';
+  if (kind === 'thumb') {
+    if (m && m.thumb_url) return m.thumb_url + q;
+    return m && m.thumb_filename ? mediaUrl('/uploads/thumbs/' + m.thumb_filename) + q : '';
+  }
+  if (m && m.url) return m.url + q;
+  return m && m.filename ? mediaUrl('/uploads/' + m.filename) + q : '';
+}
+
+// OSS 上还没有（水位判断失手、或者同步那一趟正好失败）时回退到本机那份。
+// 水位是第一道防线，这是第二道：服务端判断错了也不该在页面上留一块裂图。
+function mediaFallbackToLocal(elm, localPath) {
+  if (!elm || !localPath) return;
+  elm.addEventListener('error', function onErr() {
+    const src = elm.currentSrc || elm.src || '';
+    // 已经是本机路径还报错，那就是文件真没了，别再兜圈子
+    if (!src || src.indexOf(location.origin) === 0) return;
+    elm.removeEventListener('error', onErr);
+    elm.src = localPath;
+    if (elm.tagName === 'VIDEO') { try { elm.load(); } catch (e) {} }
+  });
+}
+
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -306,7 +334,7 @@ function tmSwitchQuality(v, url) {
 function tmFallbackQualities(m) {
   return [{
     label: 'original', name: '原画', status: 'done',
-    url: mediaUrl('/uploads/' + m.filename + '?v=1'),
+    url: mediaSrc(m, 'full', '?v=1'),
   }];
 }
 
@@ -390,7 +418,9 @@ function tmSetupQuality(wrap, v, m) {
 
   // 选默认档并起播
   current = tmPickQuality(qualities);
-  v.src = (current && current.url) || mediaUrl('/uploads/' + m.filename + '?v=1');
+  v.src = (current && current.url) || mediaSrc(m, 'full', '?v=1');
+  // 原画档还没同步到 OSS 时，回退本机那份（转码档位 variants 同理，由上面的 url 决定）
+  mediaFallbackToLocal(v, '/uploads/' + m.filename + '?v=1');
   render();
 
   // 还有档位在转码 → 轮询刷新（转好了菜单里就能选了）。
@@ -597,6 +627,39 @@ function tmLightboxIdleTapGuard() {
 })();
 
 // 造一格媒体。只有当前这格的视频才自动播放，相邻格预载但不出声。
+// 视频格：把说明栏占的高度从舞台里让出来，别压在 <video> 的原生控制条上。
+//
+// 说明栏是 `position:absolute; bottom:0` 铺满整格底部的一条渐变，而视频
+// `max-height:100%` 时它的原生控制条正好在同一个位置 —— 于是点控制条右下角的
+// 全屏按钮，点到的其实是说明栏，主页面上还会因此弹出「添加描述」。
+// 修法是把 .lb-slide 的 padding-bottom 撑到说明栏的实际高度，视频被顶上去，
+// 两者不再重叠。说明栏展开/收起、改完描述都会变高，所以用 ResizeObserver 跟着量。
+//
+// 注意：说明栏是绝对定位的，它的 left/right/bottom 参照的是 .lb-slide 的
+// **padding 边**，改 padding 不会反过来改变它的尺寸 —— 不存在互相触发的死循环。
+const LB_SLIDE_PAD_BOTTOM = '4vh';     // 与 style.css 里 .lb-slide 的 padding 保持一致
+function tmReserveCaptionSpace(slide) {
+  if (!slide || !slide.classList.contains('has-video')) return;
+  const cap = slide.querySelector('.lb-caption');
+  if (!cap) return;
+  let last = -1;
+  const apply = () => {
+    const h = Math.round(cap.offsetHeight);
+    if (h === last) return;
+    last = h;
+    slide.style.paddingBottom = 'calc(' + LB_SLIDE_PAD_BOTTOM + ' + ' + h + 'px)';
+  };
+  apply();
+  // 首帧量到 0 是常态（灯箱刚从 display:none 变可见），补量几次
+  requestAnimationFrame(apply);
+  setTimeout(apply, 120);
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(apply);
+    ro.observe(cap);
+    slide._capRO = ro;                 // 换格时 stage.innerHTML='' 会让它自然失效
+  }
+}
+
 function buildLightboxMedia(m, isCurrent) {
   if (m.type === 'video') {
     // 只有「当前这一格」才真的建 <video>。相邻格用缩略图占位——否则浏览器
@@ -606,7 +669,8 @@ function buildLightboxMedia(m, isCurrent) {
       ph.className = 'lightbox-media lb-video-poster';
       if (m.thumb_filename) {
         const im = document.createElement('img');
-        im.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
+        im.src = mediaSrc(m, 'thumb');
+        mediaFallbackToLocal(im, '/uploads/thumbs/' + m.thumb_filename);
         ph.appendChild(im);
       }
       ph.appendChild(Object.assign(document.createElement('span'),
@@ -630,12 +694,16 @@ function buildLightboxMedia(m, isCurrent) {
     return wrap;
   }
   const img = document.createElement('img');
-  img.src = mediaUrl('/uploads/' + m.filename);
+  img.src = mediaSrc(m, 'full');
   img.className = 'lightbox-media';
-  // 原图缺失（历史数据/文件丢失）时回退缩略图，避免白屏
+  // 依次回退：OSS 原图 → 本机原图（还没同步上去）→ 缩略图（原图是真的没了）
+  let tried = 0;
   img.onerror = () => {
-    if (m.thumb_filename && img.src.indexOf('/thumbs/') === -1) {
-      img.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
+    tried += 1;
+    if (tried === 1 && m.filename && img.src.indexOf(location.origin) !== 0) {
+      img.src = '/uploads/' + m.filename;
+    } else if (m.thumb_filename && img.src.indexOf('/thumbs/') === -1) {
+      img.src = mediaSrc(m, 'thumb');
     }
   };
   return img;

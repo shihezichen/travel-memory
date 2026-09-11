@@ -221,6 +221,24 @@ CREATE INDEX IF NOT EXISTS idx_upload_sessions_updated ON upload_sessions(update
 -- 已收到的分片。刻意用「一行一个分片」而不是在 upload_sessions 里存一个 JSON 位图：
 -- 同一个文件的多个分片是并发上传的，JSON 列会退化成读-改-写，丢更新是必然的。
 -- 拆成独立行之后每个分片各写各的，靠主键做幂等（重传同一片 = INSERT OR REPLACE）。
+-- OSS 直传之后的「回源存档」队列。
+-- 直传的文件只在 OSS 上，本机一个字节都没有；缩略图、EXIF、转码档位都还得靠本地
+-- 那份原件，备份更是只能存在本地。所以每传成功一个对象就在这里排一条，
+-- 后台线程（oss_backfill.py）慢慢把它拉回 uploads/ 再补完这些收尾动作。
+-- 状态存库而不是只存内存：进程重启后没拉完的必须还能接着拉。
+CREATE TABLE IF NOT EXISTS oss_backfill (
+    media_id INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+    oss_key TEXT NOT NULL,
+    filesize INTEGER,
+    mtype TEXT,
+    status TEXT DEFAULT 'pending',             -- pending / running / done / error
+    attempts INTEGER DEFAULT 0,
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_oss_backfill_status ON oss_backfill(status, updated_at);
+
 CREATE TABLE IF NOT EXISTS upload_chunks (
     session_id TEXT NOT NULL REFERENCES upload_sessions(session_id) ON DELETE CASCADE,
     idx INTEGER NOT NULL,
@@ -314,6 +332,15 @@ def init_db():
             conn.execute("ALTER TABLE media_variants ADD COLUMN error TEXT")
         if "updated_at" not in variant_cols:
             conn.execute("ALTER TABLE media_variants ADD COLUMN updated_at TEXT")
+    # 兼容旧库：upload_sessions 补直传要用的两列。
+    # 走直传的会话不落 upload_chunks（分片直接进 OSS，本机不经手），
+    # 「传到哪儿了」以 OSS 的 ListParts 为准。
+    us_cols = [r["name"] for r in conn.execute("PRAGMA table_info(upload_sessions)")]
+    if us_cols:
+        if "oss_key" not in us_cols:
+            conn.execute("ALTER TABLE upload_sessions ADD COLUMN oss_key TEXT")
+        if "oss_upload_id" not in us_cols:
+            conn.execute("ALTER TABLE upload_sessions ADD COLUMN oss_upload_id TEXT")
     # 兼容旧库：users 若无 last_trip_id 列则补上（记住上次打开的行程，跨设备生效）
     user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
     if "last_trip_id" not in user_cols:
@@ -1375,6 +1402,125 @@ def abort_upload_session(session_id):
                  "updated_at=datetime('now','localtime') WHERE session_id=?",
                  (session_id,))
     conn.execute("DELETE FROM upload_chunks WHERE session_id=?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+def create_oss_upload_session(session_id, point_id, owner_id, fingerprint, filename,
+                              filesize, chunk_size, total_chunks, mtype,
+                              oss_key, oss_upload_id):
+    """建一条走 OSS 直传的会话。和 create_upload_session 的区别只在多存两列。"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO upload_sessions(session_id, point_id, owner_id, fingerprint, "
+        "filename, filesize, chunk_size, total_chunks, mtype, oss_key, oss_upload_id) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (session_id, point_id, owner_id, fingerprint, filename,
+         filesize, chunk_size, total_chunks, mtype, oss_key, oss_upload_id),
+    )
+    conn.commit()
+    conn.close()
+    return session_id
+
+
+# ---------- OSS 回源队列 ----------
+
+def enqueue_oss_backfill(media_id, oss_key, filesize=None, mtype=None):
+    """排一条「把这个对象拉回本地」。重复排队是幂等的（主键覆盖，状态复位）。"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO oss_backfill(media_id, oss_key, filesize, mtype, status) "
+        "VALUES(?,?,?,?,'pending') "
+        "ON CONFLICT(media_id) DO UPDATE SET oss_key=excluded.oss_key, "
+        "filesize=excluded.filesize, mtype=excluded.mtype, status='pending', "
+        "error=NULL, updated_at=datetime('now','localtime')",
+        (media_id, oss_key, filesize, mtype),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_oss_backfill(media_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM oss_backfill WHERE media_id=?",
+                       (media_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_oss_backfill(status=None, limit=200):
+    conn = get_conn()
+    if status:
+        rows = conn.execute(
+            "SELECT * FROM oss_backfill WHERE status=? ORDER BY created_at LIMIT ?",
+            (status, limit)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM oss_backfill ORDER BY created_at LIMIT ?", (limit,)).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def take_oss_backfill(media_id) -> bool:
+    """把一条从 pending/error 抢成 running。抢到返回 True。
+
+    条件写在 UPDATE 的 WHERE 里，靠 SQLite 的行锁做互斥 —— 两个 worker 同时抢，
+    只有一个的 rowcount 会是 1。
+    """
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE oss_backfill SET status='running', attempts=attempts+1, "
+        "updated_at=datetime('now','localtime') "
+        "WHERE media_id=? AND status IN ('pending','error')", (media_id,))
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return n == 1
+
+
+def finish_oss_backfill(media_id, ok=True, error=None):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE oss_backfill SET status=?, error=?, "
+        "updated_at=datetime('now','localtime') WHERE media_id=?",
+        ("done" if ok else "error", None if ok else (error or "")[:500], media_id))
+    conn.commit()
+    conn.close()
+
+
+def reset_running_oss_backfill():
+    """进程启动时把上次崩在 running 的复位回 pending —— 否则它们永远没人管。"""
+    conn = get_conn()
+    conn.execute("UPDATE oss_backfill SET status='pending', "
+                 "updated_at=datetime('now','localtime') WHERE status='running'")
+    conn.commit()
+    conn.close()
+
+
+def update_media_after_backfill(media_id, thumb_filename=None,
+                                exif_time=None, exif_lat=None, exif_lng=None):
+    """回源拿到本地文件之后补写缩略图名和 EXIF。
+
+    只覆盖「本来就空着」的列：用户可能已经手工调过位置/时间，回源是后来才发生的，
+    不能拿 EXIF 把人家改过的值顶掉。
+    """
+    conn = get_conn()
+    conn.execute(
+        "UPDATE media SET "
+        "thumb_filename = COALESCE(thumb_filename, ?), "
+        "exif_time      = COALESCE(exif_time, ?), "
+        "exif_lat       = COALESCE(exif_lat, ?), "
+        "exif_lng       = COALESCE(exif_lng, ?) "
+        "WHERE id=?",
+        (thumb_filename, exif_time, exif_lat, exif_lng, media_id))
+    conn.commit()
+    conn.close()
+
+
+def set_media_thumb(media_id, thumb_filename):
+    conn = get_conn()
+    conn.execute("UPDATE media SET thumb_filename=? WHERE id=?",
+                 (thumb_filename, media_id))
     conn.commit()
     conn.close()
 

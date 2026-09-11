@@ -48,12 +48,65 @@ if _media_base_file.exists():
 MEDIA_BASE_URL = os.environ.get("TRAVEL_MEDIA_BASE_URL", MEDIA_BASE_URL).rstrip("/")
 
 
+# 同步水位：ops/sync-oss.sh 每跑完一趟，就把「本趟开始的时刻」写进这个文件。
+# 含义是「mtime 早于这个时刻的本地文件，都已经在 OSS 上了」——
+# 取开始而不是结束，是因为同步途中新落盘的文件不保证被那一趟扫到。
+OSS_WATERMARK_FILE = BASE / "logs" / "oss-sync-watermark"
+UPLOAD_ROOT = BASE / "uploads"
+
+_wm_cache = {"at": 0.0, "value": None}
+
+
+def _oss_watermark() -> float | None:
+    """读同步水位，带 2 秒缓存。
+
+    没有水位文件 = 没在跑同步（或刚部署），这时**不做判断**，返回 None 让
+    media_url 保持老行为（一律指 OSS）—— 宁可沿用既有行为，也不要因为
+    缺一个文件就把所有媒体流量全导回 4Mbps 的隧道。
+    """
+    import time
+    now = time.monotonic()
+    if now - _wm_cache["at"] < 2.0:
+        return _wm_cache["value"]
+    try:
+        val = float(OSS_WATERMARK_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        val = None
+    _wm_cache["at"] = now
+    _wm_cache["value"] = val
+    return val
+
+
+def _synced_to_oss(path: str) -> bool:
+    """这个 /uploads/ 路径对应的文件，是否已经同步到 OSS 了。"""
+    wm = _oss_watermark()
+    if wm is None:
+        return True                       # 没水位就别拦，见 _oss_watermark
+    rel = path[len("/uploads/"):].split("?", 1)[0]
+    if not rel or ".." in rel:
+        return True
+    try:
+        return (UPLOAD_ROOT / rel).stat().st_mtime <= wm
+    except OSError:
+        # 本地没有这个文件：可能是历史数据、可能本地被清理过，云端反而有。
+        # 指回本机只会拿到 404，指 OSS 至少还有机会命中。
+        return True
+
+
 def media_url(path: str) -> str:
     """把站内 /uploads/ 路径转成对外 URL。
 
     只认 /uploads/ 前缀 —— /static/ 是应用自己的 JS/CSS，必须跟着代码版本走，
     不能进对象存储（否则发版后前端和后端会不同步）。
+
+    **刚上传还没同步到 OSS 的文件，返回本机路径**。媒体是「先落本地磁盘，
+    再由 ops/sync-oss.sh 每 2 分钟增量推上去」，中间有最长 2 分多钟的空窗；
+    原来这里无条件拼 OSS 前缀，于是刚传完的照片/视频封面全是裂图，
+    要等下一趟同步才自己好。走本机那一下虽然占隧道带宽，但只是这几分钟内
+    刚传的那几个文件，同步完就自动切回 OSS。
     """
     if MEDIA_BASE_URL and path.startswith("/uploads/"):
+        if not _synced_to_oss(path):
+            return path
         return MEDIA_BASE_URL + path
     return path
