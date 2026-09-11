@@ -2213,3 +2213,16 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
   pointer-events: auto;
 }
 .login-box .icp-footer a { background: none; padding: 0; }
+
+/* 版本漂移提示条：页面还跑着旧 JS 时贴在底部，点一下带缓存绕过参数重载。
+   放底部而不是顶部——顶部是地图和搜索栏，横插一条会把布局顶下去。 */
+.stale-assets-bar {
+  position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 10000; display: flex; align-items: center; gap: 10px; justify-content: center;
+  background: #1f2937; color: #fff; border-radius: 10px; padding: 10px 14px;
+  font-size: 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, .28);
+}
+.stale-assets-reload {
+  flex: none; border: 0; border-radius: 7px; padding: 6px 14px;
+  background: #2563eb; color: #fff; font-size: 14px; cursor: pointer;
+}

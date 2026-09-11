@@ -252,8 +252,44 @@ function saveMapView() {
 }
 // 轻提示（右下角浮一条，自动消失）
 let _toastTimer = null;
+// ---------- 版本漂移检测 ----------
+// 加到桌面的 PWA / 一直没关的标签页可能几天不重新加载 index.html，于是一直跑着
+// 旧 JS：新功能到不了它手上，新修的 bug 在它那儿还在。2026-09-11 就踩了一次
+// （角标不刷新、上传还在走隧道）。自己的版本号从本脚本的 ?v= 里读，服务端在每个
+// /api 响应上带 X-Asset-Version，一比对上不一致就提示刷新——只提示一次，不强刷。
+const MY_ASSET_V = (function () {
+  const src = (document.currentScript && document.currentScript.src) || '';
+  const m = src.match(/[?&]v=([^&]+)/);
+  return m ? m[1] : '';
+})();
+let _staleNoticed = false;
+
+function noticeStaleAssets() {
+  if (_staleNoticed) return;
+  _staleNoticed = true;
+  const bar = el('div', 'stale-assets-bar');
+  bar.appendChild(el('span', '', '页面版本已更新，刷新后才是最新功能'));
+  const btn = el('button', 'stale-assets-reload', '刷新');
+  btn.type = 'button';
+  // reload(true) 早就不做强刷了；改成给地址加一个一次性查询串，绕过所有中间缓存
+  btn.onclick = () => {
+    const u = new URL(location.href);
+    u.searchParams.set('_r', Date.now().toString(36));
+    location.replace(u.toString());
+  };
+  bar.appendChild(btn);
+  document.body.appendChild(bar);
+}
+
+function checkAssetVersion(res) {
+  if (!MY_ASSET_V) return;                       // 没带版本号（本地直接开文件）就别管
+  const v = res.headers.get('X-Asset-Version');
+  if (v && v !== MY_ASSET_V) noticeStaleAssets();
+}
+
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
+  checkAssetVersion(res);
   if (res.status === 401) {
     showLogin();
     throw new Error('未登录或令牌无效');
@@ -2112,11 +2148,33 @@ function buildUploadCell(file, job) {
   });
   cell.appendChild(acts);
 
+  // 实时速率 + 剩余时间。为什么值得占这一行字：「上传有点慢」这句话里，
+  // 慢在自己的上行、慢在服务端、还是根本卡住了，用户没有任何线索可以判断；
+  // 一个 380KB/s·还剩 2 分钟，比一个只会往前爬的百分比有用得多。
+  // EWMA 平滑：瞬时值在手机网络上跳得没法看，α=0.3 大约是「看最近 3 秒」。
+  let spd = null;
+  const fmtRate = (bps) => (bps >= 1024 * 1024
+    ? (bps / (1024 * 1024)).toFixed(1) + ' MB/s'
+    : Math.round(bps / 1024) + ' KB/s');
+  const fmtEta = (sec) => (sec >= 3600 ? '>1 小时'
+    : sec >= 60 ? Math.round(sec / 60) + ' 分' : Math.max(1, Math.round(sec)) + ' 秒');
   cell._setProgress = (p) => {
     const fg = ring.querySelector('.up-fg');
     const pct = ring.querySelector('.up-pct');
     if (fg) fg.setAttribute('stroke-dashoffset', String(94.25 * (1 - Math.max(0, Math.min(1, p)))));
     if (pct) pct.textContent = Math.round(p * 100) + '%';
+    if (cell.classList.contains('processing') || cell.classList.contains('paused')) return;
+    const now = Date.now();
+    const sent = Math.max(0, Math.min(1, p)) * file.size;
+    if (!spd) { spd = { t: now, sent: sent, bps: 0 }; return; }
+    const dt = (now - spd.t) / 1000;
+    if (dt < 0.8) return;                       // 采样太密只会放大抖动
+    const inst = Math.max(0, sent - spd.sent) / dt;
+    spd.bps = spd.bps ? spd.bps * 0.7 + inst * 0.3 : inst;
+    spd.t = now; spd.sent = sent;
+    if (spd.bps < 1024) { stage.textContent = ''; return; }   // 刚起步/停滞时不报数
+    const left = (file.size - sent) / spd.bps;
+    stage.textContent = fmtRate(spd.bps) + ' · 还剩 ' + fmtEta(left);
   };
   cell._setPaused = (on) => {
     cell.classList.toggle('paused', !!on);

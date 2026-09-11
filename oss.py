@@ -335,3 +335,65 @@ def plan_parts(filesize: int, part_size: int = None) -> tuple:
         ps *= 2
         total = (size + ps - 1) // ps
     return ps, total
+
+
+# ---------------------------------------------------------------- 本机文件直推
+
+def put_object(key: str, path, content_type: str = "", cache_control: str = None) -> dict:
+    """把本机一个文件整体 PUT 上去（覆盖同名对象）。返回 {'etag', 'url'}。
+
+    单次 PUT 的上限是 5GB，而上传接口对视频的限额远在这之下，所以不用分片。
+    body 直接传文件对象，httpx 会流式读，不会把几百 MB 抓进内存。
+    """
+    path = Path(path)
+    ct = content_type or guess_content_type(path.name)
+    headers = {"Content-Length": str(path.stat().st_size)}
+    if cache_control:
+        headers["Cache-Control"] = cache_control
+    with open(path, "rb") as f:
+        r = _request("PUT", key, content_type=ct, data=f, extra_headers=headers)
+    return {"etag": (r.headers.get("etag") or "").strip('"'), "url": object_url(key)}
+
+
+def publish_local(path, upload_root=None) -> bool:
+    """把 uploads/ 下的一个文件立刻推到 OSS，并把 mtime 压到同步水位以下。
+
+    为什么需要它（这是实打实踩过的一条路）：直传的原片本来已经在 OSS 上了，
+    但 transcode.ensure_faststart 会**原地重写**它（moov 前移），于是
+      1. 本地 mtime 变新 → config._synced_to_oss() 判定「还没同步」→
+         media_url 把链接指回本机 → 播放流量重新挤回 4Mbps 的 frp 隧道；
+      2. 要等下一趟 ops/sync-oss.sh（每 2 分多钟一趟）扫到才恢复。
+    档位文件（variants/）刚转出来时同理。字节数和 sync-oss 稍后要传的完全一样，
+    只是把时机从「最多两分半之后」提前到「转完就传」，那个回落窗口直接没有了。
+
+    缓存策略和 ops/sync-oss.sh 对齐：variants/ 一年 immutable，其余 1 天。
+    返回 True = 已推上去。任何一步失败都只记日志返回 False —— sync-oss 还会兜底。
+    """
+    import config
+    path = Path(path)
+    root = Path(upload_root or config.UPLOAD_ROOT)
+    if not direct_upload_enabled():
+        return False
+    try:
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        log.debug("publish_local 跳过（不在 uploads/ 下）：%s", path)
+        return False
+    cc = ("public, max-age=31536000, immutable" if rel.startswith("variants/")
+          else "public, max-age=86400")
+    try:
+        put_object("uploads/" + rel, path, cache_control=cc)
+    except Exception as e:
+        log.warning("直推 OSS 失败（等 sync-oss 兜底）%s: %s", rel, e)
+        return False
+    # 推上去了就把 mtime 压到水位以下，media_url 才会继续指向 OSS
+    # （同样的理由见 oss_backfill._touch_from_oss）。没有水位文件时不用动。
+    wm = config._oss_watermark()
+    if wm is not None:
+        try:
+            ts = min(path.stat().st_mtime, wm - 1)
+            os.utime(path, (ts, ts))
+        except OSError as e:
+            log.debug("publish_local 对齐 mtime 失败 %s: %s", rel, e)
+    log.info("已直推 OSS: %s", rel)
+    return True

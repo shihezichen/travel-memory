@@ -73,3 +73,57 @@ def amap_key_notice_html() -> str:
 def _route_cache_key(from_lng, from_lat, to_lng, to_lat):
     """路线缓存键：同一对端点（坐标 6 位小数 ≈ 0.1m 精度）的驾车路线共享缓存。"""
     return f"drive|{from_lng:.6f},{from_lat:.6f}|{to_lng:.6f},{to_lat:.6f}"
+
+
+# ---------------------------------------------------------------- 静态资源版本号
+# 为什么要自动算：index.html 里那串 `?v=20260911v6` 原来是手写的，而 /static 对带
+# `v=` 的请求回 `max-age=31536000, immutable`。2026-09-11 就真的踩了一次：
+# 08:08 的提交把版本号从 v4 改到 v6，10:50 的「直传 OSS」又改了 app.js + common.js
+# 却**忘了再改版本号** —— 于是 08:08 之后打开过页面的浏览器把 v6 那份 JS 锁死缓存
+# 一年，直传代码永远到不了它手上。库里留着证据：11:18 和 11:21 两次上传的
+# upload_sessions 行 oss_key 是 NULL（走的还是隧道分片那条老路）。
+#
+# 所以版本号改成从文件本身算出来：内容一变，URL 必然变；不变就继续吃缓存。
+# 忘记手动 bump 这个失败模式从此不存在。
+import hashlib
+import re
+from pathlib import Path
+
+_STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+# 参与版本号计算的文件。只放**会被 ?v= 引用**的那几个，别把整个 static/ 扫一遍
+# （里面有图标、places-zh-en.json 这些几百 KB 的东西，每次请求都 stat 一遍不值当）。
+_VERSIONED_ASSETS = ("app.js", "common.js", "share.js", "style.css")
+_ASSET_V_RE = re.compile(r"(?<=[?&])v=[0-9A-Za-z._-]+")
+_asset_v_cache = {"at": 0.0, "value": ""}
+
+
+def asset_version() -> str:
+    """静态资源版本号 = 几个文件的 (名字, mtime_ns, 大小) 的短哈希。带 5 秒缓存。
+
+    用 mtime+size 而不是读文件内容算 sha：这几个文件加起来 400KB+，每次 GET /
+    都读一遍没必要；mtime_ns 的精度足够区分任何一次真实改动。
+    """
+    import time
+    now = time.monotonic()
+    if now - _asset_v_cache["at"] < 5.0 and _asset_v_cache["value"]:
+        return _asset_v_cache["value"]
+    h = hashlib.sha256()
+    for name in _VERSIONED_ASSETS:
+        p = _STATIC_DIR / name
+        try:
+            st = p.stat()
+            h.update(f"{name}:{st.st_mtime_ns}:{st.st_size};".encode())
+        except OSError:
+            h.update(f"{name}:missing;".encode())   # 文件不在也要参与，别悄悄同版
+    v = h.hexdigest()[:12]
+    _asset_v_cache.update({"at": now, "value": v})
+    return v
+
+
+def stamp_assets(html: str) -> str:
+    """把 HTML 里所有 `?v=xxx` 换成当前的资源版本号。
+
+    直接正则替换而不是留一个 `__ASSET_V__` 占位符：占位符同样要靠人记得写，
+    而模板里本来就已经有 `?v=` 了 —— 认这个既有写法，漏不掉。
+    """
+    return _ASSET_V_RE.sub("v=" + asset_version(), html)

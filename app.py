@@ -1,6 +1,9 @@
 """旅行记忆系统 — FastAPI 主入口（多用户版）"""
 import io
 import os
+import collections
+import datetime
+import logging
 import base64
 import json
 import time
@@ -208,6 +211,18 @@ async def auth_middleware(request: Request, call_next):
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
 
+# ---------- 资源版本号广播 ----------
+# 已经开着的页面（尤其是加到桌面的 PWA）可能几天都不重新加载 index.html，于是
+# 一直跑着旧 JS —— 2026-09-11 的「角标不刷新 / 还在走隧道上传」就是这么来的。
+# 每个 /api 响应都带上当前版本号，前端 api() 一比对不一致就提示刷新（见 app.js）。
+@app.middleware("http")
+async def asset_version_header_middleware(request: Request, call_next):
+    resp = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        resp.headers["X-Asset-Version"] = asset_version()
+    return resp
+
+
 # ---------- 规范域名跳转（www.top001.xin -> top001.xin）----------
 # 注意注册顺序：Starlette 里后注册的中间件在**外层**，所以这段必须写在
 # auth_middleware 之后 —— 它要在鉴权之前跑，否则 www 上的请求会先吃一个 401，
@@ -249,7 +264,9 @@ def health():
             "llm_provider": llm_provider.resolve_provider(),
             # 直传是否可用 + 还有多少对象没拉回本机存档
             "oss_direct": oss.direct_upload_enabled(),
-            "oss_backfill": oss_backfill.queue_status() if db_ok else None}
+            "oss_backfill": oss_backfill.queue_status() if db_ok else None,
+            # 最近几次上传的实测速率（见 _note_upload_speed）
+            "recent_uploads": list(_upload_stats)}
     return JSONResponse(body, status_code=200 if db_ok else 503)
 
 
@@ -325,6 +342,7 @@ def gate_login(request: Request, password: str = Form(...)):
 from routers.deps import (  # noqa: F401
     current_user, require_owner, _public_user,
     amap_version, amap_key_notice_html, _route_cache_key,
+    asset_version, stamp_assets,
 )
 
 
@@ -510,6 +528,8 @@ def index(request: Request):
     html = html.replace("__AMAP_VERSION__", amap_version(request))
     html = html.replace("__ICP_FOOTER__", icp_footer_html())
     html = html.replace("<body>", "<body>" + amap_key_notice_html(), 1)
+    # 静态资源版本号由文件 mtime/size 算出来，不再手写（见 deps.asset_version）
+    html = stamp_assets(html)
     return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
@@ -1317,6 +1337,7 @@ def api_complete_upload_session(request: Request, session_id: str):
 
         payload = register_uploaded_file(sess["point_id"], src_path, mtype)
         db.finish_upload_session(sess["session_id"], payload["id"])
+    _note_upload_speed(sess, "tunnel")     # 和直传的数字放一起比，才看得出隧道有多贵
     _drop_session_files(sess["session_id"])
     return payload
 
@@ -1345,6 +1366,36 @@ def api_abort_upload_session(request: Request, session_id: str):
 # 归属校验和分片上传一样，**每个请求都做**，不是只在建会话时查一次。
 
 OSS_URL_BATCH = 64          # 一次最多签这么多片的 URL，剩下的客户端再来要
+
+# 最近几次上传的实测速率。为什么要有它：「上传有点慢」这句话里，慢在用户自己的
+# 上行、慢在 4Mbps 的 frp 隧道、还是慢在服务端，光看代码永远分不出来 ——
+# 2026-09-11 排查时是靠翻 OSS 的 ListParts 时间戳才算出那次是 61KB/s 的。
+# 现在每次上传完成直接记一条，/health 里能看到，下次不用再做考古。
+log = logging.getLogger("travel.upload")
+
+UPLOAD_STATS_KEEP = 20
+_upload_stats = collections.deque(maxlen=UPLOAD_STATS_KEEP)
+
+
+def _note_upload_speed(sess: dict, via: str):
+    """按「会话创建 → 现在」算一次上传的端到端速率，记进环形缓冲和日志。
+
+    起点取会话创建时刻而不是第一片开始：用户中途暂停/切后台的时间也算进去 ——
+    那正是我们想看见的东西（体感慢就是慢，不管慢在哪个环节）。
+    """
+    try:
+        t0 = datetime.datetime.strptime(str(sess["created_at"]), "%Y-%m-%d %H:%M:%S")
+        secs = max(0.001, (datetime.datetime.now() - t0).total_seconds())
+        mb = int(sess["filesize"] or 0) / (1024 * 1024)
+        rec = {"at": datetime.datetime.now().strftime("%m-%d %H:%M:%S"),
+               "via": via, "file": str(sess["filename"] or "")[-40:],
+               "mb": round(mb, 1), "secs": round(secs, 1),
+               "kbps": round(mb * 1024 / secs, 1)}
+        _upload_stats.append(rec)
+        log.info("上传完成 via=%s %s %.1fMB 用时 %.0fs = %.0f KB/s",
+                 via, rec["file"], mb, secs, rec["kbps"])
+    except Exception as e:                     # 埋点绝不能影响上传本身
+        log.debug("上传埋点失败: %s", e)
 
 
 def _oss_session(request: Request, session_id: str) -> dict:
@@ -1537,6 +1588,7 @@ def api_complete_oss_upload(request: Request, session_id: str):
         # （前端会先把自己在本地抽的那一帧传上来，见 /api/media/{id}/thumb）。
         mid = db.add_media(sess["point_id"], mtype, stored_name, None, None, None, None)
         db.finish_upload_session(sess["session_id"], mid)
+    _note_upload_speed(sess, "oss-direct")
     oss_backfill.enqueue(mid, sess["oss_key"], int(sess["filesize"]), mtype)
     return {
         "id": mid, "type": mtype, "filename": stored_name,

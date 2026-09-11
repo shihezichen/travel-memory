@@ -30,6 +30,7 @@ import transcode
 from config import AMAP_KEY, AMAP_SECURITY, OSRM_URL, MEDIA_BASE_URL
 from routers.deps import (
     current_user, require_owner, amap_version, amap_key_notice_html, _route_cache_key,
+    stamp_assets,
 )
 
 BASE = Path(__file__).resolve().parent.parent
@@ -52,6 +53,7 @@ def share_page(token: str, request: Request):
     html = html.replace("__MEDIA_BASE__", MEDIA_BASE_URL)
     html = html.replace("__AMAP_VERSION__", amap_version(request))
     html = html.replace("<body>", "<body>" + amap_key_notice_html(), 1)
+    html = stamp_assets(html)
     return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 

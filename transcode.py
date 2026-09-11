@@ -356,6 +356,19 @@ def inflight_count() -> int:
 
 
 # ---------------------------------------------------------------- 主流程
+
+def _publish(path) -> bool:
+    """把刚写好的文件推到 OSS。没配 OSS / 推失败都只是回到「等 sync-oss 兜底」，
+    绝不能让它影响转码本身，所以整段包在 try 里、oss 也延迟到这里才 import
+    （转码这条链路不该因为 OSS 模块的任何问题起不来）。"""
+    try:
+        import oss
+        return oss.publish_local(path)
+    except Exception as e:
+        log.warning("推 OSS 失败（等 sync-oss 兜底）%s: %s", Path(path).name, e)
+        return False
+
+
 def process_media(media_id: int, src_path, force: bool = False) -> dict:
     """**同步**处理一个视频：登记档位 → faststart 重封装 → 逐档转码。
 
@@ -397,7 +410,14 @@ def process_media(media_id: int, src_path, force: bool = False) -> dict:
 
     # 3) 原画 faststart —— 最要紧的一步（哪怕一档都没转好，原画也能立刻起播）。
     #    失败也继续往下走：重封装不了不代表转不了码。
+    before_ns = src_path.stat().st_mtime_ns
     result["faststart"] = ensure_faststart(src_path)
+    # 真重写了才推。**直传上来的原片本来就在 OSS 上**，重写之后本地这份变新，
+    # config._synced_to_oss() 会判成「还没同步」→ 播放链接指回本机 →
+    # 流量重新挤回 4Mbps 隧道，一直到下一趟 sync-oss（最多两分半）才恢复。
+    # 转完就推，那个窗口直接没有了；字节数和 sync-oss 稍后要传的一模一样。
+    if src_path.stat().st_mtime_ns != before_ns:
+        result["republished"] = _publish(src_path)
 
     if not plan:
         return result          # 源本来就小（或探测失败）→ 只有原画档，正常
@@ -414,6 +434,7 @@ def process_media(media_id: int, src_path, force: bool = False) -> dict:
                 media_id, label, filename=out_name, width=w, height=h,
                 bitrate=vinfo.get("bitrate"), filesize=out_path.stat().st_size,
                 status="done", error=None)
+            _publish(out_path)      # 同上：刚转好的档位也别让它先走一趟隧道
             result["variants"].append({"label": label, "status": "done"})
         else:
             db.set_variant_status(media_id, label, "failed", error=r["error"])
