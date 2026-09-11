@@ -836,18 +836,19 @@ def aggregate_footprint(user, cell_deg: float, bbox=None):
 
 
 def list_photo_points(user, trip_id=None):
-    """含照片的点（坐标 + 该点照片缩略图列表），供地图照片图层使用。
+    """含媒体的点（坐标 + 该点媒体缩略图列表），供地图照片堆图层使用。
 
     trip_id 给了就只取这一个行程——地图上正在看哪个行程，就只该看到哪个行程的照片。
-    不给则回落到全量（admin 全库、普通用户只看自己的）。仅取有坐标且有照片缩略图的点。
-    返回 [{point_id, name, lng, lat, photos: [{media_id, thumb}]}, ...]
+    不给则回落到全量（admin 全库、普通用户只看自己的）。仅取有坐标且有缩略图的点。
+    照片和视频都算：视频用首帧缩略图，前端在角上打 ▶ 标识。
+    返回 [{point_id, name, lng, lat, photos: [{media_id, thumb, type}]}, ...]
     """
     conn = get_conn()
     base = (
-        "SELECT p.id AS pid, p.name, p.lat, p.lng, m.id AS mid, m.thumb_filename "
+        "SELECT p.id AS pid, p.name, p.lat, p.lng, m.id AS mid, m.thumb_filename, m.type AS mtype "
         "FROM points p JOIN media m ON m.point_id = p.id "
         "JOIN trips t ON t.id = p.trip_id "
-        "WHERE m.type='photo' AND m.thumb_filename IS NOT NULL AND m.thumb_filename != '' "
+        "WHERE m.thumb_filename IS NOT NULL AND m.thumb_filename != '' "
         "AND p.lat IS NOT NULL AND p.lng IS NOT NULL"
     )
     tail = " ORDER BY p.id ASC, COALESCE(m.exif_time, m.created_at) ASC, m.id ASC"
@@ -874,7 +875,8 @@ def list_photo_points(user, trip_id=None):
             "name": first["name"],
             "lng": first["lng"],
             "lat": first["lat"],
-            "photos": [{"media_id": m["mid"], "thumb": m["thumb_filename"]} for m in ms],
+            "photos": [{"media_id": m["mid"], "thumb": m["thumb_filename"],
+                        "type": m["mtype"]} for m in ms],
         })
     return result
 

@@ -126,11 +126,14 @@ def test_search_trip_media_date_to_same_day_should_include(point):
 
 def test_list_photo_points_scoping_and_shape(point, make_user):
     db.add_media(point["point_id"], "photo", "a.jpg", "a_t.jpg")
-    db.add_media(point["point_id"], "video", "v.mp4", "v_t.jpg")   # 视频不进照片图层
+    # 视频用首帧缩略图一起进图层，带 type 让前端打 ▶（2026-09-11 改）：
+    # 之前只取 photo，手机连拍的视频在照片堆里凭空消失，看着像上传丢了。
+    db.add_media(point["point_id"], "video", "v.mp4", "v_t.jpg")
     out = db.list_photo_points(point["user"], point["trip_id"])
     assert len(out) == 1
     assert out[0]["point_id"] == point["point_id"]
-    assert [p["thumb"] for p in out[0]["photos"]] == ["a_t.jpg"]
+    assert [(p["thumb"], p["type"]) for p in out[0]["photos"]] == [
+        ("a_t.jpg", "photo"), ("v_t.jpg", "video")]
     # 别人看不到
     assert db.list_photo_points(make_user(), point["trip_id"]) == []
 
