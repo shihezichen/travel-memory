@@ -82,8 +82,9 @@ def test_回源把文件拉回本机并补上缩略图(media_row, fake_oss):
     assert db.get_oss_backfill(media_row)["status"] == "done"
 
 
-def test_本地文件的_mtime_对齐到云端时间(media_row, fake_oss):
+def test_本地文件的_mtime_对齐到云端时间(media_row, fake_oss, monkeypatch):
     """否则 media_url 会把这份文件当成「还没同步」，链接指回本机，流量又挤回隧道。"""
+    monkeypatch.setattr(oss_backfill, "_sync_watermark", lambda: None)
     db.enqueue_oss_backfill(media_row, "uploads/abc123.jpg",
                             len(fake_oss.payload), "photo")
     db.take_oss_backfill(media_row)
@@ -93,6 +94,36 @@ def test_本地文件的_mtime_对齐到云端时间(media_row, fake_oss):
     want = datetime(2026, 9, 11, 2, 0, 0, tzinfo=timezone.utc).timestamp()
     assert abs(dest.stat().st_mtime - want) < 2
     assert dest.stat().st_mtime < time.time()      # 明显早于「刚刚下载完」
+
+
+def test_回源的文件一律算作已同步到_oss(media_row, fake_oss, monkeypatch):
+    """直传对象的 Last-Modified 就是几秒前，仍然晚于上一趟同步的水位 ——
+    不压到水位以下的话，刚传完的媒体链接会指回本机，白白挤 4Mbps 的隧道。
+    而「已经在云上」是 complete 时 HEAD 核实过的事实。"""
+    from config import media_url
+    wm = time.time() - 30                      # 30 秒前跑过一趟同步
+    monkeypatch.setattr(oss_backfill, "_sync_watermark", lambda: wm)
+    # 云端对象是「刚刚」才有的，比水位还新
+    fake_oss.last_modified = format_datetime(
+        datetime.now(timezone.utc), usegmt=True)
+
+    db.enqueue_oss_backfill(media_row, "uploads/abc123.jpg",
+                            len(fake_oss.payload), "photo")
+    db.take_oss_backfill(media_row)
+    oss_backfill.process_one(media_row)
+
+    dest = oss_backfill.UPLOAD_DIR / "abc123.jpg"
+    assert dest.stat().st_mtime < wm, "mtime 必须压到水位以下，否则会被判成「还没同步」"
+
+    # 真的走一遍 media_url：开了 OSS 前缀时必须指向 OSS，而不是本机 /uploads/
+    monkeypatch.setenv("TRAVEL_MEDIA_BASE_URL", "https://b.oss-cn-qingdao.aliyuncs.com")
+    import config
+    monkeypatch.setattr(config, "MEDIA_BASE_URL", "https://b.oss-cn-qingdao.aliyuncs.com")
+    monkeypatch.setattr(config, "UPLOAD_ROOT", oss_backfill.UPLOAD_DIR)
+    monkeypatch.setattr(config, "_wm_cache", {"at": 0.0, "value": None})
+    monkeypatch.setattr(config, "_oss_watermark", lambda: wm)
+    assert media_url("/uploads/abc123.jpg") == \
+        "https://b.oss-cn-qingdao.aliyuncs.com/uploads/abc123.jpg"
 
 
 def test_回源之后视频会进转码队列(tmp_path, fake_oss, monkeypatch):

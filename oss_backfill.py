@@ -67,22 +67,45 @@ def inflight_count() -> int:
 
 
 def _touch_from_oss(path: Path, last_modified: str):
-    """把本地文件的 mtime 对齐到 OSS 对象的 Last-Modified。
+    """把本地文件的 mtime 对齐到 OSS 对象的 Last-Modified（且不晚于同步水位）。
 
     两个理由，都很实在：
       1. config._synced_to_oss() 用 mtime 和同步水位比大小来判断「这份是不是已经
          在云上了」。拉回来的这份**本来就是云上那份**，用下载时刻当 mtime 会让它
-         被误判成「刚落盘还没同步」，于是页面把链接指回本机，媒体流量又挤回隧道。
+         被误判成「刚落盘还没同步」，于是页面把链接指回本机，媒体流量又挤回隧道 ——
+         正好是直传要绕开的那条路。
       2. ops/sync-oss.sh 用 mtime+size 决定要不要重传。对齐之后它会正确地跳过，
          不会把刚拉下来的文件再原样推上去一遍。
+
+    为什么还要再压到水位以下：直传的对象是**刚刚**传上去的，Last-Modified 就是
+    几秒前，仍然晚于上一趟同步的水位，于是第 1 条那个误判照样发生（只是窗口从
+    「下一趟同步」缩短到同一个量级）。而「这份已经在云上」是我们刚用 HEAD 核实过的
+    事实，直接按定义把它记成「不晚于任何一次同步」最诚实，也不会让 sync-oss 误以为
+    本地更新（它只在本地更新时才重传，更旧一律跳过）。
     """
     if not last_modified:
         return
     try:
         ts = parsedate_to_datetime(last_modified).timestamp()
-        os.utime(path, (ts, ts))
     except Exception as e:
+        log.debug("解析 Last-Modified 失败 %s: %s", path, e)
+        return
+    wm = _sync_watermark()
+    if wm is not None:
+        ts = min(ts, wm - 1)
+    try:
+        os.utime(path, (ts, ts))
+    except OSError as e:
         log.debug("对齐 mtime 失败 %s: %s", path, e)
+
+
+def _sync_watermark():
+    """读 ops/sync-oss.sh 写的同步水位（秒）。没有就返回 None。"""
+    try:
+        return float((BASE / "logs" / "oss-sync-watermark")
+                     .read_text(encoding="utf-8").strip())
+    except Exception:
+        return None
 
 
 def process_one(media_id: int) -> dict:
