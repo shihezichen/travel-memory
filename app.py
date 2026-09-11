@@ -253,6 +253,36 @@ def health():
     return JSONResponse(body, status_code=200 if db_ok else 503)
 
 
+# 同步路由的并发上限。FastAPI 把 `def`（非 async）路由丢进 anyio 的默认线程池跑，
+# 而那个池的默认容量是 **40** —— 本应用 81 条路由里有 76 条是同步 def，
+# 也就是说最多同时处理 40 个请求，第 41 个开始排队。
+#
+# 平时这不是问题（一次库查询 2ms，40 个槽位够几千 req/s）。会出事的是那几条
+# **等外部服务**的路由：OSRM 路线规划最长等 8 秒、高德地理编码 10 秒、
+# 分享页抓图 20 秒。而前端画一条行程的路线时是 Promise.all 并发请求**所有路段**
+# （库里最长的行程有 16 段）—— 一个用户碰上路线缓存未命中，就能一次占掉 16 个槽位
+# 并持有好几秒。三个这样的用户就把 40 个槽位吃干净，其余所有人的请求，
+# 哪怕只是查个列表，也得排队等 OSRM 超时。
+#
+# 提到 160：这些槽位等的是网络 I/O 不是 CPU，线程绝大多数时间挂在 epoll 上，
+# 多开的成本只有栈空间（约 8KB/线程 → 1.3MB），换来的是「慢请求不再拖死快请求」。
+# 真正的 CPU 并发仍受 GIL 限制，这个数字改不了那件事，也不试图改。
+THREADPOOL_LIMIT = int(os.environ.get("TRAVEL_THREADPOOL_LIMIT", "160"))
+
+
+@app.on_event("startup")
+def _startup_widen_threadpool():
+    """把同步路由的线程池容量从 anyio 默认的 40 提到 THREADPOOL_LIMIT。
+
+    必须在启动钩子里做：拿默认 limiter 要求当前有事件循环在跑。
+    """
+    try:
+        import anyio.to_thread
+        anyio.to_thread.current_default_thread_limiter().total_tokens = THREADPOOL_LIMIT
+    except Exception as e:                                   # noqa: BLE001
+        print("[startup] 调整线程池容量失败（沿用默认 40）:", e)
+
+
 @app.on_event("startup")
 def _startup_resume_backfill():
     """把上次没拉完的 OSS 回源任务重新排进队列。

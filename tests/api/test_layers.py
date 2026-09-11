@@ -148,3 +148,22 @@ def test_clear_route_cache(auth_client):
     db.set_route_cache("k", {"routes": [1]})
     assert auth_client.post("/api/route/clear-cache").status_code == 200
     assert db.get_route_cache("k") is None
+
+
+# ---------------------------------------------------------------- 并发容量
+
+def test_同步路由的线程池容量被提高了(client):
+    """FastAPI 把 `def` 路由丢进 anyio 的默认线程池，而它默认只有 40 个槽位。
+
+    本应用绝大多数路由是同步 def，其中几条要等外部服务（OSRM 8 秒、地理编码
+    10 秒、分享页抓图 20 秒），而前端画路线时会并发请求一条行程的所有路段。
+    槽位被这类慢请求占满时，连「查个列表」都要跟着排队 —— 这条断言守的就是
+    启动钩子真的把容量提上去了，而不是悄悄回落到 40。
+    """
+    import anyio.to_thread
+    import app as app_mod
+
+    got = client.portal.call(
+        lambda: anyio.to_thread.current_default_thread_limiter().total_tokens)
+    assert got == app_mod.THREADPOOL_LIMIT
+    assert got > 40, "提高线程池容量的启动钩子没生效"
