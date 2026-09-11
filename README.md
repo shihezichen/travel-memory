@@ -128,6 +128,10 @@ None are required. Add them as you need them:
 | `TRAVEL_LLM_PROVIDER` | Which model backs the AI features: `auto` / `claude-cli` / `anthropic-api` / `deepseek` | `auto` |
 | `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | Key for the chosen provider; unnecessary if you don't use AI features | empty |
 | `TRAVEL_MEDIA_BASE_URL` | Origin that serves media (object storage / CDN). Empty = the app serves `/uploads/` itself | empty (or put it in `media_base.txt`) |
+| `TRAVEL_OSS_DIRECT` | Master switch for browser-to-object-storage direct upload. `0` = off, fully back to relaying through the server | `1` (auto-disabled when the config is incomplete) |
+| `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK` | AK/SK used to sign direct uploads. Unset = read `~/.ossutilconfig` | empty |
+| `TRAVEL_OSS_PART_SIZE` | Direct-upload part size, in bytes | `8388608` (8 MB) |
+| `TRAVEL_OSS_BACKFILL_WORKERS` | Concurrency of pulling originals back for archival. Deliberately 1 — do not race someone who is watching a video | `1` |
 | `DEMO_USER` | Account name the daily reset targets (see below) | `test` |
 
 ### Daily demo-account reset (optional)
@@ -236,6 +240,66 @@ It is **one switch**: blank it out and everything falls back to local serving, n
 changes. `deploy/travel-memory-oss-sync.{service,timer}` keeps the bucket in sync. Note that
 `/static/` is deliberately *not* offloaded — the frontend JS/CSS must ship with the code.
 
+### 5. Direct media upload to object storage (faster uploads, optional)
+
+The previous section fixes the **downlink** (other people viewing your photos and video). The
+uplink is just as congested: the browser pushes the file to the server, and the whole transfer
+competes for the same uplink — lethal behind a tunnel, where a 150 MB video takes several
+minutes at best while every API call queues behind it.
+
+With direct upload on, the browser **PUTs parts straight to OSS**; the server only signs and
+finalises, and never touches a byte of media. The original is pulled back to the box afterwards
+by a background queue that builds thumbnails, transcodes and archives it
+(`oss_backfill.py`, concurrency 1, so it never races anyone).
+
+Three things are needed:
+
+1. `media_base.txt` is already filled in (the same switch as the previous section — the bucket
+   name and endpoint are derived from it);
+2. AK/SK — read from `~/.ossutilconfig` by default (the same credentials the media sync script
+   uses), overridable with `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK`;
+3. **CORS enabled on the bucket.** This is the only hard prerequisite:
+
+The easiest route is the console: **OSS -> your bucket -> Permissions -> CORS -> create rule**,
+origin = your site's domain, methods `PUT` / `GET` / `HEAD`, header `*`, rest default.
+
+The command-line equivalent (needs an AK with `oss:PutBucketCors`; a restricted sub-account is
+rejected):
+
+```bash
+cat > cors.xml <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<CORSConfiguration>
+  <CORSRule>
+    <AllowedOrigin>https://your-domain</AllowedOrigin>
+    <AllowedMethod>PUT</AllowedMethod>
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>HEAD</AllowedMethod>
+    <AllowedHeader>*</AllowedHeader>
+    <MaxAgeSeconds>600</MaxAgeSeconds>
+  </CORSRule>
+</CORSConfiguration>
+XML
+ossutil cors --method put oss://your-bucket cors.xml
+
+# verify: this must return 200, not "CORS is not enabled for this bucket"
+curl -i -X OPTIONS "https://your-bucket.oss-cn-qingdao.aliyuncs.com/uploads/_probe" \
+     -H "Origin: https://your-domain" \
+     -H "Access-Control-Request-Method: PUT" \
+     -H "Access-Control-Request-Headers: content-type"
+```
+
+`ETag` does not need to be exposed: the server queries ListParts when completing the multipart
+upload and never trusts a client-reported ETag, so the frontend does not read that response
+header at all — one less CORS setting to get wrong.
+
+Nothing breaks if CORS is missing: the first part fails with a zero-byte error and the frontend
+falls the whole upload back to server-relayed mode (`ossDirectGiveUp`); the user simply does not
+get the speed-up. To turn direct upload off temporarily: `TRAVEL_OSS_DIRECT=0`.
+
+`/health` reports `oss_direct` and the `oss_backfill` queue depth, so you can see at a glance
+whether direct upload is live and how many originals are still to be pulled back.
+
 ## Layout
 
 ```
@@ -245,6 +309,9 @@ config.py              static config shared across modules (AMap key, OSRM, medi
 media.py               thumbnails / EXIF / video frame extraction
 transcode.py           video quality ladder (faststart + 1080p/720p/480p, background thread)
 download.py            media "save as": filename building, RFC 5987, quality whitelist
+oss.py                 OSS V1 signing + multipart direct upload (browser -> OSS, never via the app)
+oss_backfill.py        pulls directly-uploaded objects back for archival (background queue:
+                       thumbnails / EXIF / transcode)
 mcp_http.py            MCP Streamable HTTP endpoint (routing table: 34 tools → domain API)
 mcp_server.py          MCP stdio variant
 companion.py           companion process (scheduled jobs) + the single definition of TOOLS
