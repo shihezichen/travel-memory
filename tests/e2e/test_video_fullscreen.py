@@ -140,3 +140,41 @@ def test_照片格不受影响说明栏照旧铺在底部(page, e2e_user, video_
     assert g, "相册里没有照片，这条用例失去意义"
     assert g["hasVideoClass"] is False
     assert abs(g["capBottom"] - g["stageBottom"]) < 2, "照片格的说明栏应当仍然贴着底"
+
+
+# ---------------------------------------------------------------- 三枚控件同一行
+# 用户反馈：「左上角的 480p 图标和 下载、关闭 图标不在同一行里」。
+# 根因是 .lb-video-wrap 设了 position:relative，于是它成了清晰度按钮的包含块 ——
+# 而 wrap 只有视频画面那么大、还被 .lb-slide 的 4vh/4vw 内边距推在正中间，
+# 「左上角 9px」量的是视频的左上角，跟灯箱右上角的下载/关闭差出一整个 4vh。
+# 钉住的是**几何**而不是某条 CSS：三枚控件的顶边和高度必须一致。
+
+def _ctl_rects(page):
+    return page.eval("""(() => {
+      const pick = (sel) => {
+        const e = document.querySelector('#lightbox ' + sel);
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { top: r.top, height: r.height, left: r.left, right: r.right,
+                 vis: getComputedStyle(e).visibility !== 'hidden' && r.height > 0 };
+      };
+      return { quality: pick('.lb-slide.cur .lb-quality-btn'),
+               download: pick('.lightbox-download'),
+               close: pick('.lightbox-close') };
+    })()""")
+
+
+def test_清晰度下载关闭三枚控件在同一行(page, e2e_user, video_media):
+    _open_video_lightbox(page, e2e_user, video_media)
+    r = _ctl_rects(page)
+    for k in ("quality", "download", "close"):
+        assert r[k] and r[k]["vis"], f"{k} 控件没渲染出来，这条断言会变成空跑"
+    # 1px 容差给亚像素布局；4vh 的偏差是几十 px，挡不住这条
+    assert abs(r["quality"]["top"] - r["close"]["top"]) <= 1, (
+        f"清晰度按钮和关闭不在同一行：{r['quality']['top']} vs {r['close']['top']}")
+    assert abs(r["download"]["top"] - r["close"]["top"]) <= 1, (
+        f"下载和关闭不在同一行：{r['download']['top']} vs {r['close']['top']}")
+    assert abs(r["quality"]["height"] - r["close"]["height"]) <= 1, (
+        "三枚控件的命中高度应该一致（都是 --lb-tap）")
+    # 清晰度在左、下载和关闭在右，别叠在一起
+    assert r["quality"]["right"] < r["download"]["left"]

@@ -185,26 +185,76 @@ def resolve_file(media_row, quality: str, upload_dir: Path):
     return real, quality
 
 
-def _oss_redirect(media_row, quality: str):
-    """本地没有这个文件、但它在 OSS 上时，重定向过去下载。
+def _oss_rel_path(media_row, quality: str):
+    """(media, quality) → 站内相对路径 `/uploads/...`。拿不到就 None。
 
-    直传上来的媒体在「回源存档」跑完之前，本机是**一个字节都没有**的
-    （见 oss_backfill.py）。这时候按老逻辑只能回 404 —— 用户刚传完想存一份
-    就说文件不存在，说不过去。OSS 对 public-read 的对象认 response-content-*
-    这组参数，所以重定向过去照样是「另存为」而不是内联播放。
-
-    只对原片这么做：转码档位本来就只存在于本机，云上没有对应对象。
+    和 resolve_file() 的映射规则一致，但**不碰磁盘** —— 本地有没有这个文件，
+    正是调用方要判断的事。
     """
-    from urllib.parse import quote as _q
-    from config import MEDIA_BASE_URL
-    if quality != "original" or not MEDIA_BASE_URL:
+    if quality == "original":
+        return "/uploads/" + media_row["filename"]
+    if media_row["type"] != "video":
         return None
-    name = media_row["filename"]
-    ext = Path(name).suffix.lower()
+    v = db.get_variant(media_row["id"], quality)
+    if not v or v["status"] != "done" or not v["filename"]:
+        return None
+    return "/uploads/variants/" + v["filename"]
+
+
+def _is_on_oss(local_path) -> bool:
+    """这份文件云上有没有。local_path=None 表示本机根本没有。
+
+    判据和 config.media_url 一致 —— 和同步水位比 mtime。这里刻意**自己比**而不是
+    调 config._synced_to_oss()：那个函数认死了 config.UPLOAD_ROOT，而下载链路的
+    uploads 目录是调用方传进来的（测试里会指到 tmp）。用传进来的真实路径比 mtime，
+    两边就不会各说各话。
+    """
+    from config import _oss_watermark
+    if local_path is None:
+        return True                       # 直传刚传完、还没回源：只有云上有
+    wm = _oss_watermark()
+    if wm is None:
+        return True                       # 没在跑同步：沿用「一律指 OSS」的老行为
+    try:
+        return local_path.stat().st_mtime <= wm
+    except OSError:
+        return True
+
+
+def _oss_redirect(media_row, quality: str, local_path=None):
+    """能走 OSS 就重定向过去下载，回 None 表示「只能由本机吐」。
+
+    **这是下载链路上最贵的一段**：原来只在「本地文件不存在」时才重定向，于是
+    回源存档一跑完，本地有了文件，一段 130MB 的视频就改成由本机 FileResponse
+    吐出去 —— 整整 130MB 全挤在 4Mbps 的 frp 隧道里（见 ops/sync-oss.sh 顶部的
+    实测），而同一份字节在 OSS 上躺着没人用。现在反过来：**只要云上有，就走云**。
+
+    判据见 _is_on_oss()，它覆盖了三种情况：
+      - 本地没有这个文件（直传刚传完、还没回源）→ True，云上才有
+      - 本地有且 mtime 早于同步水位 → True，两边都有，走云
+      - 本地有但比水位新（刚重封装/刚转好还没推上去）→ False，老实走本机
+    档位文件也一样能走云：ops/sync-oss.sh 一直在同步 variants/，
+    transcode 转完还会立刻直推（见 oss.publish_local）。
+
+    链接必须**签名**：对象虽然是 public-read，但 OSS 不允许匿名请求覆盖响应头
+    （回 400 InvalidRequest "Can not override response header for an anonymous
+    user"）。所以这里走 oss.sign_download_url，而不是自己拼 query。
+    签不出来（没配 AK）就返回 None，老实由本机吐 —— 宁可慢也不能给一个 400。
+    """
+    import oss
+    from config import MEDIA_BASE_URL
+    if not MEDIA_BASE_URL or not oss.conf().ok:
+        return None
+    rel = _oss_rel_path(media_row, quality)
+    if not rel or not _is_on_oss(local_path):
+        return None
+    ext = Path(rel).suffix.lower()
     utf8_name, ascii_name = build_filenames(media_row, ext, quality)
     disp = content_disposition(utf8_name, ascii_name)
-    url = (f"{MEDIA_BASE_URL}/uploads/{_q(name, safe='')}"
-           f"?response-content-disposition={_q(disp, safe='')}")
+    try:
+        url = oss.sign_download_url(rel.lstrip("/"), disp)    # /uploads/x -> uploads/x
+    except oss.OSSError:
+        return None
     # 307 而不是 302：语义上是「同一个请求换个地址再发一次」，别让中间层把它
     # 改写成 GET（这条本来就是 GET，但 307 的意图更明确，也不会被缓存成永久跳转）
     return RedirectResponse(url, status_code=307)
@@ -215,15 +265,21 @@ def build_response(media_id: int, quality: str, upload_dir: Path) -> FileRespons
     m = db.get_media(media_id)
     if not m:
         raise HTTPException(404, "媒体不存在")
+    quality = (quality or "original").strip() or "original"
     try:
         path, quality = resolve_file(m, quality, upload_dir)
     except HTTPException as e:
         # 只接「文件不存在」，别把 400/越权也顺手转成重定向
         if e.status_code != 404:
             raise
-        redirect = _oss_redirect(m, (quality or "original").strip() or "original")
+        redirect = _oss_redirect(m, quality)
         if redirect is None:
             raise
+        return redirect
+
+    # 本地有这个文件，但云上也有的话仍然走云 —— 省下的是整条文件的隧道带宽
+    redirect = _oss_redirect(m, quality, local_path=path)
+    if redirect is not None:
         return redirect
 
     utf8_name, ascii_name = build_filenames(m, path.suffix.lower(), quality)

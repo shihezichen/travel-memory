@@ -32,8 +32,12 @@ from config import MEDIA_BASE_URL
 log = logging.getLogger("travel.oss")
 
 # 签名里要算进 CanonicalizedResource 的子资源。OSS 的完整清单几十项，这里只列
-# 我们真正会用到的三个 —— 多列不会错，少列才会签错，而用不到的列进来只是噪音。
-SIGNED_SUBRESOURCES = ("partNumber", "uploadId", "uploads")
+# 我们真正会用到的几个 —— 多列不会错，少列才会签错，而用不到的列进来只是噪音。
+# response-content-disposition 是「另存为」下载用的：OSS 对**匿名**请求不允许覆盖
+# 响应头（回 400 InvalidRequest "Can not override response header for an anonymous
+# user"），哪怕对象本身是 public-read。所以这个参数必须签进去。
+SIGNED_SUBRESOURCES = ("partNumber", "uploadId", "uploads",
+                       "response-content-disposition", "response-content-type")
 
 # 分片大小。OSS 要求除最后一片外每片 ≥ 100KB、片数 ≤ 10000。
 # 取 8MB 而不是前端原来那个 4MB：直传没有「服务端逐片落盘」的开销，片子大一点
@@ -397,3 +401,14 @@ def publish_local(path, upload_root=None) -> bool:
             log.debug("publish_local 对齐 mtime 失败 %s: %s", rel, e)
     log.info("已直推 OSS: %s", rel)
     return True
+
+
+def sign_download_url(key: str, disposition: str, expires_in: int = URL_TTL) -> str:
+    """签一个「另存为」下载链接（带 Content-Disposition 覆盖）。
+
+    为什么非得签：对象是 public-read，直接拼 `?response-content-disposition=...`
+    在浏览器里会拿到 400 —— OSS 不允许匿名请求覆盖响应头。签过之后同一个参数就认。
+    """
+    return sign_url("GET", key,
+                    params={"response-content-disposition": disposition},
+                    expires_in=expires_in)

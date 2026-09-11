@@ -1406,10 +1406,14 @@ body.map-fullscreen-on { overflow: hidden; }
 }
 
 /* ---------- 视频清晰度选择 ---------- */
-/* 视频外面套一层 wrap，好让清晰度按钮和 <video> 平级定位。
-   wrap 自己不设 transform，否则 lbApplyZoom 给 .lightbox-media 的缩放会串味。 */
+/* 视频外面套一层 wrap，好让清晰度按钮和 <video> 平级。
+   wrap 自己不设 transform，否则 lbApplyZoom 给 .lightbox-media 的缩放会串味。
+   **也刻意不设 position** —— 设了它就成了清晰度按钮的包含块，而 wrap 只有
+   视频那么大、还被 .lb-slide 的 4vh/4vw 内边距推在中间，于是「左上角 9px」
+   变成了视频画面的左上角，和右上角的下载/关闭差出一整个 4vh，三枚控件不在
+   同一条线上。不设 position，包含块就回到 .lb-slide（absolute + inset:0，
+   padding 不缩小包含块），三枚控件从此共用同一个坐标系。 */
 .lb-video-wrap {
-  position: relative;
   display: flex; align-items: center; justify-content: center;
   max-width: 100%;
   /* height 必须是**确定值**，不能只写 max-height。

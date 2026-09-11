@@ -310,3 +310,87 @@ def test_share_download_expired_share_is_404(auth_client, seeded_trip, jpeg_byte
     conn.close()
     assert _anon_client().get(
         f"/api/share/{token}/media/{mid}/download").status_code == 404
+
+
+# ---------------------------------------------------------------- 走 OSS 还是走本机
+# 下载是这条链路上字节数最大的一段。原来只有「本地文件不存在」时才重定向到 OSS，
+# 于是回源存档一跑完，一段 130MB 的视频就改由本机 FileResponse 吐出去，整整
+# 130MB 全挤在 4Mbps 的 frp 隧道里 —— 而同一份字节在 OSS 上躺着没人用。
+# 这组用例钉住新规则：**云上有就走云，只有云上没有才由本机吐**。
+
+def _with_oss(monkeypatch, base="https://bkt.oss-cn-qingdao.aliyuncs.com", wm=None):
+    """打开 MEDIA_BASE_URL + 一把假 AK，并把同步水位设成 wm。
+
+    AK 也要给：下载链接必须签名（OSS 不许匿名请求覆盖响应头），没 AK 就签不出来，
+    `_oss_redirect` 会老实返回 None。给一把假的就能走完真实的签名代码路径 ——
+    签名本身是纯计算，不打网络。
+    """
+    import config
+    monkeypatch.setattr(config, "MEDIA_BASE_URL", base)
+    monkeypatch.setenv("TRAVEL_MEDIA_BASE_URL", base)
+    monkeypatch.setenv("TRAVEL_OSS_AK", "TESTAK")
+    monkeypatch.setenv("TRAVEL_OSS_SK", "TESTSK")
+    monkeypatch.setattr(config, "_oss_watermark", lambda: wm)
+    return base
+
+
+def _set_mtime(path, ts):
+    import os
+    os.utime(path, (ts, ts))
+
+
+def test_本地有但云上也有时重定向到oss(auth_client, seeded_trip, monkeypatch):
+    mid = _make_video(seeded_trip["point_ids"][0], name="oss1.mp4")
+    src = Path(app_mod.UPLOAD_DIR) / "oss1.mp4"
+    _set_mtime(src, 1000)                       # 早于水位 = 已经同步上去了
+    _with_oss(monkeypatch, wm=2000)
+    r = auth_client.get(f"/api/media/{mid}/download", follow_redirects=False)
+    assert r.status_code == 307
+    loc = r.headers["location"]
+    assert loc.startswith("https://bkt.oss-cn-qingdao.aliyuncs.com/uploads/oss1.mp4")
+    # 必须是签过的 URL，否则 OSS 回 400（匿名不许覆盖响应头）
+    assert "Signature=" in loc and "OSSAccessKeyId=" in loc
+    # 重定向过去也必须是「另存为」，否则浏览器会内联播放
+    assert "response-content-disposition=" in loc
+    assert "attachment" in unquote(loc)
+
+
+def test_本地比水位新时老实走本机(auth_client, seeded_trip, monkeypatch):
+    """刚重封装/刚转好还没推上去的那一小段时间：云上那份是旧的，不能指过去。"""
+    mid = _make_video(seeded_trip["point_ids"][0], name="oss2.mp4")
+    src = Path(app_mod.UPLOAD_DIR) / "oss2.mp4"
+    _set_mtime(src, 3000)                       # 晚于水位 = 本地这份更新
+    _with_oss(monkeypatch, wm=2000)
+    r = auth_client.get(f"/api/media/{mid}/download", follow_redirects=False)
+    assert r.status_code == 200 and r.content == b"fake original video"
+
+
+def test_转码档位也走oss(auth_client, seeded_trip, monkeypatch):
+    """ops/sync-oss.sh 一直在同步 variants/，档位文件云上是有的。"""
+    mid = _make_video(seeded_trip["point_ids"][0], name="oss3.mp4")
+    fname = _make_variant(mid, "720p", stem="oss3")
+    _set_mtime(Path(app_mod.UPLOAD_DIR) / "variants" / fname, 1000)
+    _with_oss(monkeypatch, wm=2000)
+    r = auth_client.get(f"/api/media/{mid}/download", params={"quality": "720p"},
+                        follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"].startswith(
+        "https://bkt.oss-cn-qingdao.aliyuncs.com/uploads/variants/" + fname)
+    assert "Signature=" in r.headers["location"]
+
+
+def test_本地没有文件时仍然重定向到oss(auth_client, seeded_trip, monkeypatch):
+    """直传刚完成、回源还没跑：本机一个字节都没有，只能指云上。"""
+    mid = db.add_media(seeded_trip["point_ids"][0], "video", "gone.mp4", None)
+    _with_oss(monkeypatch, wm=2000)
+    r = auth_client.get(f"/api/media/{mid}/download", follow_redirects=False)
+    assert r.status_code == 307
+    assert "/uploads/gone.mp4" in r.headers["location"]
+
+
+def test_没配oss时一律走本机(auth_client, seeded_trip, monkeypatch):
+    mid = _make_video(seeded_trip["point_ids"][0], name="oss4.mp4")
+    _set_mtime(Path(app_mod.UPLOAD_DIR) / "oss4.mp4", 1000)
+    _with_oss(monkeypatch, base="", wm=2000)
+    r = auth_client.get(f"/api/media/{mid}/download", follow_redirects=False)
+    assert r.status_code == 200

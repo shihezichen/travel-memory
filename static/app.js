@@ -1807,13 +1807,36 @@ function buildMediaItem(m) {
 
   const del = el('button', 'del', '×');
   del.type = 'button';
+  // 乐观删除：先从界面上拿掉，再发请求。
+  // 原来是 `await DELETE` → `loadDetail()`，也就是**两个**隧道往返之后格子才消失；
+  // 同时有视频在传的时候隧道是满的，实测要等半秒以上，期间点了删除什么反馈都没有。
+  // 而这个操作几乎不会失败（服务端只是几次 unlink + 一条 DELETE），失败也完全
+  // 可逆 —— 把格子原位放回去 + 一条 toast 就交代清楚了。
+  // 顺带去掉 loadDetail()：要拿掉的那一条我们自己就能从 detailMedia 里摘掉，
+  // 为此重拉整个点的媒体列表（又一个隧道往返 + 整格重绘）不划算。
   del.onclick = async (e) => {
     e.stopPropagation();
     if (!await tmConfirm('删除这张媒体？', '删除媒体', { danger: true, okText: '删除' })) return;
-    await api(`/api/media/${m.id}`, { method: 'DELETE' });
+    const grid = item.parentElement;
+    const next = item.nextSibling;                      // 失败要放回原位，先记住锚点
+    const idx = detailMedia.findIndex((x) => Number(x.id) === Number(m.id));
+    item.remove();
+    if (idx >= 0) detailMedia.splice(idx, 1);
+    lightboxMedia = detailMedia;
     forgetRecentUpload(m.id);   // 别让「刚上传」的补丁表把刚删掉的又补回来
-    loadDetail(currentPointId);
     scheduleMediaCountRefresh();   // 地图角标 / 列表计数 / 统计条跟着少一个
+    try {
+      await api(`/api/media/${m.id}`, { method: 'DELETE' });
+    } catch (err) {
+      if (grid && grid.isConnected) {
+        if (next && next.parentElement === grid) grid.insertBefore(item, next);
+        else grid.appendChild(item);
+      }
+      if (idx >= 0) detailMedia.splice(idx, 0, m);
+      lightboxMedia = detailMedia;
+      scheduleMediaCountRefresh();
+      tmToast('删除失败，已放回：' + (err.message || ''));
+    }
   };
   item.appendChild(del);
   return item;

@@ -148,6 +148,9 @@ def process_one(media_id: int) -> dict:
     if not m.get("thumb_filename"):
         try:
             thumb = media_mod.make_thumb(dest, mtype)
+            # 缩略图单个只有几十 KB，但相册里一屏就是几十张 —— 全挤在隧道里
+            # 就是「点开一个行程要等好几秒才出图」。和原片、档位一样转完就推。
+            oss.publish_local(media_mod.THUMB_DIR / thumb)
         except Exception as e:
             log.warning("回源后生成缩略图失败 media=%s: %s", media_id, e)
     exif_time = exif_lat = exif_lng = None

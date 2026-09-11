@@ -35,6 +35,7 @@ class FakeOSS:
         self.uploads = {}        # upload_id -> {key, parts: {n: (etag, size)}}
         self.objects = {}        # key -> bytes 大小
         self.aborted = []
+        self.published = []      # publish_local 推上去的本机文件
         self.seq = 0
 
     # --- 配置 ---
@@ -81,6 +82,11 @@ class FakeOSS:
         return {"size": self.objects[key], "etag": "final",
                 "last_modified": "Thu, 11 Sep 2026 02:00:00 GMT",
                 "content_type": "video/mp4"}
+
+    # --- 本机文件直推（缩略图/重封装后的原片/转码档位都走它）---
+    def publish_local(self, path, upload_root=None):
+        self.published.append(str(path))
+        return True
 
     # --- 测试辅助：模拟浏览器把一片传上去 ---
     def put_part(self, upload_id, n, size):
@@ -387,3 +393,46 @@ def test_过期的直传会话会把云端碎片一起撤掉(auth_client, point_
     out = app_mod.prune_upload_sessions(hours=24)
     assert out["oss_aborted"] == 1
     assert fake_oss.aborted
+
+
+# --------------------------------------------------------------- 照片也走直传
+# 用户明确要求「视频和图片都前端直传 OSS」。链路上没有任何按类型分叉的地方，
+# 但这件事值得钉死 —— 将来谁要给照片单独开一条「小文件走服务器中转」的捷径，
+# 这两条用例会先拦住他。
+
+@pytest.mark.parametrize("name,size,mtype", [
+    ("a.jpg", 3 * 1024 * 1024, "photo"),
+    ("a.heic", 4 * 1024 * 1024, "photo"),
+    ("a.mp4", 30 * 1024 * 1024, "video"),
+    ("a.mov", 30 * 1024 * 1024, "video"),
+])
+def test_照片和视频都能开直传会话(auth_client, point_id, fake_oss, name, size, mtype):
+    r = _create(auth_client, point_id, name=name, size=size, fp="fp-" + name)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["mode"] == "oss" and d["mtype"] == mtype
+    assert d["total_parts"] >= 1 and d["urls"]        # 签名真给了，不是空壳
+
+
+def test_小照片也是一整片直传而不是回落(auth_client, point_id, fake_oss):
+    """3MB 的照片只有一片。OSS 允许最后一片小于 100KB，所以单片没问题 ——
+    不能因为「文件比分片小」就把照片推回服务器中转那条路。"""
+    r = _create(auth_client, point_id, name="small.jpg", size=200 * 1024, fp="fp-small")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["total_parts"] == 1
+    assert list(d["urls"].keys()) == ["1"]
+
+
+def test_客户端封面推完oss之后链接才指向oss(auth_client, point_id, fake_oss, monkeypatch):
+    """缩略图落盘之后 media_url 是**当场**算的：不先推上去，算出来就是本机路径，
+    前端拿着它直接把图片请求打进隧道。所以推 OSS 必须在算 URL 之前。"""
+    import io
+    from PIL import Image
+    mid = db.add_media(point_id, "video", "t.mp4", None)
+    buf = io.BytesIO()
+    Image.new("RGB", (80, 60), (10, 20, 30)).save(buf, "JPEG")
+    r = auth_client.post(f"/api/media/{mid}/thumb",
+                         files={"file": ("t.jpg", buf.getvalue(), "image/jpeg")})
+    assert r.status_code == 200, r.text
+    assert any(x.endswith("t.jpg") for x in fake_oss.published), fake_oss.published

@@ -1644,6 +1644,13 @@ def api_put_client_thumb(request: Request, media_id: int, file: UploadFile = Fil
     dest.parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(dest, "JPEG", quality=82)
     db.set_media_thumb(media_id, name)
+    # 立刻推 OSS（几十 KB，一次 PUT 百毫秒级）。不推的话这张图在下一趟 sync-oss
+    # 之前只能从本机取 —— 而**下面这行 media_url 正是在此刻算的**，算出来会是
+    # 本机路径，前端拿着它直接就把图片请求打进了隧道。
+    try:
+        oss.publish_local(dest)
+    except Exception as e:                     # 推不上去只是慢一点，缩略图本身是成功的
+        log.warning("缩略图推 OSS 失败（等 sync-oss 兜底）%s: %s", name, e)
     return {"ok": True, "thumb": name, "thumb_url": media_url("/uploads/thumbs/" + name)}
 
 
