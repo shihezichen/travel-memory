@@ -894,7 +894,9 @@ body.map-fullscreen-on { overflow: hidden; }
 
 /* 更多操作菜单（底部抽屉，参考高德/Google Maps 手机端的「更多」交互） */
 .more-sheet-mask {
-  position: fixed; inset: 0; z-index: 300;
+  /* z-index 要高于 ICP 页脚(400)：页脚是贴底固定的，层级更低的话会浮在抽屉上，
+     正好跟抽屉底部的版本号叠在一起（2026-09-11 修）。 */
+  position: fixed; inset: 0; z-index: 500;
   background: rgba(0,0,0,.45);
   display: flex; align-items: flex-end;
 }
@@ -2194,7 +2196,7 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
   left: 0;
   right: 0;
   bottom: 4px;
-  z-index: 400;              /* 高于地图，低于登录层(见下)与各类弹窗 */
+  z-index: 400;              /* 高于地图(marker 容器 300)，低于登录层与底部抽屉(500) */
   text-align: center;
   font-size: 11px;
   line-height: 1.4;
