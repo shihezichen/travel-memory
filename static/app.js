@@ -32,7 +32,7 @@ let footprintData = null;   // 全量足迹坐标缓存（/api/footprint）
 let footprintAggregated = false;
 let footprintView = null;   // 当前这份数据对应哪个「缩放级别 + 可视范围」
 // 照片堆不再走 AMap.Marker，改由 photoStackItems + 自建图层承载（见 ensurePhotoStackLayer）
-let photoLayerData = null;  // 当前行程的照片图层数据缓存（/api/photo-layer?trip_id=），换行程即失效
+let photoLayerData = null;  // 当前行程的照片堆数据缓存（/api/photo-layer?trip_id=，含照片+视频），换行程即失效
 let currentTripId = null;
 let currentPointId = null;
 let currentUser = null;  // /api/me 返回（含 last_trip_id：服务端记的上次打开行程）
@@ -969,7 +969,8 @@ function renderPhotoBadges(points) {
   const box = ensurePhotoStackLayer();
   // 地图图层树还没建好：这一趟画不出来，但显隐状态该同步还得同步
   // （类挂在 #map 上，之后新建的角标会自动跟随）
-  if (!box) { syncPhotoMarkersVisibility(); positionPhotoStacks(); return; }
+  // box 还没就绪时角标建不出来，但位置该同步还得同步（下次 positionPhotoBadges 会补）
+  if (!box) { syncPhotoMarkersVisibility(); positionPhotoBadges(); return; }
   // 分组规则要和 renderMap 一致：环线会多次经过同一坐标，合并成一枚角标、数量相加
   const groups = new Map();
   (points || []).forEach((p) => {
@@ -998,7 +999,7 @@ function renderPhotoBadges(points) {
   });
   // 新建出来的角标要按当前「照片图层」的开关状态决定显不显示
   syncPhotoMarkersVisibility();
-  positionPhotoStacks();   // 刚建出来时位置还是 0,0，必须立刻摆好
+  positionPhotoBadges();   // 刚建出来时位置还是 0,0，必须立刻摆好
 }
 
 // 媒体增删之后刷新所有「跟数量有关」的地方：地图角标、点列表的 📷/🎬 计数、
@@ -5900,7 +5901,17 @@ function drawRouteOverlay() {
 // 地图动就重画。用 rAF 合并，一帧最多画一次。
 function scheduleRouteDraw() {
   if (routeDrawRaf) return;
-  routeDrawRaf = requestAnimationFrame(() => { routeDrawRaf = 0; drawRouteOverlay(); });
+  routeDrawRaf = requestAnimationFrame(() => {
+    routeDrawRaf = 0;
+    drawRouteOverlay();
+    // 照片堆/角标、📷 角标也一起放到这一帧里挪。
+    // 它们原来各自直接挂 mapmove，于是一次地图移动触发的执行顺序是
+    // 「高德渲染 → 照片堆 → 角标 → 自绘路线」，中间夹着高德自己那趟耗时渲染；
+    // 三条路线混在一起容易掉帧，合到同一个 rAF 里省掉一层开销。
+    // 角标必须排在照片堆后面，理由见下面 clearMap 之后那次重排的注释。
+    positionPhotoStacks();
+    positionPhotoBadges();
+  });
 }
 (function initRouteOverlaySync() {
   const bind = () => {
@@ -6010,16 +6021,9 @@ function hitRouteAtPoint(e) {
   return false;
 }
 
-(function initPhotoStackLayerSync() {
-  // 地图任何变换都要跟着重排。mapmove 在拖动过程中持续触发，保证跟手。
-  const relay = () => positionPhotoStacks();
-  const bind = () => {
-    if (!map || !map.on) return setTimeout(bind, 200);
-    ['mapmove', 'zoomchange', 'movend', 'zoomend', 'resize', 'rotatechange', 'pitchchange']
-      .forEach(ev => { try { map.on(ev, relay); } catch (e) {} });
-  };
-  bind();
-})();
+// 照片堆/角标的重排已经并进 scheduleRouteDraw 那个 rAF 里了
+// （见上面 initRouteOverlaySync），这里不再单独挂 mapmove —— 一个事件干两趟，
+// 而且是不同的帧，反而更容易掉。
 
 async function toggleLayerPhotos(on, silent) {
   const cb = $('#lay-photos');
@@ -6038,7 +6042,7 @@ async function toggleLayerPhotos(on, silent) {
     if (!photoLayerData || !photoLayerData.length) {
       if (!silent) {
         // 用户是手动勾的，得给个说法，并把勾选回弹
-        tmToast('本行程还没有照片，先在某个地点上传照片吧');
+        tmToast('本行程还没有照片或视频，先在某个地点上传吧');
         cb.checked = false;
       }
       // silent（换行程后自动重建）时**不要**取消勾选：
@@ -6073,6 +6077,10 @@ async function toggleLayerPhotos(on, silent) {
                     || mediaUrl('/uploads/thumbs/' + photos[i].thumb)) + '" ' +
                  'style="transform: translate(' + off + 'px,' + (-off) + 'px) rotate(' + rot + 'deg); z-index:' + (10 + i) + ';">';
       }
+      // 视频也用首帧缩略图参与堆叠（照片和视频在同一个点的媒体列表里，混着看才不丢东西），
+      // 但视频必须在最上层打 ▶：缩略图看不出动静，不打标会被当成照片。
+      const hasVideo = photos.some(m => m.type === 'video');
+      if (hasVideo) inner += '<span class="photo-stack-play">▶</span>';
       // 角标就是「这个点一共多少张」。原来 >3 时前面多加了个 '+'（显示成 "+5"），
       // 那个加号本意是「还有 N 张没露出来」，但用的是总数，两头不靠，只会让人误读。
       // 现在统一显示真实数量，超过 99 才截成 99+（和点旁边 📷 角标的规则一致）。

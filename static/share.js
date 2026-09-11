@@ -454,7 +454,7 @@ function shareRenderMap() {
   });
 
   shareSyncPhotoMarkersVisibility();
-  positionPhotoStacks();   // 📷 角标刚建出来，位置还是 0,0，必须立刻摆好
+  positionPhotoBadges();   // 📷 角标刚建出来，位置还是 0,0，必须立刻摆好
   // 先按直线距离标出里程，真实路线算完后 shareDrawRoute 会用真实中点重建一次
   shareDrawPolyline(path);
   shareRenderSegLabels();
@@ -1793,7 +1793,15 @@ function shareDrawRouteOverlay() {
 // 地图动就重画。用 rAF 合并，一帧最多画一次。
 function shareScheduleRouteDraw() {
   if (routeDrawRaf) return;
-  routeDrawRaf = requestAnimationFrame(() => { routeDrawRaf = 0; shareDrawRouteOverlay(); });
+  routeDrawRaf = requestAnimationFrame(() => {
+    routeDrawRaf = 0;
+    shareDrawRouteOverlay();
+    // 照片堆/角标也并进这一帧，理由同主页面 static/app.js 的 scheduleRouteDraw：
+    // 各自单独挂 mapmove 会让每次地图移动多跑几趟，而且落在不同的帧上。
+    // 角标排在照片堆后面，换行程时才盖得住（见 clearMap 之后那次重排的注释）。
+    positionPhotoStacks();
+    positionPhotoBadges();
+  });
 }
 (function initRouteOverlaySync() {
   const bind = () => {
@@ -1837,16 +1845,7 @@ let photoLayerRetry = 0;         // 地图图层树未就绪时的重试计数
   tmBindMapPhotoTap(document.getElementById('map'));
 })();
 
-(function initPhotoStackLayerSync() {
-  // 地图任何变换都要跟着重排。mapmove 在拖动过程中持续触发，保证跟手。
-  const relay = () => positionPhotoStacks();
-  const bind = () => {
-    if (!map || !map.on) return setTimeout(bind, 200);
-    ['mapmove', 'zoomchange', 'movend', 'zoomend', 'resize', 'rotatechange', 'pitchchange']
-      .forEach(ev => { try { map.on(ev, relay); } catch (e) {} });
-  };
-  bind();
-})();
+// 照片堆/角标的重排已经并进 shareScheduleRouteDraw 那个 rAF 里了，这里不再单独挂 mapmove。
 
 function shareToggleLayerPhotos(on, silent) {
   const cb = $('#lay-photos');

@@ -2025,10 +2025,15 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
 /* 自绘路线层：压在照片堆(100)之上、轨迹点(300)之下。
    这两层都是我自己插的，顺序由这里的 z-index 决定，不依赖高德内部结构。 */
 .route-svg-layer {
+  /* 显式写 position 不只是为了定位：相邻兄弟（照片堆层 100、marker 容器 300）
+     全都带 position，这一条是让 SVG 也参与同一个层叠上下文比大小。
+     同层的 SVG 覆盖物层本来就是 absolute（高德连它上面的 svg 子元素都给
+     absolute），站到同一起跑线上才不会被它整片盖住。 */
   position: absolute; left: 0; top: 0; width: 100%; height: 100%;
   z-index: 105;
   pointer-events: none;      /* 点击仍交给高德那条（透明的）线，路段选择不受影响 */
   overflow: visible;
+  will-change: transform;
 }
 
 .photo-stack-layer {
@@ -2094,6 +2099,22 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
   text-align: center;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
   z-index: 20;
+}
+/* 视频首帧的 ▶ 标识：压在缩略图左下角。
+   用半透明黑底是为了在雪景/浅色樱花这类亮缩略图上也能看清。 */
+.photo-stack-play {
+  position: absolute;
+  left: 2px; bottom: 2px;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .58);
+  color: #fff;
+  font-size: 8px;
+  line-height: 15px;
+  text-align: center;
+  text-indent: 1px;   /* ▶ 字形左重右轻，往右挪 1px 才视觉居中 */
+  pointer-events: none;
+  z-index: 21;
 }
 
 /* 高德地图版权/logo：压到最底层，避免遮挡弹窗（路径段对话框、模态框等）。

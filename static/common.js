@@ -1298,18 +1298,24 @@ function tmBindMapPhotoTap(mapEl, onMiss) {
   }, { capture: true, passive: false });
 }
 
-// 把每个堆挪到它经纬度对应的屏幕位置。地图一动就要重算，所以要够轻。
-function positionPhotoStacks() {
+// 📷 角标的重排。和照片堆分开成两个函数，是为了让调用方能控制先后：
+// 两者同住一层，谁后写 left/top 谁在上面 —— 换行程时角标要走上一帧的旧坐标，
+// 必须排在照片堆后面重排一次才能盖住（见 clearMap 之后的注释）。
+function positionPhotoBadges() {
   if (!map || !map.lngLatToContainer) return;
-  // 地图每动一次都顺手确认层还挂在正确的地方（高德重建图层树时会掉出来）
-  if (photoStackLayer) ensurePhotoStackLayer();
-  // 📷 角标和照片堆在同一层，一起重排
   for (let i = 0; i < photoBadgeItems.length; i++) {
     const b = photoBadgeItems[i];
     const q = map.lngLatToContainer(new AMap.LngLat(b.lng, b.lat));
     b.el.style.left = Math.round(q.x + b.dx) + 'px';
     b.el.style.top = Math.round(q.y + b.dy) + 'px';
   }
+}
+
+// 把每个堆挪到它经纬度对应的屏幕位置。地图一动就要重算，所以要够轻。
+function positionPhotoStacks() {
+  if (!map || !map.lngLatToContainer) return;
+  // 地图每动一次都顺手确认层还挂在正确的地方（高德重建图层树时会掉出来）
+  if (photoStackLayer) ensurePhotoStackLayer();
   if (!photoStackItems.length) return;
   for (let i = 0; i < photoStackItems.length; i++) {
     const it = photoStackItems[i];
