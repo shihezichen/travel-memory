@@ -284,3 +284,86 @@ def test_giving_up_an_unfinished_upload_clears_it(chunky_page, e2e_user, big_vid
                     timeout=15000)
     assert _sessions(page, e2e_user, pid) == []
     assert _server_media(page, e2e_user, pid) == []
+
+
+# ---------------------------------------------------------------------------
+# 选文件入口：「＋」按钮记住上次用过的目录
+# ---------------------------------------------------------------------------
+# pickMediaFiles() 优先走 File System Access API（showOpenFilePicker + 固定 id，
+# 浏览器自己记住目录），不支持或出错时回落到 <input type="file">。
+# 原生文件对话框在自动化里点不开，所以这里把 showOpenFilePicker 换成桩，
+# 校验的是**分支选得对不对**：
+#   - 支持 → 必须带着那个固定 id 调 showOpenFilePicker，不许去点 input
+#   - 用户取消（AbortError）→ 安安静静什么都不做，不许回落再弹一次
+#   - 其它异常 → 必须回落到 input，别把上传入口整哑了
+PICKER_ID = "travel-memory-media"
+
+
+def _stub_picker(page, behaviour):
+    """装一个 showOpenFilePicker 桩 + 记录 input.click() 有没有被调用。"""
+    page.eval(f"""
+      window.__pickerCalls = [];
+      window.__inputClicks = 0;
+      const inp = document.getElementById('file-input');
+      const realClick = inp.click.bind(inp);
+      inp.click = () => {{ window.__inputClicks++; }};
+      window.showOpenFilePicker = async (opts) => {{
+        window.__pickerCalls.push(opts);
+        const behaviour = {behaviour!r};
+        if (behaviour === 'abort') {{
+          const e = new Error('user cancelled'); e.name = 'AbortError'; throw e;
+        }}
+        if (behaviour === 'boom') throw new TypeError('unsupported option');
+        return [];
+      }};
+      // 末尾必须留一个非函数的完成值：Playwright 对「求值结果是函数」的脚本会
+      // 顺手把它调一遍，上面那个赋值的完成值正好是箭头函数，会凭空多出一次调用。
+      window.__pickerStubbed = true;
+    """)
+
+
+def _click_add(page):
+    page.eval("document.querySelector('#media-grid .media-add').click()")
+    page.wait_ms(200)
+
+
+def _noise(page):
+    """页面已有的报错条数。登录前那次会话探测本来就会留下几条 401，
+    和选文件无关 —— 所以只比「点了＋之后有没有新增」，不要求整页干净。"""
+    return len(page.page_errors) + len(page.console_errors)
+
+
+def test_add_button_uses_directory_remembering_picker(page, e2e_user):
+    """支持 File System Access API 时，「＋」走 showOpenFilePicker 并带上固定 id。"""
+    _open_detail(page, e2e_user, idx=1)
+    _stub_picker(page, "ok")
+    _click_add(page)
+
+    calls = page.eval("window.__pickerCalls")
+    assert len(calls) == 1, "「＋」没有走 showOpenFilePicker"
+    # id 是「记住目录」的全部机制：丢了它，每次都从默认目录开始
+    assert calls[0].get("id") == PICKER_ID
+    assert calls[0].get("multiple") is True
+    assert page.eval("window.__inputClicks") == 0, "不该同时再弹一次原生 input"
+
+
+def test_cancelling_the_picker_does_nothing(page, e2e_user):
+    """用户点「取消」→ 不回落、不报错、不弹第二个框。"""
+    _open_detail(page, e2e_user, idx=1)
+    _stub_picker(page, "abort")
+    before = _noise(page)
+    _click_add(page)
+
+    assert page.eval("window.__inputClicks") == 0, "取消之后又弹了一次 input"
+    assert _noise(page) == before, "用户点取消不该在控制台留下任何报错"
+
+
+def test_picker_failure_falls_back_to_file_input(page, e2e_user):
+    """showOpenFilePicker 抛了别的异常 → 必须回落到 <input type=file>。"""
+    _open_detail(page, e2e_user, idx=1)
+    _stub_picker(page, "boom")
+    before = _noise(page)
+    _click_add(page)
+
+    assert page.eval("window.__inputClicks") == 1, "没有回落到原生 input，上传入口哑了"
+    assert _noise(page) == before, "回落是正常分支，不该把异常漏到控制台"

@@ -1846,8 +1846,56 @@ function buildMediaAddCell() {
   const cell = el('div', 'media-item media-add');
   cell.title = '添加照片/视频';
   cell.appendChild(el('span', 'media-add-plus', '＋'));
-  cell.onclick = () => $('#file-input').click();
+  cell.onclick = () => pickMediaFiles();
   return cell;
+}
+
+// ---------- 选文件：停在上次用过的目录 ----------
+// <input type="file"> 每次都从浏览器的默认目录开始。手机上无所谓（弹的是相册），
+// 桌面上却很烦：整理一趟旅行要从同一个目录里分好几批挑照片，每次都得重新翻一遍。
+//
+// File System Access API 的 showOpenFilePicker 带一个 id 参数：同一个 id，浏览器
+// 自己记住上次选文件的目录，下次从那儿打开，跨会话有效，不需要我们存任何东西
+// （也存不了 —— 目录句柄不让持久化到 localStorage）。
+//
+// 不支持的浏览器（Firefox / Safari / 所有手机）原样回落到 <input type="file">，
+// 手机上更是**故意**回落：系统相册选择器比文件管理器好用得多。
+const MEDIA_PICKER_ID = 'travel-memory-media';
+
+const MEDIA_PICKER_TYPES = [{
+  description: '照片和视频',
+  accept: {
+    'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.bmp', '.avif'],
+    'video/*': ['.mp4', '.mov', '.m4v', '.webm', '.avi', '.mkv', '.3gp'],
+  },
+}];
+
+async function pickMediaFiles() {
+  // 手机 / 不支持的浏览器 → 原来的 input，行为完全不变
+  if (!window.showOpenFilePicker || isTouchDevice()) return $('#file-input').click();
+
+  let handles;
+  try {
+    handles = await window.showOpenFilePicker({
+      id: MEDIA_PICKER_ID,   // ← 记住目录全靠它，别改名，改了等于把用户的记忆清零
+      multiple: true,
+      types: MEDIA_PICKER_TYPES,
+      excludeAcceptAllOption: false,
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;   // 用户点了「取消」，什么都不做
+    // 其它异常（旧版内核不认 types、iframe 里没权限……）：回落，别把上传入口整坏了
+    return $('#file-input').click();
+  }
+
+  if (!handles || !handles.length || !currentPointId) return;
+  let files;
+  try {
+    files = await Promise.all(handles.map(h => h.getFile()));
+  } catch (err) {
+    return tmToast('读取文件失败，请重试');
+  }
+  startUploads(files);
 }
 
 // ---------- 上传：占位格 + 环形进度 + 并发 ----------
