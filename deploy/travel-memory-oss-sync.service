@@ -1,0 +1,12 @@
+[Unit]
+Description=Travel Memory — uploads/ 增量同步到阿里云 OSS
+# 网络没起来时跑了也是白跑
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/travel-memory
+ExecStart=%h/travel-memory/ops/sync-oss.sh
+# 同步失败不该把 timer 标成 failed 一直告警 —— 下一轮会重试，
+# 而且失败的后果只是新图晚几分钟上云，不影响站点可用。
+SuccessExitStatus=0 1

@@ -26,6 +26,57 @@ body {
    纵向仍保持 visible。 */
 .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow-x: clip; }
 
+/* ---------- 手机端：顶部两条（顶栏 + 账号/统计条）可收起 ---------- */
+/* 小屏上这两条加起来要吃掉 90px 左右，看地图时纯属占地方。
+   收起用 max-height 动画而不是 display:none —— 后者没有过渡，一闪就没了，
+   人会分不清是收起来了还是页面出了问题。 */
+.chrome-toggle { display: none; }
+@media (max-width: 768px) {
+  .chrome-toggle {
+    position: absolute; left: 50%; top: 0; transform: translateX(-50%);
+    z-index: 9;
+    display: flex; align-items: center; justify-content: center;
+    width: 62px; height: 22px; padding: 0;
+    border: 1px solid var(--border); border-top: none;
+    border-radius: 0 0 11px 11px;
+    background: rgba(255, 255, 255, .92);
+    color: var(--muted); cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .chrome-toggle svg {
+    width: 18px; height: 18px;
+    fill: none; stroke: currentColor; stroke-width: 2.2;
+    stroke-linecap: round; stroke-linejoin: round;
+    transition: transform .22s ease;
+  }
+  /* 收起态：箭头翻个面表示「再点一下把它叫回来」；把手也从「吊在顶栏下沿的挂片」
+     变成一颗浮在地图上的独立小药丸 —— 贴着屏幕最上沿的话，会被浏览器地址栏
+     和刘海区蹭掉一半。 */
+  body.chrome-hidden .chrome-toggle svg { transform: rotate(180deg); }
+  body.chrome-hidden .chrome-toggle {
+    top: calc(8px + env(safe-area-inset-top, 0px));
+    border-radius: 11px; border-top: 1px solid var(--border);
+  }
+  .topbar, .userbar {
+    max-height: 120px; overflow: hidden;
+    transition: max-height .22s ease, opacity .18s ease,
+                padding .22s ease, border-width .22s ease;
+  }
+  body.chrome-hidden .topbar,
+  body.chrome-hidden .userbar {
+    max-height: 0; opacity: 0;
+    padding-top: 0; padding-bottom: 0;
+    border-bottom-width: 0;
+    pointer-events: none;
+  }
+  /* 地图全屏时整条顶栏本来就看不见，把手也别露出来 */
+  .map.map-fullscreen .chrome-toggle { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar, .userbar, .chrome-toggle svg { transition: none; }
+}
+
 /* 顶栏 */
 .topbar {
   display: flex; align-items: center; gap: 10px;
@@ -546,6 +597,79 @@ body.map-fullscreen-on { overflow: hidden; }
   background: rgba(0, 0, 0, .6); color: #fff; font-size: 13px;
   cursor: pointer;
 }
+/* 100% 之后服务端还在忙（合并分片 / 生成缩略图 / 抽视频封面）时显示的一行字。
+   没有它的时候进度条满了就一动不动，人只能猜是不是挂了。 */
+.up-stage {
+  position: absolute; left: 2px; right: 2px; bottom: 26px; z-index: 4;
+  text-align: center; color: #fff;
+  font-size: 9.5px; font-weight: 700; line-height: 1.3;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .85);
+  pointer-events: none;
+}
+.up-stage:empty { display: none; }
+.media-grid[data-cols="5"] .up-stage { display: none; }
+
+/* 上传中的操作条：本地预览 / 暂停 / 取消 */
+.up-acts {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 3px 0 4px;
+  background: linear-gradient(to top, rgba(0, 0, 0, .78), rgba(0, 0, 0, 0));
+}
+.up-act {
+  width: 22px; height: 22px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 50%;
+  background: rgba(255, 255, 255, .92); color: #111827;
+  font-size: 10px; line-height: 1; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.up-act:active { background: #fff; }
+.up-act-cancel { background: rgba(239, 68, 68, .94); color: #fff; font-size: 14px; }
+.media-grid[data-cols="5"] .up-acts { gap: 3px; padding: 2px 0; }
+.media-grid[data-cols="5"] .up-act { width: 17px; height: 17px; font-size: 8px; }
+/* 字节全传完之后就没什么可暂停/取消的了（服务端已经在处理），只留本地预览 */
+.media-uploading.processing .up-act-pause,
+.media-uploading.processing .up-act-cancel { display: none; }
+/* 失败态有自己那套 ↻ / ×，操作条让位 */
+.media-item.up-failed .up-acts { display: none; }
+/* 暂停态：进度环停下来，压暗一档，和「在传」区分开 */
+.media-uploading.paused .up-prev { filter: brightness(.32) saturate(.5); }
+.media-uploading.paused .up-fg { stroke: rgba(255, 255, 255, .55); }
+
+/* 视频传完之后后台还在转清晰度档位，转完这个小标自己消失 */
+.media-transcoding {
+  position: absolute; left: 3px; bottom: 3px; z-index: 3;
+  padding: 1px 5px; border-radius: 6px;
+  background: rgba(37, 99, 235, .88); color: #fff;
+  font-size: 9px; font-weight: 700; line-height: 1.5;
+  pointer-events: none;
+}
+
+/* 上传中点「▶」看的是设备本地那份文件，完全不走网络 */
+.local-preview {
+  position: fixed; inset: 0; z-index: 3000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .93);
+}
+.local-preview-media {
+  max-width: 94vw; max-height: 84vh;
+  border-radius: 6px; background: #000;
+}
+.local-preview-note {
+  position: absolute; left: 14px; top: 18px;
+  color: rgba(255, 255, 255, .72); font-size: 12px;
+}
+.local-preview-close {
+  position: absolute; right: 12px; top: 12px;
+  width: 38px; height: 38px; padding: 0 0 2px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255, 255, 255, .16); border-radius: 50%;
+  background: rgba(0, 0, 0, .45); color: #fff;
+  font-size: 22px; line-height: 1; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .media-uploading.processing .up-ring svg { animation: none; }
 }
@@ -742,7 +866,7 @@ body.map-fullscreen-on { overflow: hidden; }
   .rm-seg { width: 30px; height: 30px; font-size: 15px; }
 
   /* 灯箱左右切换箭头在窄屏缩小，避免遮挡图片 */
-  .lightbox-prev, .lightbox-next { font-size: 32px; padding: 0 8px; }
+  .lightbox-prev, .lightbox-next { font-size: 22px; padding: 0 0 2px; }
 
   /* 详情页单张照片删除按钮加大，避免误触 */
   .media-item .del { width: 28px; height: 28px; font-size: 15px; line-height: 28px; }
@@ -1265,18 +1389,31 @@ body.map-fullscreen-on { overflow: hidden; }
   display: flex; align-items: center; justify-content: center;
   max-width: 100%; max-height: 100%;
 }
-/* 放左上角：右上是关闭按钮、正上方是计数、下方是视频原生控制条，只有这儿是空的 */
+/* 放左上角：右上是关闭/下载、正上方是计数、下方是视频原生控制条，只有这儿是空的。
+   高度和右上角那两枚圆形控件对齐（都是 --lb-ctl），三者放在同一条视觉基线上。 */
 .lb-quality-btn {
-  position: absolute; left: 8px; top: 8px; z-index: 11;
-  padding: 5px 11px; border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, .28);
-  background: rgba(0, 0, 0, .55); color: #fff;
-  font-size: 12px; line-height: 1.4; cursor: pointer;
+  position: absolute; left: 9px; top: 9px; z-index: 11;
+  height: var(--lb-tap); min-width: var(--lb-tap); padding: 0 13px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: none; color: #fff;
+  font-size: 12.5px; font-weight: 600; letter-spacing: .3px;
+  line-height: 1; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  transition: opacity .2s ease;
 }
-.lb-quality-btn:hover { background: rgba(0, 0, 0, .72); }
+/* 可见的那颗胶囊由 ::before 画，比按钮本体小一圈 —— 按钮保持 44px 的触摸下限，
+   眼睛看到的却是 38px。三枚控件都用这一招，视觉一致而不牺牲可点性。 */
+.lb-quality-btn::before {
+  content: ''; position: absolute; inset: 3px; z-index: -1;
+  border-radius: calc(var(--lb-ctl) / 2);
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: rgba(0, 0, 0, .45);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  transition: background .2s ease;
+}
+.lb-quality-btn:hover::before { background: rgba(0, 0, 0, .66); }
 .lb-quality-menu {
-  position: absolute; left: 8px; top: 40px; z-index: 12;
+  position: absolute; left: 12px; top: calc(var(--lb-tap) + 12px); z-index: 12;
   min-width: 132px; padding: 4px;
   border-radius: 10px; border: 1px solid rgba(255, 255, 255, .18);
   background: rgba(17, 24, 39, .94);
@@ -1326,26 +1463,24 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
    左上角被清晰度按钮占了、下方是视频原生控制条。44px 是移动端可靠的触摸下限，
    比清晰度按钮大一圈是故意的 —— 它旁边就是关闭，点错代价是关掉灯箱。 */
 .lightbox-download {
-  position: absolute; top: 14px; right: 62px; z-index: 11;
-  width: 44px; height: 44px; padding: 10px;
+  position: absolute; top: 9px; right: calc(var(--lb-tap) + 11px); z-index: 11;
+  width: var(--lb-tap); height: var(--lb-tap); padding: 0;
   display: flex; align-items: center; justify-content: center;
-  border: none; border-radius: 50%;
-  background: rgba(0, 0, 0, .42); color: #fff;
-  cursor: pointer; opacity: .85;
+  border: none; background: none; color: #fff;
+  cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: opacity .2s ease, background .2s ease;
+  transition: opacity .2s ease;
 }
 .lightbox-download[hidden] { display: none; }
-.lightbox-download:hover { opacity: 1; background: rgba(0, 0, 0, .62); }
-.lightbox-download:active { background: rgba(255, 255, 255, .2); }
 .lightbox-download svg {
-  width: 22px; height: 22px;
+  position: relative;
+  width: 19px; height: 19px;
   fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
 /* 档位菜单：右上角展开，样式跟清晰度菜单保持一致，只是靠右对齐 */
 .lb-download-menu {
-  position: absolute; top: 62px; right: 62px; z-index: 12;
+  position: absolute; top: calc(var(--lb-tap) + 12px); right: 12px; z-index: 12;
   min-width: 132px; padding: 4px;
   border-radius: 10px; border: 1px solid rgba(255, 255, 255, .18);
   background: rgba(17, 24, 39, .94);
@@ -1366,20 +1501,69 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
 .lightbox.zoomed .lightbox-download,
 .lightbox.zoomed .lb-download-menu { opacity: 0; pointer-events: none; }
 
+/* --lb-ctl 是**看得见**的尺寸，--lb-tap 是按钮的实际命中尺寸（移动端 44px 下限）。
+   两者之差由 ::before 的 inset 吃掉。 */
+.lightbox { --lb-ctl: 38px; --lb-tap: 44px; }
+/* 关闭、下载、清晰度三枚是同一套控件语言：同样的可见尺寸、同样的半透明底 +
+   细边 + 毛玻璃。原来它们一个是 36px 的文字「×」、一个是 44px 的实心圆、
+   一个是 5px 内边距的小胶囊，三种大小三种质感，堆在一起就是糊的。 */
 .lightbox-close {
-  position: absolute; top: 16px; right: 20px; z-index: 10;
-  font-size: 36px; color: #fff; cursor: pointer; line-height: 1;
-  opacity: .8; padding: 6px;
+  position: absolute; top: 9px; right: 9px; z-index: 13;
+  width: var(--lb-tap); height: var(--lb-tap); padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; color: #fff; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity .2s ease;
 }
-.lightbox-close:hover { opacity: 1; }
+.lightbox-close svg {
+  position: relative;
+  width: 18px; height: 18px;
+  fill: none; stroke: currentColor; stroke-width: 2.2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* 翻页箭头也收成同一枚圆片，不再是两个 48px 的裸字符 */
 .lightbox-prev, .lightbox-next {
-  position: absolute; top: 50%; transform: translateY(-50%);
-  font-size: 48px; color: #fff; cursor: pointer; opacity: .7;
-  padding: 0 16px; user-select: none; z-index: 10;
+  position: absolute; top: 50%; z-index: 10;
+  width: var(--lb-tap); height: var(--lb-tap);
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; color: #fff;
+  font-size: 24px; line-height: 1; padding: 0 0 2px;
+  cursor: pointer; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transform: translateY(-50%);
 }
-.lightbox-prev { left: 8px; }
-.lightbox-next { right: 8px; }
-.lightbox-prev:hover, .lightbox-next:hover { opacity: 1; }
+.lightbox-prev { left: 6px; }
+.lightbox-next { right: 6px; }
+/* 三枚圆形控件共用的那颗「可见圆片」 */
+.lightbox-close::before, .lightbox-download::before,
+.lightbox-prev::before, .lightbox-next::before {
+  content: ''; position: absolute; inset: 3px; z-index: -1;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: rgba(0, 0, 0, .45);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  transition: background .2s ease;
+}
+.lightbox-prev::before, .lightbox-next::before {
+  border-color: rgba(255, 255, 255, .14);
+  background: rgba(0, 0, 0, .38);
+}
+.lightbox-close:hover::before, .lightbox-download:hover::before,
+.lightbox-prev:hover::before, .lightbox-next:hover::before {
+  background: rgba(0, 0, 0, .66);
+}
+.lightbox-close:active::before, .lightbox-download:active::before {
+  background: rgba(255, 255, 255, .18);
+}
+
+/* ---------- 一段时间没操作就淡出（见 common.js 的 tmLightboxWake） ---------- */
+/* 只藏控件，不藏底部说明 —— 说明是内容，控件才是挡视线的那部分。 */
+.lightbox.idle .lightbox-close,
+.lightbox.idle .lightbox-download,
+.lightbox.idle .lightbox-prev,
+.lightbox.idle .lightbox-next,
+.lightbox.idle .lightbox-counter,
+.lightbox.idle .lb-quality-btn { opacity: 0; pointer-events: none; }
 /* 两点之间的切换按钮：浮动在两个点之间，不独占一行、不撑开间距 */
 .seg-divider {
   position: relative;

@@ -433,6 +433,7 @@ TOOLS = [
                     "end_date": {"type": "string"},
                     "description": {"type": "string"},
                     "route_mode": {"type": "string", "enum": ["drive", "line"]},
+                    "is_waypoint": {"type": "string", "enum": ["0", "1"], "description": "是否只是路过的辅助点（不进编号、地图上不可点）。默认 '0'"},
                     "client_request_id": {"type": "string", "description": "幂等键（可选）：网络重试时传相同值避免重复建点，建议用 UUID"},
                 },
                 "required": ["trip_id", "name"],
@@ -455,6 +456,7 @@ TOOLS = [
                     "end_date": {"type": "string"},
                     "description": {"type": "string"},
                     "route_mode": {"type": "string", "enum": ["drive", "line"]},
+                    "is_waypoint": {"type": "string", "enum": ["0", "1"], "description": "是否只是路过的辅助点（不进编号、地图上不可点）。默认 '0'"},
                 },
                 "required": ["point_id", "name"],
             },
@@ -557,7 +559,8 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "trip_id": {"type": "integer", "description": "行程 ID"},
-                    "lens": {"type": "string", "description": "视角镜头：成长/遗憾/同行/幽默，默认成长"},
+                    "lens": {"type": "string", "enum": ["成长", "遗憾", "同行", "幽默"],
+                             "description": "视角镜头，默认成长。传别的值领域层会 400"},
                 },
                 "required": ["trip_id"],
             },
@@ -579,7 +582,8 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "mode": {"type": "string", "description": "rewind/preview/counterfactual"},
+                    "mode": {"type": "string", "enum": ["rewind", "preview", "counterfactual"],
+                             "description": "rewind 回溯 / preview 预演 / counterfactual 反事实"},
                     "date": {"type": "string", "description": "日期 YYYY-MM-DD（rewind/preview 需要）"},
                     "trip_id": {"type": "integer", "description": "行程 ID（counterfactual 需要）"},
                 },

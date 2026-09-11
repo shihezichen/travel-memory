@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import db
 import download
 import transcode
-from config import AMAP_KEY, AMAP_SECURITY, OSRM_URL
+from config import AMAP_KEY, AMAP_SECURITY, OSRM_URL, MEDIA_BASE_URL
 from routers.deps import (
     current_user, require_owner, amap_version, amap_key_notice_html, _route_cache_key,
 )
@@ -48,6 +48,7 @@ def share_page(token: str, request: Request):
     html = (BASE / "static" / "share.html").read_text(encoding="utf-8")
     html = html.replace("__AMAP_KEY__", AMAP_KEY)
     html = html.replace("__AMAP_SECURITY__", AMAP_SECURITY)
+    html = html.replace("__MEDIA_BASE__", MEDIA_BASE_URL)
     html = html.replace("__AMAP_VERSION__", amap_version(request))
     html = html.replace("<body>", "<body>" + amap_key_notice_html(), 1)
     return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})

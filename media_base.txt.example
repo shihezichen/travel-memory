@@ -1,0 +1,3 @@
+# 媒体分发前缀。留空 = 媒体走本机 /uploads/（frp 隧道，4Mbps 硬顶）。
+# 填成 OSS/CDN 的 origin 后，/uploads/ 链接改指对象存储。
+# https://<bucket>.oss-cn-qingdao.aliyuncs.com

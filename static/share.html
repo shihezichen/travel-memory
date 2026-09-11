@@ -8,21 +8,22 @@
        结果就是浅色地图上出现浅色图标。声明后浏览器不再自动变暗。 -->
   <meta name="color-scheme" content="light">
   <title>旅行记忆 · 分享</title>
-  <link rel="icon" href="/static/icon.svg?v=20260911v4" type="image/svg+xml">
-  <link rel="icon" href="/static/favicon-32.png?v=20260911v4" sizes="32x32">
-  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260911v4">
-  <link rel="manifest" href="/static/site.webmanifest?v=20260911v4">
+  <link rel="icon" href="/static/icon.svg?v=20260911v6" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png?v=20260911v6" sizes="32x32">
+  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260911v6">
+  <link rel="manifest" href="/static/site.webmanifest?v=20260911v6">
   <meta name="theme-color" content="#FF8A00">
-  <link rel="stylesheet" href="/static/style.css?v=20260911v4">
+  <link rel="stylesheet" href="/static/style.css?v=20260911v6">
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
+    window.MEDIA_BASE = "__MEDIA_BASE__";
   </script>
   <script src="https://webapi.amap.com/maps?v=__AMAP_VERSION__&key=__AMAP_KEY__&plugin=AMap.Driving,AMap.Geolocation"></script>
 </head>
 <body class="share-page">
   <div class="app">
     <header class="topbar">
-      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260911v4" alt="" width="22" height="22"><span>旅行记忆</span></div>
+      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260911v6" alt="" width="22" height="22"><span>旅行记忆</span></div>
       <div class="share-title" id="share-title">载入中…</div>
     </header>
     <div class="userbar">
@@ -125,7 +126,10 @@
   </div>
 
   <div id="lightbox" class="lightbox hidden">
-    <div class="lightbox-close" id="lightbox-close">×</div>
+    <div class="lightbox-close" id="lightbox-close" role="button" tabindex="0"
+       title="关闭" aria-label="关闭">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </div>
     <!-- 保存到本地。放在关闭按钮左边：右上角是灯箱里唯一稳定不被内容挤走的位置，
          照片和视频都用同一个入口，移动端 44px 触摸区。实际下载由服务端的
          Content-Disposition: attachment 促成（见 download.py），不靠 <a download>。 -->
@@ -141,7 +145,7 @@
     <div class="lightbox-counter" id="lightbox-counter"></div>
   </div>
 
-  <script src="/static/common.js?v=20260911v4"></script>
-  <script src="/static/share.js?v=20260911v4"></script>
+  <script src="/static/common.js?v=20260911v6"></script>
+  <script src="/static/share.js?v=20260911v6"></script>
 </body>
 </html>

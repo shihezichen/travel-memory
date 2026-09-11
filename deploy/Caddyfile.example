@@ -1,0 +1,56 @@
+# Travel Memory —— 最小可用的 Caddy 反代配置。
+#
+# 为什么开发环境也要挂它（而不是等上生产再说）：
+#   浏览器把「剪贴板 API、地理定位、crypto.subtle」全部锁在安全上下文里
+#   （https 或 localhost）。用手机连局域网 IP 调试时，复制分享链接、
+#   「定位到我的位置」、上传时算文件指纹全都会走降级分支 —— 你调的是降级路径，
+#   用户跑的是正常路径，行为不一样的 bug 只会在上线后才冒出来。
+#
+# 用法：
+#   cp deploy/Caddyfile.example /etc/caddy/Caddyfile   # 改成你的域名
+#   sudo systemctl reload caddy
+#
+# 前提：应用自己监听回环即可（不要绑 0.0.0.0），TLS 交给 Caddy。
+#   ExecStart=... uvicorn app:app --host 127.0.0.1 --port 8084
+
+# ---------- 有公网域名：Caddy 自动签发 + 自动续期 ----------
+travel.example.com {
+	encode zstd gzip
+
+	# 媒体是大文件，给足超时；其余接口毫秒级，用默认值即可。
+	reverse_proxy 127.0.0.1:8084 {
+		flush_interval -1          # 上传进度/流式响应不要被缓冲住
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# 上传单个视频默认上限 200MB（app.py 的 MAX_UPLOAD_VIDEO，可用
+	# TRAVEL_MAX_UPLOAD_VIDEO_MB 调）。这里留一点余量给 multipart 边界；
+	# 不放开的话大文件会被 Caddy 先拒掉，前端只看到一个莫名其妙的 413。
+	request_body {
+		max_size 210MB
+	}
+
+	log {
+		output file /var/log/caddy/travel-memory.log
+		format json
+	}
+}
+
+# ---------- 本机 / 局域网开发：用 Caddy 的内部 CA 签自签证书 ----------
+# 手机真机调试时，把 Caddy 的根证书装进手机（信任设置里打开），
+# 就能在真机上跑完整的 https 路径，和生产完全一致。
+# 根证书位置： caddy trust  或
+#   ~/.local/share/caddy/pki/authorities/local/root.crt
+#
+# https://localhost, https://192.168.1.10 {
+# 	tls internal
+# 	reverse_proxy 127.0.0.1:8084 {
+# 		flush_interval -1
+# 	}
+# 	request_body {
+# 		max_size 210MB
+# 	}
+# }

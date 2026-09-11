@@ -16,6 +16,11 @@ RestartSec=3
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=%h/travel-memory
 Environment=PATH=%h/travel-memory/.venv/bin:/usr/local/bin:/usr/bin:/bin
+# MCP 端点(/mcp)会带着调用者的 API Key 回调本机的领域 API(/api/ai/*)。
+# 这个地址必须和上面 ExecStart 里真正监听的协议/端口一致，否则所有 MCP
+# 工具都会报「领域 API 不可达」。回环 https 的证书主机名不匹配是正常的，
+# mcp_http.py 只对回环地址跳过校验。
+Environment=TRAVEL_BASE_URL=https://127.0.0.1:8443
 
 # ---- 需要按你自己的环境填写的三个值 ----
 # 1) 高德 Key 的白名单 appname。源码里不写死（本仓库是公开的），由这里注入。

@@ -106,6 +106,18 @@
     var zoom = opts.zoom == null ? 10 : opts.zoom;
     var center = opts.center || [104.0, 35.0];
 
+    /* 真高德会在容器里建一棵图层树，其中 .amap-layers 是我们自己插「照片堆 /
+       📷 角标层」和「自绘路线层」的宿主（见 common.js 的 ensurePhotoStackLayer）。
+       桩里必须有它，否则那两层永远建不出来，相关交互在 E2E 里是彻底的盲区。
+       pointer-events:none —— 桩不该抢走地图按钮的点击，角标自己是 auto。 */
+    if (el && !el.querySelector('.amap-layers')) {
+      var layerHost = document.createElement('div');
+      layerHost.className = 'amap-layers';
+      layerHost.style.cssText =
+        'position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;z-index:1';
+      el.insertBefore(layerHost, el.firstChild);
+    }
+
     var self = withEvents({
       __stub: 'map',
       __el: el,

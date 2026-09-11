@@ -1,0 +1,12 @@
+[Unit]
+Description=Travel Memory — 每 2 分钟把新上传的媒体推到 OSS
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+# 2 分钟是「新传的照片多久能在页面上显示」的上界。再密没意义：
+# ossutil sync 是增量的，没有新文件时一趟只花不到 1 秒。
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

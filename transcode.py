@@ -34,6 +34,8 @@ import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+from config import media_url
+
 import db
 from media import _ffmpeg_path
 
@@ -475,7 +477,7 @@ def retry_failed(media_id: int, src_path):
 def variant_url(filename: str) -> str:
     """档位文件的访问 URL。带 v= 是为了命中 CacheHeaderStaticFiles 的
     immutable 长缓存分支 —— 档位文件内容永不改变，重复播放不该再回源。"""
-    return f"/uploads/variants/{filename}?v=1"
+    return media_url(f"/uploads/variants/{filename}?v=1")
 
 
 def attach_qualities(media_list):
@@ -509,7 +511,7 @@ def build_quality_list(media_row, variants) -> list:
     out = [{
         "label": ORIGINAL_LABEL,
         "name": "原画",
-        "url": f"/uploads/{media_row['filename']}?v=1",
+        "url": media_url(f"/uploads/{media_row['filename']}?v=1"),
         "status": "done",
         "width": None, "height": None, "bitrate": None, "filesize": None,
         "short_side": None,

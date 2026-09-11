@@ -57,7 +57,7 @@ from routers.agent_api import router as agent_api_router
 from routers.console import router as console_router
 from routers.share import router as share_router
 
-from config import BASE, AMAP_KEY, AMAP_SECURITY, OSRM_URL, OSRM_TIMEOUT  # noqa: F401
+from config import BASE, AMAP_KEY, AMAP_SECURITY, OSRM_URL, OSRM_TIMEOUT, MEDIA_BASE_URL, media_url  # noqa: F401
 UPLOAD_DIR = BASE / "uploads"
 # 全新克隆没有 uploads/（它在 .gitignore 里），而下面 app.mount 的 StaticFiles
 # 在目录不存在时会直接抛异常 —— 服务连启动都启动不了。这里先建好。
@@ -452,6 +452,7 @@ def index(request: Request):
     html = (BASE / "static" / "index.html").read_text(encoding="utf-8")
     html = html.replace("__AMAP_KEY__", AMAP_KEY)
     html = html.replace("__AMAP_SECURITY__", AMAP_SECURITY)
+    html = html.replace("__MEDIA_BASE__", MEDIA_BASE_URL)
     html = html.replace("__AMAP_VERSION__", amap_version(request))
     html = html.replace("__ICP_FOOTER__", icp_footer_html())
     html = html.replace("<body>", "<body>" + amap_key_notice_html(), 1)
@@ -1346,8 +1347,8 @@ def api_search_media(request: Request, trip_id: int,
         date_to=date_to or None,
     )
     for r in results:
-        r["url"] = f"/uploads/{r['filename']}"
-        r["thumb_url"] = f"/uploads/thumbs/{r['thumb_filename']}" if r.get("thumb_filename") else None
+        r["url"] = media_url(f"/uploads/{r['filename']}")
+        r["thumb_url"] = media_url(f"/uploads/thumbs/{r['thumb_filename']}") if r.get("thumb_filename") else None
     return {"results": results, "count": len(results)}
 
 
@@ -1366,8 +1367,8 @@ def api_trip_media(request: Request, trip_id: int):
             "point_name": m.get("point_name"),
             "filename": m["filename"],
             "thumb_filename": m.get("thumb_filename"),
-            "url": f"/uploads/{m['filename']}",
-            "thumb_url": (f"/uploads/thumbs/{m['thumb_filename']}"
+            "url": media_url(f"/uploads/{m['filename']}"),
+            "thumb_url": (media_url(f"/uploads/thumbs/{m['thumb_filename']}")
                           if m.get("thumb_filename") else None),
             # 优先 EXIF 拍摄时间，缺失时退到上传时间（排序/分组都用它）
             "taken_at": m.get("exif_time") or m.get("created_at"),
@@ -1447,11 +1448,11 @@ def _make_album(aid: int, point_id: int, items: list) -> dict:
         "count": len(items),
         "photo_count": sum(1 for it in items if it["type"] == "photo"),
         "video_count": sum(1 for it in items if it["type"] == "video"),
-        "cover_url": f"/uploads/thumbs/{cover['thumb_filename']}" if cover.get("thumb_filename") else None,
+        "cover_url": media_url(f"/uploads/thumbs/{cover['thumb_filename']}") if cover.get("thumb_filename") else None,
         "media": [{
             "id": it["id"], "type": it["type"],
-            "url": f"/uploads/{it['filename']}",
-            "thumb_url": f"/uploads/thumbs/{it['thumb_filename']}" if it.get("thumb_filename") else None,
+            "url": media_url(f"/uploads/{it['filename']}"),
+            "thumb_url": media_url(f"/uploads/thumbs/{it['thumb_filename']}") if it.get("thumb_filename") else None,
             "exif_time": it.get("exif_time"),
             "point_id": it["point_id"],
             "caption": it.get("caption") or "",

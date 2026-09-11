@@ -14,6 +14,14 @@
 
 function $(sel) { return document.querySelector(sel); }
 
+// 媒体 URL 前缀。window.MEDIA_BASE 由服务端注入（见 config.MEDIA_BASE_URL）：
+// 空串 = 媒体走本机 /uploads/；填了就指向 OSS/CDN，媒体流量绕开 frp 隧道。
+function mediaUrl(path) {
+  const base = window.MEDIA_BASE || '';
+  return base && path.indexOf('/uploads/') === 0 ? base + path : path;
+}
+
+
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -208,6 +216,12 @@ function saveQualityPref(label) {
   try { localStorage.setItem(VIDEO_QUALITY_KEY, label); } catch (e) {}
 }
 
+// 回到「自动」。手动选过一次之后就一直沿用那一档 —— 要是当初随手点了「原画」，
+// 之后每段视频都按原画起播，在移动网络上就是一路缓冲，而界面上没有任何回头路。
+function clearQualityPref() {
+  try { localStorage.removeItem(VIDEO_QUALITY_KEY); } catch (e) {}
+}
+
 // 自动降级：算一个「短边预算」，取不超过预算的最高档。
 // 拿不到 navigator.connection（Safari/Firefox 都没有）就按未知处理 —— 未知一律保守。
 function tmQualityBudget() {
@@ -292,7 +306,7 @@ function tmSwitchQuality(v, url) {
 function tmFallbackQualities(m) {
   return [{
     label: 'original', name: '原画', status: 'done',
-    url: '/uploads/' + m.filename + '?v=1',
+    url: mediaUrl('/uploads/' + m.filename + '?v=1'),
   }];
 }
 
@@ -310,15 +324,38 @@ function tmSetupQuality(wrap, v, m) {
   let current = null;
 
   function render() {
+    const auto = !loadQualityPref();
     btn.textContent = current ? (QUALITY_NAMES[current.label] || current.label) : '清晰度';
     menu.innerHTML = '';
+    // 「自动」永远排第一：它是默认状态，也是手动选过之后唯一的回头路
+    const autoRow = document.createElement('button');
+    autoRow.type = 'button';
+    autoRow.className = 'lb-quality-item' + (auto ? ' active' : '');
+    autoRow.innerHTML = '<span>自动</span><span class="lb-quality-tail">'
+      + esc(auto && current ? (QUALITY_NAMES[current.label] || current.label) : '按网络/屏幕')
+      + '</span>';
+    autoRow.onclick = (ev) => {
+      ev.stopPropagation();
+      menu.classList.add('hidden');
+      clearQualityPref();
+      const pick = tmPickQuality(qualities);
+      if (pick && (!current || pick.label !== current.label)) {
+        current = pick;
+        tmSwitchQuality(v, pick.url);
+        tmToast('已切换到自动（' + (QUALITY_NAMES[pick.label] || pick.label) + '）');
+      } else {
+        tmToast('已切回自动选档');
+      }
+      render();
+    };
+    menu.appendChild(autoRow);
     qualities.forEach(q => {
       const row = document.createElement('button');
       row.type = 'button';
       const ready = q.status === 'done' && q.url;
       row.className = 'lb-quality-item'
         + (ready ? '' : ' disabled')
-        + (current && q.label === current.label ? ' active' : '');
+        + (!auto && current && q.label === current.label ? ' active' : '');
       row.disabled = !ready;
       let tail = '';
       if (q.status === 'pending' || q.status === 'running') tail = '转码中';
@@ -353,7 +390,7 @@ function tmSetupQuality(wrap, v, m) {
 
   // 选默认档并起播
   current = tmPickQuality(qualities);
-  v.src = (current && current.url) || ('/uploads/' + m.filename + '?v=1');
+  v.src = (current && current.url) || mediaUrl('/uploads/' + m.filename + '?v=1');
   render();
 
   // 还有档位在转码 → 轮询刷新（转好了菜单里就能选了）。
@@ -503,6 +540,62 @@ document.addEventListener('click', (ev) => {
   menu.classList.add('hidden');
 });
 
+// ---------- 灯箱控件自动隐藏 ----------
+// 看视频的时候，右上角的关闭/下载、左右翻页箭头、清晰度按钮全都压在画面上。
+// 播放器的通行做法：一段时间没操作就淡出，再点一下画面又回来。
+// 只藏「操作控件」，不藏底部的说明文字 —— 那是内容不是控件。
+const LB_IDLE_MS = 3000;
+let _lbIdleTimer = 0;
+
+function tmLightboxWake() {
+  const box = document.getElementById('lightbox');
+  if (!box || box.classList.contains('hidden')) return;
+  box.classList.remove('idle');
+  clearTimeout(_lbIdleTimer);
+  _lbIdleTimer = setTimeout(() => {
+    // 菜单开着说明人正在选清晰度/下载档位，这时候藏掉等于把操作打断
+    if (box.querySelector('.lb-quality-menu:not(.hidden)')
+        || box.querySelector('.lb-download-menu:not(.hidden)')) {
+      tmLightboxWake();
+      return;
+    }
+    box.classList.add('idle');
+  }, LB_IDLE_MS);
+}
+
+// 控件已经淡出时，第一下点击只负责把它们唤回来 —— 不该顺带进全屏放大态。
+// 主界面和分享页的灯箱手势入口都先问一句这个。
+function tmLightboxIdleTapGuard() {
+  const box = document.getElementById('lightbox');
+  if (!box) return false;
+  const wasIdle = box.classList.contains('idle');
+  tmLightboxWake();
+  return wasIdle;
+}
+
+(function initLightboxIdle() {
+  const box = document.getElementById('lightbox');
+  if (!box) return;
+  ['pointerdown', 'pointermove', 'touchstart', 'wheel', 'keydown'].forEach(ev =>
+    box.addEventListener(ev, tmLightboxWake, { capture: true, passive: true }));
+  document.addEventListener('keydown', tmLightboxWake);
+  // 灯箱开合是靠 .hidden 类切的，盯着类变化即可，不用每个调用点都去插一行。
+  // 只在「显隐真的翻转了」时才动作 —— 否则我们自己加的 .idle 也会触发这个回调，
+  // 回调再把 .idle 摘掉，两下互相触发就转成死循环了。
+  let wasHidden = box.classList.contains('hidden');
+  new MutationObserver(() => {
+    const nowHidden = box.classList.contains('hidden');
+    if (nowHidden === wasHidden) return;
+    wasHidden = nowHidden;
+    if (nowHidden) {
+      clearTimeout(_lbIdleTimer);
+      box.classList.remove('idle');
+    } else {
+      tmLightboxWake();
+    }
+  }).observe(box, { attributes: true, attributeFilter: ['class'] });
+})();
+
 // 造一格媒体。只有当前这格的视频才自动播放，相邻格预载但不出声。
 function buildLightboxMedia(m, isCurrent) {
   if (m.type === 'video') {
@@ -513,7 +606,7 @@ function buildLightboxMedia(m, isCurrent) {
       ph.className = 'lightbox-media lb-video-poster';
       if (m.thumb_filename) {
         const im = document.createElement('img');
-        im.src = '/uploads/thumbs/' + m.thumb_filename;
+        im.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
         ph.appendChild(im);
       }
       ph.appendChild(Object.assign(document.createElement('span'),
@@ -537,12 +630,12 @@ function buildLightboxMedia(m, isCurrent) {
     return wrap;
   }
   const img = document.createElement('img');
-  img.src = '/uploads/' + m.filename;
+  img.src = mediaUrl('/uploads/' + m.filename);
   img.className = 'lightbox-media';
   // 原图缺失（历史数据/文件丢失）时回退缩略图，避免白屏
   img.onerror = () => {
     if (m.thumb_filename && img.src.indexOf('/thumbs/') === -1) {
-      img.src = '/uploads/thumbs/' + m.thumb_filename;
+      img.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
     }
   };
   return img;
@@ -1054,6 +1147,87 @@ function mapLayerDiag() {
   rows.push('堆 ' + document.querySelectorAll('.photo-stack').length +
             (document.querySelector('.photo-stack-layer.fallback') ? '（降级层）' : ''));
   return rows.join('\n');
+}
+
+// ---------- 照片堆 / 📷 角标的点击命中 ----------
+// 照片堆在折线层**之下**，而高德的矢量覆盖物层（SVG，pointer-events: auto）整片
+// 盖在上面，命中测试永远落不到照片堆上 —— 实测在堆的范围里取样 64 个点，
+// 命中堆 0 个、命中 SVG 层 40 个。所以点击得自己接：在 #map 的捕获阶段做一次
+// 矩形命中判定，落在某个堆里就当成点了这个堆。
+
+// 点/触在某个照片堆（或 📷 角标）的矩形里吗？命中就触发它，返回 true。
+function tmHitPhotoTargetAt(clientX, clientY) {
+  const mapEl = document.getElementById('map');
+  if (!mapEl) return false;
+  // 照片图层开着 → 判照片堆；关着 → 判 📷 角标（两者互斥显示）
+  const on = mapEl.classList.contains('photo-layer-on');
+  const list = on ? photoStackItems : photoBadgeItems;
+  if (!list || !list.length) return false;
+  // 倒序遍历：后加进 DOM 的在上面，重叠时优先命中
+  for (let i = list.length - 1; i >= 0; i--) {
+    const item = list[i].el;
+    if (!item.offsetParent) continue;      // 当前不可见的跳过
+    const r = item.getBoundingClientRect();
+    if (!r.width) continue;
+    const pad = 6;                         // 手指比鼠标粗，命中区四周放宽 6px
+    if (clientX >= r.left - pad && clientX <= r.right + pad &&
+        clientY >= r.top - pad && clientY <= r.bottom + pad) {
+      item.click();          // 复用堆/角标自己的处理（照片堆那边含 500ms 去重）
+      return true;
+    }
+  }
+  return false;
+}
+
+// 轨迹点、地图按钮、图层面板这些自己有事件，不能抢
+function tmIsMapOwnControl(target) {
+  return !!(target && target.closest && target.closest(
+    '.amap-marker, .map-fab, .layer-panel, .replay-bar, #add-point-bar, .amap-controls'));
+}
+
+// 给地图容器装上「点照片堆/角标」的命中处理。onMiss 是没命中时的兜底（主界面拿它
+// 判路线段），可不传。
+function tmBindMapPhotoTap(mapEl, onMiss) {
+  if (!mapEl) return;
+  mapEl.addEventListener('click', function (e) {
+    if (tmIsMapOwnControl(e.target)) return;
+    if (tmHitPhotoTargetAt(e.clientX, e.clientY)) {
+      e.stopPropagation();     // 别让底下的路线也把「路段面板」打开
+      e.preventDefault();
+      return;
+    }
+    if (onMiss) onMiss(e);
+  }, true);
+
+  // 手机上光有 click 不够：高德 2.0 的地图容器自己接管了触摸手势并 preventDefault，
+  // 浏览器于是**不再合成 click**，上面那个监听器一次都不触发 —— 表现就是
+  // 「点地图上的图片集图标没有任何反应」。所以触摸单独走一遍同样的命中判定。
+  // 判据：单指、位移小于 12px（不是在拖地图）、时长小于 700ms（不是长按）。
+  let touchStart = null;
+  mapEl.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1 || tmIsMapOwnControl(e.target)) { touchStart = null; return; }
+    const t = e.touches[0];
+    touchStart = { x: t.clientX, y: t.clientY, at: Date.now() };
+  }, { capture: true, passive: true });
+  mapEl.addEventListener('touchmove', function (e) {
+    if (!touchStart || e.touches.length !== 1) { touchStart = null; return; }
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - touchStart.x) > 12 ||
+        Math.abs(t.clientY - touchStart.y) > 12) touchStart = null;   // 在拖地图
+  }, { capture: true, passive: true });
+  mapEl.addEventListener('touchend', function (e) {
+    const st = touchStart;
+    touchStart = null;
+    if (!st || e.changedTouches.length !== 1) return;
+    if (Date.now() - st.at > 700) return;                   // 长按，不算点击
+    const t = e.changedTouches[0];
+    if (Math.abs(t.clientX - st.x) > 12 || Math.abs(t.clientY - st.y) > 12) return;
+    // 命中了就顺手把随后可能合成出来的 click 挡掉，避免开两次
+    if (tmHitPhotoTargetAt(t.clientX, t.clientY)) {
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+    }
+  }, { capture: true, passive: false });
 }
 
 // 把每个堆挪到它经纬度对应的屏幕位置。地图一动就要重算，所以要够轻。

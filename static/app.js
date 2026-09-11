@@ -425,7 +425,8 @@ function fmtDate(d) {
 }
 
 // ---------- 行程 ----------
-async function loadTrips() {
+// preferId：指定这次要落到哪个行程（新建行程后传新 id，优先级高于「上次打开的」）
+async function loadTrips(preferId) {
   const trips = await api('/api/trips');
   allTrips = trips;                 // 手机端的切换条/卡片选择器要用
   const sel = $('#trip-select');
@@ -448,8 +449,10 @@ async function loadTrips() {
   const serverId = (currentUser && currentUser.last_trip_id != null)
     ? Number(currentUser.last_trip_id) : null;
   const valid = id => id && trips.some(t => Number(t.id) === id);
-  const target = valid(serverId) ? serverId : (valid(localId) ? localId : trips[0].id);
-  selectTrip(target);
+  const wanted = preferId != null ? Number(preferId) : null;
+  const target = valid(wanted) ? wanted
+    : (valid(serverId) ? serverId : (valid(localId) ? localId : trips[0].id));
+  await selectTrip(target);
 }
 
 async function selectTrip(id, dir) {
@@ -888,35 +891,12 @@ function renderMap(points) {
     marker.setMap(map);
     markers.push(marker);
 
-    // 照片地图打点：组内有带照片/视频的点 → 在点旁贴一个 📷 角标，点击直接看该点照片。
-    // 角标右上角再叠一个数字气泡显示媒体总数（照片+视频；合并点则是组内合计）。
-    const mediaCount = group.reduce(
-      (n, g) => n + (g.p.photo_count || 0) + (g.p.video_count || 0), 0);
-    if (mediaCount > 0) {
-      const pmEl = el('div', 'photo-marker');
-      pmEl.appendChild(el('span', 'photo-marker-icon', '📷'));
-      pmEl.appendChild(el('span', 'photo-marker-badge', mediaCount > 99 ? '99+' : String(mediaCount)));
-      pmEl.title = `${mediaCount} 张照片/视频`;
-      // 和照片堆一样放进自建图层，而不是 AMap.Marker。
-      // 高德的 DOM marker 全在一个 z-index:300 的容器里，那个容器整体压在
-      // 路线层(110)之上 —— 实测这个 📷 角标会把路线截断（角标处线消失）。
-      // 放进 z=100 的自建层，路线就画在它上面了。
-      const box = ensurePhotoStackLayer();
-      if (box) {
-        pmEl.classList.add('on-stack-layer');
-        pmEl.onclick = (e) => { e.stopPropagation(); openPointPhotos(group[0].p.id); };
-        box.appendChild(pmEl);
-        // 角标原来的 offset 是 (10,10)，换算成自建层的定位补偿
-        photoBadgeItems.push({ el: pmEl, lng: group[0].p.lng, lat: group[0].p.lat,
-                               dx: 10, dy: 10 });
-      }
-    }
   });
 
-  // 新建出来的 📷 角标要按当前「照片图层」的开关状态决定显不显示
-  syncPhotoMarkersVisibility();
+  // 📷 角标（数量气泡）单独一趟，见 renderPhotoBadges —— 媒体增删之后要能
+  // 只重建角标，不惊动路线和地图视野
+  renderPhotoBadges(points);
   syncElevLabelsVisibility();
-  positionPhotoStacks();   // 📷 角标刚建出来，位置还是 0,0，必须立刻摆好
   // 照片图层的数据是按行程取的，上面 clearMap 已经把旧的清空，这里按新行程重建。
   // 勾选状态不变，用户不用每次换行程都重新勾一次。
   if ($('#lay-photos') && $('#lay-photos').checked) toggleLayerPhotos(true, true);
@@ -931,6 +911,86 @@ function renderMap(points) {
   // 轨迹回放入口：不足两个点无法回放，隐藏入口；控制条按需出现（播放时才显示）
   $('#replay-launch').classList.toggle('hidden', points.length < 2);
   $('#replay-bar').classList.add('hidden');
+}
+
+// 有照片/视频的点旁边那枚「📷 + 数量」角标。
+// 单独成函数的理由：上传/删除一张媒体之后，地图上的数量必须跟着变（否则角标
+// 一直停在打开页面时的数字），而为了一个数字重跑一遍 renderMap 会把路线、
+// 里程标签、地图视野全部推倒重来 —— 代价完全不成比例。
+function renderPhotoBadges(points) {
+  clearPhotoBadges();
+  // 和照片堆一样放进自建图层，而不是 AMap.Marker。
+  // 高德的 DOM marker 全在一个 z-index:300 的容器里，那个容器整体压在
+  // 路线层(110)之上 —— 实测这个 📷 角标会把路线截断（角标处线消失）。
+  // 放进 z=100 的自建层，路线就画在它上面了。
+  const box = ensurePhotoStackLayer();
+  // 地图图层树还没建好：这一趟画不出来，但显隐状态该同步还得同步
+  // （类挂在 #map 上，之后新建的角标会自动跟随）
+  if (!box) { syncPhotoMarkersVisibility(); positionPhotoStacks(); return; }
+  // 分组规则要和 renderMap 一致：环线会多次经过同一坐标，合并成一枚角标、数量相加
+  const groups = new Map();
+  (points || []).forEach((p) => {
+    const key = p.lng.toFixed(5) + ',' + p.lat.toFixed(5);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  });
+  groups.forEach((group) => {
+    const n = group.reduce((s, p) => s + (p.photo_count || 0) + (p.video_count || 0), 0);
+    if (n <= 0) return;
+    const pmEl = el('div', 'photo-marker on-stack-layer');
+    pmEl.appendChild(el('span', 'photo-marker-icon', '📷'));
+    pmEl.appendChild(el('span', 'photo-marker-badge', n > 99 ? '99+' : String(n)));
+    pmEl.title = `${n} 张照片/视频`;
+    // 500ms 去重：触摸兜底和浏览器合成的 click 有可能都到，别开两次灯箱
+    pmEl.onclick = (e) => {
+      e.stopPropagation();
+      const now = Date.now();
+      if (pmEl.__last && now - pmEl.__last < 500) return;
+      pmEl.__last = now;
+      openPointPhotos(group[0].id);
+    };
+    box.appendChild(pmEl);
+    // 角标原来的 offset 是 (10,10)，换算成自建层的定位补偿
+    photoBadgeItems.push({ el: pmEl, lng: group[0].lng, lat: group[0].lat, dx: 10, dy: 10 });
+  });
+  // 新建出来的角标要按当前「照片图层」的开关状态决定显不显示
+  syncPhotoMarkersVisibility();
+  positionPhotoStacks();   // 刚建出来时位置还是 0,0，必须立刻摆好
+}
+
+// 媒体增删之后刷新所有「跟数量有关」的地方：地图角标、点列表的 📷/🎬 计数、
+// 顶部统计条、照片图层里的照片堆。
+// 合并一次性刷新（250ms 去抖）—— 一次选 9 张图会连着回调 9 次，没必要打 9 轮接口。
+let _mediaCountTimer = 0;
+function scheduleMediaCountRefresh() {
+  clearTimeout(_mediaCountTimer);
+  _mediaCountTimer = setTimeout(refreshMediaCounts, 250);
+}
+
+async function refreshMediaCounts() {
+  const tripId = currentTripId;
+  if (!tripId) return;
+  let points, stats;
+  try {
+    [points, stats] = await Promise.all([
+      api(`/api/trips/${tripId}/points`),
+      api(`/api/trips/${tripId}/stats`),
+    ]);
+  } catch (e) { return; }
+  if (Number(tripId) !== Number(currentTripId)) return;   // 期间用户换了行程，别写脏
+  lastPoints = points;
+  lastStats = stats;
+  renderPhotoBadges(points);
+  // 点列表里每条也印着 📷 3 / 🎬 1，一并刷新；滚动位置保持住
+  const view = document.getElementById('points-view');
+  const top = view ? view.scrollTop : 0;
+  renderPointList(points);
+  if (view) view.scrollTop = top;
+  renderStats(stats, points);
+  // 照片图层的堆是按行程一次性拉的，缓存作废后按需重建
+  photoLayerData = null;
+  const cb = document.getElementById('lay-photos');
+  if (cb && cb.checked) { clearPhotoStackLayer(); toggleLayerPhotos(true, true); }
 }
 
 function clearMap() {
@@ -1674,7 +1734,7 @@ function buildMediaItem(m) {
   const item = el('div', 'media-item');
   item.dataset.mid = String(m.id);
   const img = el('img');
-  img.src = '/uploads/thumbs/' + m.thumb_filename;
+  img.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
   img.loading = 'lazy';
   img.draggable = false;                 // 交给我们自己的指针拖拽，不用浏览器原生 DnD
   item.appendChild(img);
@@ -1711,6 +1771,7 @@ function buildMediaItem(m) {
     await api(`/api/media/${m.id}`, { method: 'DELETE' });
     forgetRecentUpload(m.id);   // 别让「刚上传」的补丁表把刚删掉的又补回来
     loadDetail(currentPointId);
+    scheduleMediaCountRefresh();   // 地图角标 / 列表计数 / 统计条跟着少一个
   };
   item.appendChild(del);
   return item;
@@ -1861,9 +1922,72 @@ function grabVideoPoster(file, imgEl) {
   setTimeout(() => finish(null), 4000);      // 卡住就别一直挂着
 }
 
-function buildUploadCell(file) {
+// ---------- 正在上传的任务：暂停 / 继续 / 取消 ----------
+// job 里已经攒着这次上传的所有句柄（整文件那条是 job.xhr，分片那条是
+// job.chunkXhrs），下面三个函数就是把这些句柄用起来。原来它们只被记录、
+// 从来没人调用 —— 于是界面上根本没有停下来的办法。
+function uploadWaitResume(job) {
+  if (!job || !job.paused) return Promise.resolve();
+  return new Promise((resolve) => { (job._waiters = job._waiters || []).push(resolve); });
+}
+
+function pauseUploadJob(job) {
+  if (!job || job.paused || job.cancelled) return;
+  job.paused = true;
+  // 已经在飞的分片直接掐掉，别继续占着上行带宽 —— 恢复时这一片原样重传。
+  // （服务端只认「整片收齐」，掐掉的半片不会留下脏数据）
+  if (job.chunkXhrs) job.chunkXhrs.forEach((x) => { try { x.abort(); } catch (e) {} });
+}
+
+function resumeUploadJob(job) {
+  if (!job || !job.paused) return;
+  job.paused = false;
+  const waiters = job._waiters || [];
+  job._waiters = [];
+  waiters.forEach((r) => r());
+}
+
+function cancelUploadJob(job) {
+  if (!job || job.cancelled) return;
+  job.cancelled = true;
+  resumeUploadJob(job);            // 挂在暂停上的 worker 要先放出来才能看到 cancelled
+  try { if (job.xhr) job.xhr.abort(); } catch (e) {}
+  if (job.chunkXhrs) job.chunkXhrs.forEach((x) => { try { x.abort(); } catch (e) {} });
+  // 服务端那边的临时分片一并作废，不然要等 24 小时的回收任务才清得掉
+  const sid = job.session && job.session.session_id;
+  if (sid) {
+    api('/api/upload-sessions/' + sid, { method: 'DELETE' }).catch(() => {});
+    forgetUpload(sid);
+  }
+}
+
+// 本地预览：传到一半也能先看看自己选的到底是哪一段。
+// 放的是浏览器里的那份 File（blob: URL），完全不碰网络。
+function openLocalPreview(file) {
+  const url = URL.createObjectURL(file);
+  const ov = el('div', 'local-preview');
+  const close = () => { ov.remove(); URL.revokeObjectURL(url); };
+  const media = isVideoFile(file)
+    ? Object.assign(document.createElement('video'),
+                    { src: url, controls: true, autoplay: true, playsInline: true })
+    : Object.assign(document.createElement('img'), { src: url });
+  media.className = 'local-preview-media';
+  ov.appendChild(el('div', 'local-preview-note', '本地文件预览 · 上传仍在继续'));
+  const x = el('button', 'local-preview-close', '×');
+  x.type = 'button';
+  x.title = '关闭';
+  x.onclick = (e) => { e.stopPropagation(); close(); };
+  ov.appendChild(x);
+  ov.appendChild(media);
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  document.body.appendChild(ov);
+}
+
+function buildUploadCell(file, job) {
   const video = isVideoFile(file);
   const cell = el('div', 'media-item media-uploading' + (video ? ' is-video' : ''));
+  cell._file = file;
+  cell._job = job || null;
   const img = el('img', 'up-prev');
   if (video) {
     img.classList.add('hidden');             // 封面抽出来之前先不显示，露出底下的胶片纹
@@ -1884,21 +2008,70 @@ function buildUploadCell(file) {
         'stroke-dasharray="94.25" stroke-dashoffset="94.25"/>' +
     '</svg><span class="up-pct">0%</span>';
   cell.appendChild(ring);
+  // 进度 100% 之后服务端还有活要干（合并分片 → 生成缩略图/抽视频封面），
+  // 这一段没有百分比可报。原来只是把数字抹掉转个圈，看起来就是「卡在 100% 不动」。
+  // 现在明确写出当前在干什么。
+  const stage = el('span', 'up-stage');
+  cell.appendChild(stage);
+
+  // 操作条：本地预览 / 暂停续传 / 取消。
+  // 少了它，两个视频一起传的时候用户什么都做不了 —— 既停不掉传错的那个，
+  // 也没法确认自己选的到底是哪一段。
+  const acts = el('div', 'up-acts');
+  const mkAct = (cls, text, title, fn) => {
+    const b = el('button', 'up-act ' + cls, text);
+    b.type = 'button';
+    b.title = title;
+    b.onclick = (e) => { e.stopPropagation(); fn(b); };
+    acts.appendChild(b);
+    return b;
+  };
+  mkAct('up-act-play', '▶', '播放本地文件（还没传完，放的是你设备里那一份）',
+        () => openLocalPreview(file));
+  // 暂停只对走分片的大文件有意义 —— 小文件是一次性请求，"暂停"等于从头再来，
+  // 与其给一个骗人的按钮，不如不给
+  let pauseBtn = null;
+  if (file.size >= CHUNK_THRESHOLD) {
+    pauseBtn = mkAct('up-act-pause', '⏸', '暂停上传', () => {
+      const j = cell._job;
+      if (!j) return;
+      if (j.paused) { resumeUploadJob(j); cell._setPaused(false); }
+      else { pauseUploadJob(j); cell._setPaused(true); }
+    });
+  }
+  mkAct('up-act-cancel', '×', '取消上传', () => {
+    if (cell._job) cancelUploadJob(cell._job);
+    else cell._cancelledBeforeStart = true;   // 还在排队没轮到，标记一下别再起跑
+    cell.remove();
+  });
+  cell.appendChild(acts);
+
   cell._setProgress = (p) => {
     const fg = ring.querySelector('.up-fg');
     const pct = ring.querySelector('.up-pct');
     if (fg) fg.setAttribute('stroke-dashoffset', String(94.25 * (1 - Math.max(0, Math.min(1, p)))));
     if (pct) pct.textContent = Math.round(p * 100) + '%';
   };
-  // 传完了但服务端还在生成缩略图/读 EXIF：进度条已经满了，这段时间改成转圈
-  cell._setProcessing = () => {
+  cell._setPaused = (on) => {
+    cell.classList.toggle('paused', !!on);
+    if (pauseBtn) {
+      pauseBtn.textContent = on ? '▶' : '⏸';
+      pauseBtn.title = on ? '继续上传' : '暂停上传';
+    }
+    stage.textContent = on ? '已暂停' : '';
+  };
+  // 传完了但服务端还在合并分片 / 生成缩略图：进度条已经满了，这段时间改成转圈 + 文字
+  cell._setProcessing = (text) => {
     cell.classList.add('processing');
     const pct = ring.querySelector('.up-pct');
     if (pct) pct.textContent = '';
+    stage.textContent = text || '处理中…';
   };
   cell._setFailed = (msg, onRetry, onDismiss) => {
     cell.classList.remove('processing');
+    cell.classList.remove('paused');
     cell.classList.add('up-failed');
+    stage.textContent = '';
     ring.innerHTML = '<span class="up-err" title="' + esc(msg || '上传失败') + '">↻</span>';
     ring.querySelector('.up-err').onclick = (e) => { e.stopPropagation(); onRetry(); };
     if (!cell.querySelector('.up-cancel')) {
@@ -1932,7 +2105,7 @@ function uploadOneFile(pointId, file, cell, job) {
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) cell._setProgress(e.loaded / e.total);
     };
-    xhr.upload.onload = () => { cell._setProgress(1); cell._setProcessing(); };
+    xhr.upload.onload = () => { cell._setProgress(1); cell._setProcessing('转存中…'); };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         let data = null;
@@ -2032,6 +2205,10 @@ async function uploadChunked(pointId, file, cell, job) {
         let ok = false;
         for (let attempt = 0; attempt <= CHUNK_RETRIES; attempt++) {
           if (job.cancelled) return;
+          // 暂停就挂在这儿等着 —— 挂在 acquire **之前**，暂停中的任务不占连接名额，
+          // 剩下那个还在传的视频能立刻用上腾出来的带宽
+          await uploadWaitResume(job);
+          if (job.cancelled) return;
           await uploadGate.acquire();
           let res;
           try {
@@ -2043,6 +2220,8 @@ async function uploadChunked(pointId, file, cell, job) {
           if (res.ok) { ok = true; break; }
           flying.delete(idx);
           bump();
+          // 暂停掐掉的那一片不算失败：恢复之后原样重传，重试次数也不该被它吃掉
+          if (res.cancelled && job.paused && !job.cancelled) { attempt--; continue; }
           if (res.fatal || job.cancelled) { failure = failure || res.msg; return; }
           if (attempt < CHUNK_RETRIES) {
             // 指数退避 + 抖动：弱网抖一下时别所有分片同时重试，那只会再挤一次
@@ -2064,7 +2243,11 @@ async function uploadChunked(pointId, file, cell, job) {
   if (failure) return { ok: false, msg: failure, session: sess };
 
   cell._setProgress(1);
-  cell._setProcessing();
+  // complete 这一步在服务端要把几十片拼成一个文件、再生成缩略图（视频还要抽封面），
+  // 大文件上十几秒很正常。前台如果只显示 100% 不动，看起来就是卡死了。
+  cell._setProcessing('转存中…');
+  const stageTimer = setTimeout(
+    () => cell._setProcessing(isVideoFile(file) ? '生成封面…' : '生成缩略图…'), 6000);
   try {
     const d = await api('/api/upload-sessions/' + sess.session_id + '/complete',
                         { method: 'POST' });
@@ -2072,6 +2255,8 @@ async function uploadChunked(pointId, file, cell, job) {
     return { ok: true, data: d };
   } catch (err) {
     return { ok: false, msg: '合并失败：' + err.message, session: sess };
+  } finally {
+    clearTimeout(stageTimer);
   }
 }
 
@@ -2128,8 +2313,31 @@ function placeUploadCell(cell) {
 // 关键改动：**不再因为格子已经脱离文档就把结果丢掉**。原来这里是
 // `if (!cell.isConnected) return;`，于是上传途中只要发生过一次 loadDetail
 // （点 tab、横滑切 tab、删一张图都会），服务端明明存好了，前端却再也不显示。
+// 上传完只是「文件到了」。视频还要在后台转出 1080p/720p/480p 三档（transcode.py），
+// 期间只有原画可播 —— 在弱网上正是最卡的那一档。格子上挂个「转码中」的小标，
+// 转完自己消失，人就知道再等一会儿播放会变顺。
+function watchTranscode(cell, mediaId) {
+  if (!cell || !mediaId) return;
+  const tag = el('span', 'media-transcoding', '转码中');
+  cell.appendChild(tag);
+  let tries = 0;
+  const tick = () => {
+    if (!cell.isConnected || tries++ > 60) { tag.remove(); return; }
+    fetch('/api/media/' + encodeURIComponent(mediaId) + '/variants')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) { tag.remove(); return; }
+        if (d.transcoding) { setTimeout(tick, 5000); return; }
+        tag.remove();
+      })
+      .catch(() => { tag.remove(); });
+  };
+  setTimeout(tick, 2500);
+}
+
 function finishUploadCell(pointId, cell, m) {
   noteRecentUpload(pointId, m);
+  scheduleMediaCountRefresh();   // 地图角标 / 列表计数 / 统计条跟着多一个
   if (Number(pointId) !== Number(currentPointId)) {
     cell.remove();      // 用户已经切到别的点了：服务端有，下次打开自然看得到
     return;
@@ -2148,6 +2356,7 @@ function finishUploadCell(pointId, cell, m) {
     if (addCell) grid.insertBefore(real, addCell);
     else grid.appendChild(real);
   }
+  if (m.type === 'video') watchTranscode(real, m.id);
   detailMedia.push(m);
   lightboxMedia = detailMedia;
   syncDetailMediaOrder();
@@ -2158,6 +2367,9 @@ function finishUploadCell(pointId, cell, m) {
 async function runUpload(pointId, file, cell, job) {
   job = job || {};
   job.chunkXhrs = job.chunkXhrs || new Set();
+  cell._job = job;
+  // 排队期间用户就点了取消：轮到它的时候直接不发请求
+  if (job.cancelled || cell._cancelledBeforeStart) { cell.remove(); return; }
   const entry = { pointId: Number(pointId), file: file, cell: cell, job: job };
   activeUploads.push(entry);
   cell._job = job;
@@ -2192,9 +2404,11 @@ async function runUpload(pointId, file, cell, job) {
       // 重来：换一个干净的占位格顶上去，避免复用上一次的失败状态。
       // 分片的会话带着走 —— 重试只补没传上去的那几片，不从头再来。
       drop();
-      const again = buildUploadCell(file);
+      const againJob = { session: res.session, fingerprint: job.fingerprint,
+                         chunkXhrs: new Set() };
+      const again = buildUploadCell(file, againJob);
       cell.replaceWith(again);
-      runUpload(pointId, file, again, { session: res.session, fingerprint: job.fingerprint });
+      runUpload(pointId, file, again, againJob);
     }, drop);
     return;
   }
@@ -2231,10 +2445,12 @@ function startUploads(files) {
   const addCell = grid.querySelector('.media-add');
   const jobs = [];
   for (const f of files) {
-    const cell = buildUploadCell(f);
+    // job 先建出来交给格子：排队等待期间点取消也要立刻生效
+    const job = { chunkXhrs: new Set() };
+    const cell = buildUploadCell(f, job);
     if (addCell) grid.insertBefore(cell, addCell);   // 插在「＋」之前 → 「＋」被挤到新位置
     else grid.appendChild(cell);
-    jobs.push(() => runUpload(pointId, f, cell));
+    jobs.push(() => runUpload(pointId, f, cell, job));
   }
   // 共享一个迭代器当队列：每个 worker 处理完手上的就去取下一个
   const it = jobs[Symbol.iterator]();
@@ -2289,10 +2505,10 @@ function buildResumeCell(pointId, sess) {
         return;
       }
       if (Number(currentPointId) !== Number(pointId)) return;
-      const again = buildUploadCell(f);
+      const againJob = { session: sess, fingerprint: fp, chunkXhrs: new Set() };
+      const again = buildUploadCell(f, againJob);
       cell.replaceWith(again);
-      runUpload(pointId, f, again,
-                { session: sess, fingerprint: fp });
+      runUpload(pointId, f, again, againJob);
     });
   };
   cell.appendChild(go);
@@ -3975,8 +4191,10 @@ $('#modal-form').addEventListener('submit', async (e) => {
 
   try {
     const title = $('#modal-title').textContent;
+    let createdTripId = null;
     if (title === '新建行程') {
-      await api('/api/trips', { method: 'POST', body: fd });
+      const r = await api('/api/trips', { method: 'POST', body: fd });
+      createdTripId = r && r.id;
     } else if (title === '编辑行程') {
       await api(`/api/trips/${editTripId}`, { method: 'PUT', body: fd });
     } else if (editPointId) {
@@ -3993,7 +4211,10 @@ $('#modal-form').addEventListener('submit', async (e) => {
     }
     closeModal();
     if (title === '新建行程' || title === '编辑行程') {
-      await loadTrips();
+      // 新建完就进去。原来只 loadTrips()，而 loadTrips 会「恢复上次打开的行程」，
+      // 于是刚建好的行程明明在列表里、界面却纹丝不动停在旧行程上。
+      await loadTrips(createdTripId);
+      if (createdTripId) tmToast('已进入新行程，点右下角「＋」添加第一个地点');
     } else {
       await loadPoints();
     }
@@ -4239,6 +4460,40 @@ function restorePanelState() {
     if (sessionStorage.getItem('tm_panel_collapsed') === '1') setPanelCollapsed(true, false);
   } catch (e) {}
 }
+
+// ---------- 手机端：收起/唤出顶部两条 ----------
+// 顶栏（logo + 行程切换）和账号/统计条在小屏上加起来近 90px。看地图的时候
+// 它们只是占地方，但又不能一直藏着（行程切换、更多菜单都在上面），
+// 所以做成可收起、随时点回来，并且记住选择（sessionStorage：换一次会话回到默认露出，
+// 免得新用户在别的设备上打开看不到顶栏还以为坏了）。
+const CHROME_KEY = 'tm_chrome_hidden';
+
+function setChromeHidden(hidden, persist) {
+  document.body.classList.toggle('chrome-hidden', !!hidden);
+  const btn = document.getElementById('btn-chrome-toggle');
+  if (btn) {
+    btn.title = hidden ? '展开顶部栏' : '收起顶部栏';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+  }
+  if (persist !== false) {
+    try { sessionStorage.setItem(CHROME_KEY, hidden ? '1' : '0'); } catch (e) {}
+  }
+  // 顶栏高度变了，地图容器跟着变高/变矮，等过渡走完让高德重新量一次
+  setTimeout(() => { if (map && typeof map.resize === 'function') map.resize(); }, 260);
+}
+
+(function initChromeToggle() {
+  const btn = document.getElementById('btn-chrome-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setChromeHidden(!document.body.classList.contains('chrome-hidden'));
+  });
+  try {
+    if (sessionStorage.getItem(CHROME_KEY) === '1') setChromeHidden(true, false);
+  } catch (e) {}
+})();
 
 // 全览：把整条行程（所有轨迹点 + 路线）收进当前视野。
 // 只喂点和路线，不用 setFitView(null)——那会把行政区划多边形、照片图层这些
@@ -4667,6 +4922,9 @@ let lbZoom = { on: false, scale: 1, tx: 0, ty: 0, fit: 1 };
   }
 
   box.addEventListener('touchstart', (e) => {
+    // 控件自动隐藏之后，第一下点画面只用来把它们唤回来，
+    // 不该顺手把图片切进全屏放大态（见 common.js 的 tmLightboxIdleTapGuard）
+    if (tmLightboxIdleTapGuard()) { active = false; return; }
     // 这些区域上起手一律不接管，交给它们自己的点击逻辑：
     // 关闭按钮 / 左右箭头 / 视频播放器 / 底部说明栏。
     // 说明栏尤其重要——之前漏了它，点「添加描述」「✎」会被这里当成「点一下图片」
@@ -5147,33 +5405,9 @@ let photoLayerRetry = 0;         // 地图图层树未就绪时的重试计数
 // 命中堆 0 个、命中 SVG 层 40 个。所以点击要自己接：在 #map 的捕获阶段做一次
 // 矩形命中判定，落在某个堆里就当成点了这个堆。
 (function initPhotoStackClick() {
-  const mapEl = document.getElementById('map');
-  if (!mapEl) return;
-  mapEl.addEventListener('click', function (e) {
-    // 轨迹点、地图按钮、图层面板这些自己有事件，不能抢
-    if (e.target.closest && e.target.closest(
-        '.amap-marker, .map-fab, .layer-panel, .replay-bar, #add-point-bar, .amap-controls')) return;
-    // 照片图层开着 → 判照片堆；关着 → 判 📷 角标（两者互斥显示）
-    const on = mapEl.classList.contains('photo-layer-on');
-    const list = on ? photoStackItems : photoBadgeItems;
-    // 没有堆/角标时也要往下走：路线的命中判定在后面
-    if (!list.length) { hitRouteAtPoint(e); return; }
-    // 倒序遍历：后加进 DOM 的在上面，重叠时优先命中
-    for (let i = list.length - 1; i >= 0; i--) {
-      const el = list[i].el;
-      if (!el.offsetParent) continue;      // 当前不可见的跳过
-      const r = el.getBoundingClientRect();
-      if (!r.width) continue;
-      if (e.clientX >= r.left && e.clientX <= r.right &&
-          e.clientY >= r.top && e.clientY <= r.bottom) {
-        e.stopPropagation();     // 别让底下的路线也把「路段面板」打开
-        e.preventDefault();
-        el.click();              // 复用堆自己的 openStack（含 500ms 去重）
-        return;
-      }
-    }
-    hitRouteAtPoint(e);
-  }, true);
+  // 命中判定 + 触摸兜底都在 common.js 的 tmBindMapPhotoTap 里（分享页共用一份）。
+  // 没命中照片堆/角标时，主界面还要接着判「是不是点在路线上」。
+  tmBindMapPhotoTap(document.getElementById('map'), hitRouteAtPoint);
 })();
 
 // 点到自绘的路线上了吗？高德那条线被我压成 0.01 不透明度后就不再响应点击了，
@@ -5262,7 +5496,7 @@ async function toggleLayerPhotos(on, silent) {
       for (let i = stackN - 1; i >= 0; i--) {
         const rot = (i - (stackN - 1)) * 7;   // 最上层 0deg，越往下越斜
         const off = (i - (stackN - 1)) * -9;  // 向下堆叠偏移
-        inner += '<img src="/uploads/thumbs/' + photos[i].thumb + '" ' +
+        inner += '<img src="' + mediaUrl('/uploads/thumbs/' + photos[i].thumb) + '" ' +
                  'style="transform: translate(' + off + 'px,' + (-off) + 'px) rotate(' + rot + 'deg); z-index:' + (10 + i) + ';">';
       }
       // 角标就是「这个点一共多少张」。原来 >3 时前面多加了个 '+'（显示成 "+5"），

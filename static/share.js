@@ -994,7 +994,7 @@ function shareRenderMedia(media) {
   media.forEach((m, idx) => {
     const item = el('div', 'media-item');
     const img = el('img');
-    img.src = '/uploads/thumbs/' + m.thumb_filename;
+    img.src = mediaUrl('/uploads/thumbs/' + m.thumb_filename);
     img.loading = 'lazy';
     img.onclick = () => shareOpenLightbox(idx);
     item.appendChild(img);
@@ -1469,8 +1469,8 @@ function shareLoadAlbums() {
     photoItems.push({
       id: m.id, type: m.type, point_id: p.id, point_name: p.name,
       filename: m.filename, thumb_filename: m.thumb_filename,
-      url: '/uploads/' + m.filename,
-      thumb_url: m.thumb_filename ? '/uploads/thumbs/' + m.thumb_filename : null,
+      url: mediaUrl('/uploads/' + m.filename),
+      thumb_url: m.thumb_filename ? mediaUrl('/uploads/thumbs/' + m.thumb_filename) : null,
       taken_at: m.exif_time || m.created_at || '',
       caption: m.caption || '',
       qualities: m.qualities,        // 视频清晰度档位，相册页点开也要能选
@@ -1826,31 +1826,9 @@ let photoLayerRetry = 0;         // 地图图层树未就绪时的重试计数
 // 命中堆 0 个、命中 SVG 层 40 个。所以点击要自己接：在 #map 的捕获阶段做一次
 // 矩形命中判定，落在某个堆里就当成点了这个堆。
 (function initPhotoStackClick() {
-  const mapEl = document.getElementById('map');
-  if (!mapEl) return;
-  mapEl.addEventListener('click', function (e) {
-    // 轨迹点、地图按钮、图层面板这些自己有事件，不能抢
-    if (e.target.closest && e.target.closest(
-        '.amap-marker, .map-fab, .layer-panel, .replay-bar, #add-point-bar, .amap-controls')) return;
-    // 照片图层开着 → 判照片堆；关着 → 判 📷 角标（两者互斥显示）
-    const on = mapEl.classList.contains('photo-layer-on');
-    const list = on ? photoStackItems : photoBadgeItems;
-    if (!list.length) return;
-    // 倒序遍历：后加进 DOM 的在上面，重叠时优先命中
-    for (let i = list.length - 1; i >= 0; i--) {
-      const el = list[i].el;
-      if (!el.offsetParent) continue;      // 当前不可见的跳过
-      const r = el.getBoundingClientRect();
-      if (!r.width) continue;
-      if (e.clientX >= r.left && e.clientX <= r.right &&
-          e.clientY >= r.top && e.clientY <= r.bottom) {
-        e.stopPropagation();     // 别让底下的路线也把「路段面板」打开
-        e.preventDefault();
-        el.click();              // 复用堆自己的 openStack（含 500ms 去重）
-        return;
-      }
-    }
-  }, true);
+  // 命中判定 + 触摸兜底都在 common.js 的 tmBindMapPhotoTap 里（和主界面共用一份）。
+  // 分享页没有路段面板，没命中就什么都不做。
+  tmBindMapPhotoTap(document.getElementById('map'));
 })();
 
 (function initPhotoStackLayerSync() {
@@ -1900,7 +1878,7 @@ function shareToggleLayerPhotos(on, silent) {
         const rot = (i - (stackN - 1)) * 7;    // 最上层 0deg，越往下越斜
         const off = (i - (stackN - 1)) * -9;   // 向下堆叠偏移
         const thumb = media[i].thumb_filename || media[i].filename;
-        inner += '<img src="/uploads/thumbs/' + thumb + '" ' +
+        inner += '<img src="' + mediaUrl('/uploads/thumbs/' + thumb) + '" ' +
                  'style="transform: translate(' + off + 'px,' + (-off) + 'px) rotate(' + rot + 'deg); z-index:' + (10 + i) + ';">';
       }
       const badge = media.length > 1
@@ -2185,6 +2163,9 @@ let lbZoom = { on: false, scale: 1, tx: 0, ty: 0, fit: 1 };
   }
 
   box.addEventListener('touchstart', (e) => {
+    // 控件自动隐藏之后，第一下点画面只用来把它们唤回来，
+    // 不该顺手把图片切进全屏放大态（见 common.js 的 tmLightboxIdleTapGuard）
+    if (tmLightboxIdleTapGuard()) { active = false; return; }
     // 这些区域上起手一律不接管，交给它们自己的点击逻辑：
     // 关闭按钮 / 左右箭头 / 视频播放器 / 底部说明栏。
     // 说明栏尤其重要——之前漏了它，点「添加描述」「✎」会被这里当成「点一下图片」

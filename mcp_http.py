@@ -17,6 +17,9 @@
 from __future__ import annotations
 
 import json
+import os
+import ssl
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -96,10 +99,38 @@ def to_mcp_tools() -> list:
     return tools
 
 
+# 领域 API 的自调用地址。
+#
+# 这里原来是写死的 "http://127.0.0.1:8084" —— 而生产实例监听的是
+# 127.0.0.1:8443（TLS，仅回环），8084 上根本没有人在听。后果是 34 个 MCP 工具
+# **全部**在生产环境失效：tools/list 正常（那一步不碰领域 API），一旦 tools/call
+# 就是连接被拒。改成可配置，并且在环境变量缺省时沿用开发默认端口。
+#
+# 变量名与 companion.py / mcp_server.py 保持一致（TRAVEL_BASE_URL），
+# 三处自调用同一个地址，不要再各记各的。
+BASE_URL = os.environ.get("TRAVEL_BASE_URL", "http://127.0.0.1:8084").rstrip("/")
+
+
+def _ssl_context(url: str):
+    """回环 https 的证书校验上下文。
+
+    给 IP / 回环签的证书主机名对不上是常态（生产用的是 Let's Encrypt 的 IP 证书，
+    而我们连的是 127.0.0.1），校验必然失败。回环链路不存在中间人，这里放行；
+    非回环地址一律走系统默认校验，不给任何降级余地。
+    """
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if host in ("127.0.0.1", "::1", "localhost"):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+
 def _call_domain_api(method: str, path: str, api_key: str, form: dict | None = None,
                      json_body=None):
     """用调用者自己的 API Key 调领域 API。返回 (status, body_dict)。"""
-    url = "http://127.0.0.1:8084" + path
+    url = BASE_URL + path
     headers = {"Authorization": f"Bearer {api_key}"}
     data = None
     if json_body is not None:
@@ -110,7 +141,7 @@ def _call_domain_api(method: str, path: str, api_key: str, form: dict | None = N
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60, context=_ssl_context(url)) as resp:
             raw = resp.read().decode()
             try:
                 return resp.status, json.loads(raw)
@@ -122,6 +153,10 @@ def _call_domain_api(method: str, path: str, api_key: str, form: dict | None = N
             return e.code, json.loads(raw)
         except json.JSONDecodeError:
             return e.code, {"error": raw}
+    except OSError as e:
+        # 连不上自己（端口配错 / 服务没起）。以前这里会把 URLError 直接抛给
+        # tools/call，远端 agent 看到的是一条 500，完全猜不到是自调用地址不对。
+        return 503, {"error": f"领域 API 不可达（{BASE_URL}）：{e}"}
 
 
 def call_tool(name: str, args: dict, api_key: str) -> dict:

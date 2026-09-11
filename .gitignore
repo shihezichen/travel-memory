@@ -3,6 +3,7 @@ amap_key.txt
 amap_security.txt
 token.txt
 icp.txt
+media_base.txt
 *.pem
 *.key
 *.crt
@@ -53,3 +54,6 @@ sync-to-top001.sh
 set-icp.sh
 TRAVEL-MEMORY-HANDOFF.md
 *.deprecated-*
+
+# ossutil（媒体同步到对象存储）的运行日志，机器本地产物
+ossutil_output/
