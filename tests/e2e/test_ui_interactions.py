@@ -325,3 +325,41 @@ def test_mobile_chrome_can_be_collapsed_and_summoned(browser, live_server, e2e_u
             timeout=4000)
     finally:
         pg.close()
+
+
+# ==========================================================================
+# 足迹热力图：打开图层要真能画出点来
+# ==========================================================================
+def test_heatmap_layer_draws_footprint_markers(page, e2e_user):
+    """重构足迹图层时最容易踩的坑：数据拉回来了但没画到地图上。
+
+    这一条守着「勾上图层 -> 真的有 CircleMarker 出现在地图上」这条链路，
+    顺带确认点少的时候走的是精确坐标那条路（aggregated=false，不该重拉）。
+    """
+    _login(page, e2e_user)
+    page.eval("toggleLayerHeatmap(true)")
+    page.wait_until("Array.isArray(footprintMarkers) && footprintMarkers.length > 0",
+                    timeout=15000)
+    # 一个足迹点画「光晕 + 实心」两层，所以 marker 数应当是点数的两倍
+    assert page.eval("footprintMarkers.length") == page.eval("footprintData.length") * 2
+    assert page.eval("footprintData.length") >= 3
+    # 测试数据只有几个点，远没到服务端聚合的阈值
+    assert page.eval("footprintAggregated") is False
+    # 关掉图层，marker 要从地图上摘下来（不是只把它们藏起来）
+    page.eval("toggleLayerHeatmap(false)")
+    page.wait_until(
+        "map.getAllOverlays().filter(o => footprintMarkers.indexOf(o) >= 0).length === 0",
+        timeout=8000)
+
+
+def test_heatmap_requests_the_current_viewport(page, e2e_user):
+    """视野要传给服务端 —— 不传的话放大地图时会退化成「聚合全世界」。"""
+    _login(page, e2e_user)
+    seen = []
+    page.p.on("request", lambda r: seen.append(r.url) if "/api/footprint" in r.url else None)
+    page.eval("toggleLayerHeatmap(true)")
+    page.wait_until("Array.isArray(footprintMarkers) && footprintMarkers.length > 0",
+                    timeout=15000)
+    assert seen, "打开足迹图层没有请求 /api/footprint"
+    assert "bbox=" in seen[-1], f"请求里没带视野范围：{seen[-1]}"
+    assert "zoom=" in seen[-1]

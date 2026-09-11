@@ -23,7 +23,116 @@ def test_footprint_aggregates_duplicate_coordinates(auth_client, seeded_trip):
 
 
 def test_footprint_is_scoped_to_user(auth_client, other_client, seeded_trip):
-    assert other_client.get("/api/footprint").json() == {"count": 0, "data": []}
+    body = other_client.get("/api/footprint").json()
+    assert body["count"] == 0 and body["data"] == []
+
+
+# ---------------- 足迹：服务端网格聚合 ----------------
+def test_footprint_returns_exact_points_when_there_are_few(auth_client, seeded_trip):
+    """点少的时候不聚合——几百个点的响应本来就小，聚合只会让位置变糊。"""
+    body = auth_client.get("/api/footprint", params={"zoom": 4}).json()
+    assert body["aggregated"] is False
+    assert body["points"] == 3
+    assert {round(d["lng"], 4) for d in body["data"]} == {120.13, 120.101, 121.49}
+
+
+def test_footprint_switches_to_grid_aggregation_past_the_threshold(
+        auth_client, seeded_trip, monkeypatch):
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "FOOTPRINT_AGG_THRESHOLD", 2)
+
+    # zoom 7 的格子约 0.44 度：杭州两个点（相距 ~0.03 度）并成一格，上海另成一格
+    body = auth_client.get("/api/footprint", params={"zoom": 7}).json()
+    assert body["aggregated"] is True
+    assert body["points"] == 3                       # 原始点数照实报
+    assert body["count"] == 2                        # 但只发 2 个格子出去
+    assert sorted(d["count"] for d in body["data"]) == [1, 2]
+
+    # 放大到街道级，格子细到 0.0001 度量级，两个点就该分开
+    zoomed = auth_client.get("/api/footprint", params={"zoom": 16}).json()
+    assert zoomed["count"] == 3
+    assert zoomed["cell_deg"] < body["cell_deg"]
+
+
+HANGZHOU = "120.05,30.20,120.20,30.30"          # 只框住西湖 + 灵隐寺，上海在外
+
+
+def test_footprint_bbox_scopes_the_point_count(auth_client, seeded_trip):
+    """视野只有杭州时，上海的点和「要不要聚合」这件事无关。"""
+    boxed = auth_client.get("/api/footprint",
+                            params={"zoom": 13, "bbox": HANGZHOU}).json()
+    assert boxed["points"] == 2                   # 全局 3 个点，视野里只有 2 个
+    assert boxed["aggregated"] is False           # 2 个点还不到阈值，不用聚合
+    assert {round(d["lng"], 3) for d in boxed["data"]} == {120.13, 120.101}
+
+
+def test_footprint_bbox_aggregates_within_the_viewport(auth_client,
+                                                       seeded_trip, monkeypatch):
+    """框住视野之后照常聚合，且用的是按缩放级别算出来的细格子。"""
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "FOOTPRINT_AGG_THRESHOLD", 1)
+
+    boxed = auth_client.get("/api/footprint",
+                            params={"zoom": 13, "bbox": HANGZHOU}).json()
+    assert boxed["aggregated"] is True
+    assert boxed["points"] == 2
+    # 关键：格子就是 zoom 13 该有的细度，没有被上限逼着加粗
+    assert boxed["cell_deg"] == app_mod.footprint_cell_deg(13)
+
+
+def test_footprint_without_bbox_still_aggregates_globally(auth_client,
+                                                          seeded_trip, monkeypatch):
+    """老客户端不带 bbox 也能用——回落到全局聚合。"""
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "FOOTPRINT_AGG_THRESHOLD", 1)
+    body = auth_client.get("/api/footprint", params={"zoom": 13}).json()
+    assert body["aggregated"] is True
+    assert body["points"] == 3
+
+
+def test_footprint_ignores_a_malformed_bbox(auth_client):
+    """bbox 写错了不该 500，回落到全局就行。"""
+    for bad in ("", "1,2,3", "a,b,c,d", "10,20,5,25", "999,0,1000,1"):
+        r = auth_client.get("/api/footprint", params={"zoom": 6, "bbox": bad})
+        assert r.status_code == 200, (bad, r.text)
+        assert r.json()["count"] >= 0
+
+
+def test_parse_bbox_validates_ranges():
+    import app as app_mod
+    assert app_mod.parse_bbox("120.1,30.2,120.2,30.3") == (120.1, 30.2, 120.2, 30.3)
+    assert app_mod.parse_bbox("120.2,30.2,120.1,30.3") is None   # min > max
+    assert app_mod.parse_bbox(None) is None
+    assert app_mod.parse_bbox("") is None
+
+
+def test_footprint_grid_caps_the_number_of_cells(auth_client, seeded_trip,
+                                                 monkeypatch):
+    """低缩放下不该往前端灌几万个圈：超了就把格子调粗再聚一次。"""
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "FOOTPRINT_AGG_THRESHOLD", 2)
+    monkeypatch.setattr(app_mod, "FOOTPRINT_MAX_CELLS", 1)
+
+    body = auth_client.get("/api/footprint", params={"zoom": 16}).json()
+    assert body["count"] == 1                        # 一路加粗到全部并成一格
+    assert sum(d["count"] for d in body["data"]) == 3   # 一个到访都没丢
+
+
+def test_footprint_grid_does_not_merge_across_the_equator_or_meridian(
+        auth_client, seeded_trip):
+    """sqlite 的 CAST 是向零截断不是向下取整，负坐标最容易被错并进同一格。"""
+    import db
+    tid = seeded_trip["trip_id"]
+    for nm, lat, lng in [("西经北纬", 10.0, -0.5), ("东经北纬", 10.0, 0.5),
+                         ("东经南纬", -0.5, 20.0), ("东经北纬2", 0.5, 20.0)]:
+        auth_client.post(f"/api/trips/{tid}/points",
+                         data={"name": nm, "lat": lat, "lng": lng})
+
+    user = db.get_user_by_username(auth_client.user["username"])
+    cells = db.aggregate_footprint(user, 1.0)        # 1 度的格子
+    got = {(round(c["lng"], 3), round(c["lat"], 3)): c["count"] for c in cells}
+    assert got[(-0.5, 10.0)] == 1 and got[(0.5, 10.0)] == 1     # 本初子午线两侧
+    assert got[(20.0, -0.5)] == 1 and got[(20.0, 0.5)] == 1     # 赤道两侧
 
 
 def test_footprint_requires_login(client):

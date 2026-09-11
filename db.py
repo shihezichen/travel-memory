@@ -748,10 +748,12 @@ def list_points_without_elevation(trip_id):
     return rows_to_dicts(rows)
 
 
-def list_all_points(user):
+def list_all_points(user, bbox=None):
     """用户所有行程的所有点（含坐标），供足迹热力图/全量足迹展示。
 
     admin 返回全库；普通用户只返回自己的点。仅取有有效坐标的点。
+    bbox=(min_lng, min_lat, max_lng, max_lat) 时只取该范围内的点——
+    地图只看得到一屏，聚合就该只聚合这一屏。
     """
     conn = get_conn()
     base = (
@@ -759,15 +761,78 @@ def list_all_points(user):
         "FROM points p JOIN trips t ON t.id = p.trip_id "
         "WHERE p.lat IS NOT NULL AND p.lng IS NOT NULL"
     )
-    if user["is_admin"]:
-        rows = conn.execute(base + " ORDER BY p.start_date ASC, p.id ASC").fetchall()
-    else:
-        rows = conn.execute(
-            base + " AND t.user_id=? ORDER BY p.start_date ASC, p.id ASC",
-            (user["id"],),
-        ).fetchall()
+    tail, args = "", []
+    if not user["is_admin"]:
+        tail += " AND t.user_id=?"
+        args.append(user["id"])
+    clause, bargs = _bbox_clause(bbox)
+    tail += clause
+    args += bargs
+    rows = conn.execute(base + tail + " ORDER BY p.start_date ASC, p.id ASC",
+                        args).fetchall()
     conn.close()
     return rows_to_dicts(rows)
+
+
+def _footprint_scope(user):
+    """足迹类查询的公共 FROM/WHERE：只要有坐标的点，且只看得到自己的。"""
+    sql = ("FROM points p JOIN trips t ON t.id = p.trip_id "
+           "WHERE p.lat IS NOT NULL AND p.lng IS NOT NULL")
+    args = []
+    if not user["is_admin"]:
+        sql += " AND t.user_id=?"
+        args.append(user["id"])
+    return sql, args
+
+
+def count_all_points(user, bbox=None) -> int:
+    """该用户有坐标的点有多少个。用来决定足迹要不要走网格聚合。
+
+    有 bbox 时只数该范围内的点——用户放大地图之后视野里可能只剩几个点，
+    那就该退回精确坐标，别拿全局的密度替他做决定。
+    """
+    scope, args = _footprint_scope(user)
+    clause, bargs = _bbox_clause(bbox)
+    conn = get_conn()
+    n = conn.execute("SELECT COUNT(*) " + scope + clause, args + bargs).fetchone()[0]
+    conn.close()
+    return n
+
+
+def _bbox_clause(bbox):
+    """把 (min_lng, min_lat, max_lng, max_lat) 变成一段 WHERE 和参数。"""
+    if not bbox:
+        return "", []
+    min_lng, min_lat, max_lng, max_lat = bbox
+    return (" AND p.lng BETWEEN ? AND ? AND p.lat BETWEEN ? AND ?",
+            [min_lng, max_lng, min_lat, max_lat])
+
+
+def aggregate_footprint(user, cell_deg: float, bbox=None):
+    """把足迹点按 cell_deg 大小的经纬度方格聚合，**在 SQL 里做**。
+
+    点数上来之后，「取出全部点再在 Python 里 Counter」这条路是两头都疼：
+    内存里要装下全库的点，网络上要把原始点全发给前端。GROUP BY 之后
+    出库的行数只跟屏幕上画得下多少格有关，跟总点数无关。
+
+    格子编号用 `(lng + 180) / cell` 取整：sqlite 的 CAST 是向零截断，
+    不是向下取整，负经纬度会和正的挤进同一格；先平移成非负数就没这个问题
+    （floor() 要 sqlite 3.35+ 且编译时开了数学函数，不能指望）。
+    坐标取格内**均值**而不是格子中心 —— 只有一个点时位置就是准的。
+    返回 [{lng, lat, count}, ...]，count = 该格里的到访次数。
+    """
+    scope, args = _footprint_scope(user)
+    clause, bargs = _bbox_clause(bbox)
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT AVG(p.lng) AS lng, AVG(p.lat) AS lat, COUNT(*) AS count " + scope + clause +
+        " GROUP BY CAST((p.lng + 180.0) / ? AS INTEGER), "
+        "          CAST((p.lat + 90.0) / ? AS INTEGER)",
+        args + bargs + [cell_deg, cell_deg],
+    ).fetchall()
+    conn.close()
+    return [{"lng": round(r["lng"], 6), "lat": round(r["lat"], 6),
+             "count": r["count"]} for r in rows]
 
 
 def list_photo_points(user, trip_id=None):

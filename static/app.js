@@ -26,6 +26,11 @@ let lastStats = null;   // 当前行程 stats（路线就绪后刷新统计用�
 let photoMarkers = [];  // 照片地图打点 marker（有照片/视频的地点）
 let footprintMarkers = []; // 足迹点亮 CircleMarker（所有去过的地方，Fog of World 风格）
 let footprintData = null;   // 全量足迹坐标缓存（/api/footprint）
+// 点数多了之后服务端会按当前缩放级别做网格聚合（响应里 aggregated=true）。
+// 聚合过的数据换个缩放级别就该重新聚一次，否则放大之后还是那几个粗格子。
+// 点少时服务端返回精确坐标、aggregated=false，那就一次拉完永不重拉。
+let footprintAggregated = false;
+let footprintView = null;   // 当前这份数据对应哪个「缩放级别 + 可视范围」
 // 照片堆不再走 AMap.Marker，改由 photoStackItems + 自建图层承载（见 ensurePhotoStackLayer）
 let photoLayerData = null;  // 当前行程的照片图层数据缓存（/api/photo-layer?trip_id=），换行程即失效
 let currentTripId = null;
@@ -92,6 +97,8 @@ function initMap() {
   map.on('zoomend', saveMapView);
   map.on('zoomend', syncPhotoStackScale);   // 照片堆大小跟着缩放级别走
   map.on('zoomend', syncElevLabelsVisibility);   // 缩太小就把海拔小标收起来
+  map.on('zoomend', onFootprintViewChanged);    // 足迹聚合过的话，换缩放级别要重聚
+  map.on('moveend', onFootprintViewChanged);    // 平移也一样：视野变了，该聚的点也变了
 }
 
 // ---------- 工具 ----------
@@ -5610,45 +5617,108 @@ let poiMarkers = [], poiSearch = null, poiTimer = null;
 // 足迹点亮（所有去过的地方，对标 Fog of World 迷雾解锁）
 // 高德 JS API 2.0 已废弃 AMap.Heatmap（构造实例无方法），改用 CircleMarker 半透明
 // 光晕 + 实心点叠加，跨 1.4/2.0 兼容，无需额外插件。
+// 整级取整就够了：网格大小按 2^zoom 变，半级的差别肉眼看不出来，
+// 却会让每次轻微缩放都多打一趟请求。
+function footprintZoomBucket() {
+  return Math.round((map && map.getZoom && map.getZoom()) || 10);
+}
+
+// 地图当前可视范围，`minLng,minLat,maxLng,maxLat`。
+// 服务端只聚合这一屏里的点——不带这个，放大地图时全世界的点会一起争
+// 那几千个格子上限，格子被迫越聚越粗，放大了反而看不到细节。
+function footprintBBox() {
+  try {
+    const b = map && map.getBounds && map.getBounds();
+    if (!b) return '';
+    const sw = b.getSouthWest(), ne = b.getNorthEast();
+    if (!sw || !ne) return '';
+    return [sw.lng, sw.lat, ne.lng, ne.lat].map(v => v.toFixed(5)).join(',');
+  } catch (e) {
+    return '';
+  }
+}
+
+function footprintViewKey(zoom) {
+  return zoom + '|' + footprintBBox();
+}
+
+async function loadFootprint(zoom) {
+  const box = footprintBBox();
+  const key = zoom + '|' + box;
+  let url = '/api/footprint?zoom=' + zoom;
+  if (box) url += '&bbox=' + encodeURIComponent(box);
+  try {
+    const res = await api(url);
+    footprintData = (res && res.data) || [];
+    footprintAggregated = !!(res && res.aggregated);
+    footprintView = key;
+  } catch (e) {
+    footprintData = [];
+    footprintAggregated = false;
+    footprintView = key;
+  }
+}
+
+// 每个足迹点画「光晕 + 实心」双层 CircleMarker，重复到访（count）越大越亮
+function drawFootprint() {
+  if (footprintMarkers.length) { map.remove(footprintMarkers); footprintMarkers = []; }
+  (footprintData || []).forEach(d => {
+    const cnt = d.count || 1;
+    // 聚合之后 count 是「这一格里的到访次数」，点多的时候能轻松上百，
+    // 线性放大会糊成一大坨。开方压一下，既保留强弱对比又不会越界。
+    const w = footprintAggregated ? Math.sqrt(cnt) : cnt;
+    footprintMarkers.push(new AMap.CircleMarker({
+      center: [d.lng, d.lat],
+      radius: 20 + (w - 1) * 6,
+      fillColor: '#f97316', fillOpacity: 0.16,
+      strokeWeight: 0, zIndex: 8,
+    }));
+    footprintMarkers.push(new AMap.CircleMarker({
+      center: [d.lng, d.lat],
+      radius: 7 + (w - 1) * 3,
+      fillColor: '#ef4444', fillOpacity: 0.55,
+      strokeColor: '#fff', strokeWeight: 1, strokeOpacity: 1,
+      zIndex: 9,
+    }));
+  });
+  map.add(footprintMarkers);
+}
+
 async function toggleLayerHeatmap(on) {
   const cb = $('#lay-heatmap');
   if (on) {
     if (footprintMarkers.length) { map.add(footprintMarkers); return; }
     // 1. 拉全量足迹（跨行程，缓存）
-    if (!footprintData) {
-      try {
-        const res = await api('/api/footprint');
-        footprintData = (res && res.data) || [];
-      } catch (e) {
-        footprintData = [];
-      }
-    }
+    if (!footprintData) await loadFootprint(footprintZoomBucket());
     if (!footprintData || !footprintData.length) {
       tmToast('还没有足迹数据，先添加一些地点吧');
       cb.checked = false;
       return;
     }
-    // 2. 每个足迹点画「光晕 + 实心」双层 CircleMarker，重复到访（count）越大越亮
-    footprintData.forEach(d => {
-      const cnt = d.count || 1;
-      footprintMarkers.push(new AMap.CircleMarker({
-        center: [d.lng, d.lat],
-        radius: 20 + (cnt - 1) * 6,
-        fillColor: '#f97316', fillOpacity: 0.16,
-        strokeWeight: 0, zIndex: 8,
-      }));
-      footprintMarkers.push(new AMap.CircleMarker({
-        center: [d.lng, d.lat],
-        radius: 7 + (cnt - 1) * 3,
-        fillColor: '#ef4444', fillOpacity: 0.55,
-        strokeColor: '#fff', strokeWeight: 1, strokeOpacity: 1,
-        zIndex: 9,
-      }));
-    });
-    map.add(footprintMarkers);
+    // 2. 画出来
+    drawFootprint();
   } else {
     map.remove(footprintMarkers);
   }
+}
+
+// 视野（缩放或平移）变了就按新的范围重聚一次 —— 只在服务端确实做了聚合时才需要。
+// 点没到阈值（aggregated=false）时这里一次请求都不会多打。
+let _footprintReloadTimer = null;
+function onFootprintViewChanged() {
+  const cb = $('#lay-heatmap');
+  if (!cb || !cb.checked || !footprintAggregated) return;
+  const z = footprintZoomBucket();
+  if (footprintViewKey(z) === footprintView) return;
+  // 连续缩放（滚轮、双指）和拖动会连着触发，等停下来再拉
+  clearTimeout(_footprintReloadTimer);
+  _footprintReloadTimer = setTimeout(async () => {
+    if (!cb.checked) return;
+    const want = footprintZoomBucket();
+    if (footprintViewKey(want) === footprintView) return;
+    await loadFootprint(want);
+    if (cb.checked) drawFootprint();
+  }, 300);
 }
 
 // 照片图层：各点照片缩略图，多图堆叠显示，可关闭

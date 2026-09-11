@@ -133,6 +133,30 @@
       setZoomAndCenter: function (z, c) { zoom = z; center = c; return self; },
       panTo: function (c) { center = c; self.emit('moveend', {}); return self; },
       setFitView: noop,
+      /* 真高德一定返回可视范围的包围盒，桩以前直接给 null —— 于是任何
+         「按视野取数」的逻辑在 E2E 里都走的是降级分支，等于没测。
+         按容器尺寸和缩放级别算一个近似的墨卡托视野出来。 */
+      getBounds: function () {
+        var w = (el && el.clientWidth) || 1024;
+        var h = (el && el.clientHeight) || 768;
+        var worldPx = 256 * Math.pow(2, zoom);
+        var halfLng = 180 * (w / worldPx);
+        var halfLat = 180 * (h / worldPx);
+        var cLng = Array.isArray(center) ? center[0] : center.lng;
+        var cLat = Array.isArray(center) ? center[1] : center.lat;
+        var sw = new LngLat(Math.max(cLng - halfLng, -180),
+                            Math.max(cLat - halfLat, -90));
+        var ne = new LngLat(Math.min(cLng + halfLng, 180),
+                            Math.min(cLat + halfLat, 90));
+        return {
+          getSouthWest: function () { return sw; },
+          getNorthEast: function () { return ne; },
+          contains: function (p) {
+            return p.lng >= sw.lng && p.lng <= ne.lng &&
+                   p.lat >= sw.lat && p.lat <= ne.lat;
+          },
+        };
+      },
       resize: noop,
       clearMap: function () { overlays.length = 0; return self; },
       add: function (o) {

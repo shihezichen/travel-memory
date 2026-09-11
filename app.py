@@ -730,21 +730,86 @@ def api_trip_stats(request: Request, trip_id: int):
 
 
 # ---------- 点 ----------
+# 点数超过这个数就改走服务端网格聚合。在这之下按原样返回精确坐标——
+# 几百个点的响应本来就小，聚合只会让位置变糊，没有好处。
+FOOTPRINT_AGG_THRESHOLD = 2000
+# 聚合之后最多还能有多少个格子。超了就把格子调粗再聚一次：低缩放下看整个
+# 中国也不该往前端灌几万个圈，画不出细节，只会卡。
+FOOTPRINT_MAX_CELLS = 4000
+# 一个格子在屏幕上大约多少像素。热力图的圈本身直径就有几十像素，
+# 比这更细的格子画出来是重叠的，白发。
+FOOTPRINT_CELL_PX = 40
+
+
+def footprint_cell_deg(zoom: float) -> float:
+    """给定地图缩放级别，算出一个格子该有多少度。
+
+    Web 墨卡托下整个世界宽 256 × 2^zoom 像素、跨 360 度，
+    所以 FOOTPRINT_CELL_PX 像素 = 360 / (256 × 2^zoom) × FOOTPRINT_CELL_PX 度。
+    """
+    zoom = max(0.0, min(22.0, float(zoom)))
+    return 360.0 / (256.0 * (2.0 ** zoom)) * FOOTPRINT_CELL_PX
+
+
+def parse_bbox(raw):
+    """`minLng,minLat,maxLng,maxLat` → 元组。不合法就当没传，回落到全局。"""
+    if not raw:
+        return None
+    try:
+        parts = [float(x) for x in str(raw).split(",")]
+    except (TypeError, ValueError):
+        return None
+    if len(parts) != 4:
+        return None
+    min_lng, min_lat, max_lng, max_lat = parts
+    if min_lng > max_lng or min_lat > max_lat:
+        return None
+    if not (-180 <= min_lng <= 180 and -180 <= max_lng <= 180
+            and -90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+        return None
+    return (min_lng, min_lat, max_lng, max_lat)
+
+
 @app.get("/api/footprint")
-def api_footprint(request: Request):
-    """全量足迹（用户所有行程的所有点坐标），供地图足迹热力图使用。"""
+def api_footprint(request: Request, zoom: float = 10.0, bbox: str = None):
+    """全量足迹（用户所有行程的所有点坐标），供地图足迹热力图使用。
+
+    `bbox` 是地图当前可视范围。**带上它很重要**：不带的话就是「聚合全世界」，
+    而用户放大地图时只看得到一条街 —— 按缩放级别算出来的细格子会让全世界
+    的点都争这几千个格子上限，结果被逼着越聚越粗，放大了反而看不到细节。
+    只看视野内的点，格子就能老老实实按缩放级别走。
+
+    点少的时候（见 FOOTPRINT_AGG_THRESHOLD）返回精确到 5 位小数的原始坐标，
+    行为和以前完全一样。点多了就在**服务端**做网格聚合，响应里带
+    `aggregated: true`，前端据此知道视野变了要重新拉。
+    """
     user = current_user(request)
-    points = db.list_all_points(user)
-    # 精简为热力图所需坐标 + 权重（同坐标聚合为更高 count，环线多次经过更亮）
-    from collections import Counter
-    counter = Counter()
-    for p in points:
-        counter[(round(p["lng"], 5), round(p["lat"], 5))] += 1
-    data = [
-        {"lng": lng, "lat": lat, "count": cnt}
-        for (lng, lat), cnt in counter.items()
-    ]
-    return {"count": len(data), "data": data}
+    box = parse_bbox(bbox)
+    total = db.count_all_points(user, box)
+
+    if total <= FOOTPRINT_AGG_THRESHOLD:
+        points = db.list_all_points(user, box)
+        # 精简为热力图所需坐标 + 权重（同坐标聚合为更高 count，环线多次经过更亮）
+        from collections import Counter
+        counter = Counter()
+        for p in points:
+            counter[(round(p["lng"], 5), round(p["lat"], 5))] += 1
+        data = [
+            {"lng": lng, "lat": lat, "count": cnt}
+            for (lng, lat), cnt in counter.items()
+        ]
+        return {"count": len(data), "data": data, "points": total,
+                "aggregated": False, "zoom": zoom}
+
+    cell = footprint_cell_deg(zoom)
+    data = db.aggregate_footprint(user, cell, box)
+    # 兜底：视野特别大（缩到看整个地球）或者点密得反常时，还是可能超上限。
+    # 翻倍再来，格子涨到 360 度就是整个世界一格，必然收敛。
+    while len(data) > FOOTPRINT_MAX_CELLS and cell < 360.0:
+        cell *= 2
+        data = db.aggregate_footprint(user, cell, box)
+    return {"count": len(data), "data": data, "points": total,
+            "aggregated": True, "zoom": zoom, "cell_deg": cell}
 
 
 @app.get("/api/photo-layer")
