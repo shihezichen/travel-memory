@@ -81,6 +81,9 @@ function syncElevLabelsVisibility() {
   const z = map.getZoom();
   el0.classList.toggle('hide-elev', z < ELEV_MIN_ZOOM);
   el0.classList.toggle('hide-pname', z < NAME_MIN_ZOOM);
+  // 公路编号的门槛比海拔低一档：全国视野下 G318 这种号反而是最有用的信息，
+  // 但再缩下去（洲际视野）线都挤成一坨了，标了也读不出对应哪一截。
+  el0.classList.toggle('hide-road', z < ROAD_MIN_ZOOM);
 }
 
 function unhighlightMapPoints() {
@@ -96,9 +99,34 @@ function fmtKm(m) {
   return m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m';
 }
 
+// 里程标签和公路编号标签永远同生共死（换行程、路线重算、分段撤掉都是一起的），
+// 所以清里程就顺手把编号也清了 —— 分开清过一次，结果换行程后上一条线的编号还浮在图上。
 function clearSegLabels() {
   segLabels.forEach(m => m.setMap(null));
   segLabels = [];
+  clearRoadLabels();
+}
+
+// ---------- 里程标签的显隐（图层控制里的「里程」）----------
+// 默认显示：这是原来就有的行为，没勾选过的老用户不该因为加了开关就少看见东西。
+// 面板里没有这个勾选框时（理论上不会发生）也按显示处理，宁可多显示不要静默消失。
+function segLabelsVisible() {
+  const cb = document.querySelector('#lay-mileage');
+  return cb ? cb.checked : true;
+}
+// 标签会被反复重建 —— 真实路线算完、切行程、临时分段建好各会重建一次。
+// 所以显隐不能只在「点勾选框」那一刻生效：每批新标签建出来都得再对齐一次当前状态，
+// 否则关掉里程之后，路线一算完标签就自己冒回来了。
+function applySegLabelsVisibility() {
+  const on = segLabelsVisible();
+  segLabels.forEach(m => {
+    // 主手段是给我们自己的胶囊加 class（.seg-label-off { display:none }）。
+    // 不直接依赖 AMap 的 show/hide：那是它的内部实现，跨版本行为不保证，
+    // 而这个 class 作用在我们自己生成的元素上，行为完全可控、也问得到状态。
+    if (m._pill) m._pill.classList.toggle('seg-label-off', !on);
+    // 再顺手让 AMap 别去排它的版 —— 纯属省事，不作为显隐的依据。
+    try { on ? m.show() : m.hide(); } catch (e) {}
+  });
 }
 
 function isInChina(lng, lat) {
@@ -1339,4 +1367,174 @@ function clearPhotoStackLayer() {
 function clearPhotoBadges() {
   photoBadgeItems.forEach(it => it.el.remove());
   photoBadgeItems = [];
+}
+
+// ---------- 路段的公路编号 ----------
+// 数据来源：高德驾车规划返回的 route.steps[].road（路名）。原来这个字段被直接丢掉了，
+// 只取 step.path 拼几何 —— 其实里面就写着「G318」「X245」这类编号。
+// 不新增任何请求：路线本来就要规划一次，顺手把路名捞出来。
+//
+// 为什么编号不能和里程共用一个胶囊：
+// 两个轨迹点之间常常连着走好几条路（香格里拉 G214 转 G318 到鲁朗），
+// 里程是**整段一个数**，编号却是「哪一截走的哪条路」—— 挤在一起既读不出对应关系，
+// 路一多标签还会长到糊住整条线。所以编号各标各的：每个编号骑在它真正覆盖的
+// 那一截路的中点上，里程照旧待在整段中点。
+//
+// 海外线路走 OSRM（后端 overview=simplified，压根没有 steps），拿不到就返回空，
+// 调用方据此不标 —— 宁可不标也不要标错。
+
+// 从一个路名里抠出公路编号。高德的 road 字段实测有这几种写法：
+//   「G318」「G4217」「S217」「X245」——直接是编号
+//   「G6京藏高速」「京藏高速(G6)」——编号混在名字里
+//   「318国道」「245县道」——中文在后，编号在前
+// 匹配不到编号的（「川藏公路」「三环路」「无名道路」）一律返回 null：
+// 用户要的是编号，路名本身地图底图上已经有了，再标一遍是噪音。
+const ROAD_CN_KIND = { '国道': 'G', '省道': 'S', '县道': 'X', '乡道': 'Y' };
+function roadCodeOf(road) {
+  if (!road || typeof road !== 'string') return null;
+  // 先试中文写法（「318国道」），否则会被下面的字母规则漏掉
+  const cn = road.match(/(\d{1,5})\s*(国道|省道|县道|乡道)/);
+  if (cn) return ROAD_CN_KIND[cn[2]] + cn[1];
+  // 字母 + 数字。前面必须不是字母数字，否则「A1B2」这种也会命中；
+  // 后面必须不是数字，避免把「G4218」截成「G421」。
+  const m = road.match(/(?:^|[^0-9A-Za-z])([GSXYZ])(\d{1,5})(?![0-9])/);
+  return m ? m[1] + m[2] : null;
+}
+
+// 沿路径按长度取中点。平面近似即可：一段路的跨度上，经度按纬度做个余弦缩放就够准了。
+// path 收 [[lng,lat],...] 或高德的 [{lng,lat},...]，返回 [lng, lat]。
+function pathMidPoint(path) {
+  if (!path || !path.length) return null;
+  const pts = path.map(v => (Array.isArray(v) ? v : [v.lng, v.lat]));
+  if (pts.length < 2) return pts[0];
+  const kx = Math.cos(pts[0][1] * Math.PI / 180) || 1;
+  const d = [0];
+  for (let k = 1; k < pts.length; k++) {
+    const dx = (pts[k][0] - pts[k - 1][0]) * kx;
+    const dy = pts[k][1] - pts[k - 1][1];
+    d.push(d[k - 1] + Math.hypot(dx, dy));
+  }
+  const half = d[d.length - 1] / 2;
+  if (!half) return pts[0];
+  let k = 1;
+  while (k < d.length && d[k] < half) k++;
+  const t = (half - d[k - 1]) / ((d[k] - d[k - 1]) || 1);
+  return [
+    pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * t,
+    pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * t,
+  ];
+}
+
+// 一段路线最多标几个编号。再多就不是信息是花边了 —— 而且这种段本来就是市区绕行，
+// 编号频繁切换，标出来也没人看。超出的按里程取最长的几条。
+const ROAD_MAX_PER_SEG = 3;
+// 缩到这个级别以下整体收起（类名打在 #map 上，见 syncElevLabelsVisibility）
+const ROAD_MIN_ZOOM = 6;
+// 一截路至少要走这么远才值得标：绝对下限 3km，同时不少于本段的 8%。
+// 上下匝道、借道几百米这种「蹭一下」的路占着标签位置，纯属干扰。
+const ROAD_MIN_METERS = 3000;
+const ROAD_MIN_SHARE = 0.08;
+
+// 把 steps 切成若干「连着走同一条路」的小段，每段给出编号 + 里程 + 中点坐标。
+// 返回 [{ code, meters, lng, lat }]，按沿途顺序排列。
+function segRoadRuns(steps, totalMeters) {
+  if (!steps || !steps.length) return [];
+  const items = steps.map(s => ({
+    code: roadCodeOf(s && s.road),
+    meters: Number(s && s.distance) || 0,
+    path: (s && s.path) || [],
+  }));
+  // 补洞：夹在两截同编号之间的无名 step（匝道、收费站、"无名道路"）算作同一条路。
+  // 不补的话，G318 上一个服务区出入口就能把它劈成两截，两截各自达不到里程门槛，
+  // 结果是走了 400 公里 G318 却一个编号都标不出来。
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].code) continue;
+    let a = i - 1; while (a >= 0 && !items[a].code) a--;
+    let b = i + 1; while (b < items.length && !items[b].code) b++;
+    if (a >= 0 && b < items.length && items[a].code === items[b].code) items[i].code = items[a].code;
+  }
+  // 连续同编号合成一截。无名段用 null 占位断开，免得中间隔着另一条路的两截被粘起来。
+  const runs = [];
+  items.forEach(it => {
+    if (!it.code) { runs.push(null); return; }
+    const last = runs[runs.length - 1];
+    if (last && last.code === it.code) {
+      last.meters += it.meters;
+      last.path = last.path.concat(it.path);
+    } else {
+      runs.push({ code: it.code, meters: it.meters, path: it.path.slice() });
+    }
+  });
+  const total = Number(totalMeters) || items.reduce((s, it) => s + it.meters, 0);
+  const minMeters = Math.max(ROAD_MIN_METERS, total * ROAD_MIN_SHARE);
+  let kept = runs.filter(r => r && r.meters >= minMeters && r.path.length);
+  // 同一个编号出现多截（绕出去又拐回来）只留最长的那截，省得同一个号在一段里标两遍
+  const best = new Map();
+  kept.forEach(r => {
+    const cur = best.get(r.code);
+    if (!cur || r.meters > cur.meters) best.set(r.code, r);
+  });
+  kept = kept.filter(r => best.get(r.code) === r);
+  if (kept.length > ROAD_MAX_PER_SEG) {
+    const top = new Set([...kept].sort((a, b) => b.meters - a.meters).slice(0, ROAD_MAX_PER_SEG));
+    kept = kept.filter(r => top.has(r));
+  }
+  return kept.map(r => {
+    const mid = pathMidPoint(r.path);
+    return mid ? { code: r.code, meters: r.meters, lng: mid[0], lat: mid[1] } : null;
+  }).filter(Boolean);
+}
+
+// ---------- 公路编号标签 ----------
+// 和里程标签是两批 marker，各自一个图层开关、各自的显隐。
+let roadLabels = [];
+function clearRoadLabels() {
+  roadLabels.forEach(m => m.setMap(null));
+  roadLabels = [];
+}
+// 默认显示，理由同里程标签：面板里没这个勾选框时宁可多显示，不要静默消失
+function roadLabelsVisible() {
+  const cb = document.querySelector('#lay-road');
+  return cb ? cb.checked : true;
+}
+function applyRoadLabelsVisibility() {
+  const on = roadLabelsVisible();
+  roadLabels.forEach(m => {
+    if (m._pill) m._pill.classList.toggle('seg-label-off', !on);
+    try { on ? m.show() : m.hide(); } catch (e) {}
+  });
+}
+// 编号的等级决定颜色：一眼看出走的是国道还是县道，比只给个号有用。
+function roadClassOf(code) {
+  const c = (code || '').charAt(0);
+  if (c === 'G') return 'road-g';
+  if (c === 'S') return 'road-s';
+  return 'road-x';
+}
+// runsBySeg：下标 = 段号，值 = 该段的 segRoadRuns 结果。
+// 整批重建（和里程标签一样），因为换行程、改路线方案都会让位置全变。
+function renderRoadLabels(runsBySeg) {
+  clearRoadLabels();
+  if (!map || typeof AMap === 'undefined') return;
+  (runsBySeg || []).forEach(runs => {
+    (runs || []).forEach(r => {
+      const anchor = el('div', 'seg-label-anchor');
+      const pill = el('span', 'road-label ' + roadClassOf(r.code), r.code);
+      pill.title = r.code + '，本段约 ' + Math.round(r.meters / 1000) + ' km';
+      anchor.appendChild(pill);
+      const m = new AMap.Marker({
+        position: [r.lng, r.lat],
+        content: anchor,
+        // 抬到线的上方：只有一条路时它的中点和整段中点几乎重合，
+        // 不抬开就正好压在里程胶囊上 —— 这次改动要解决的就是这种重叠。
+        offset: new AMap.Pixel(0, -20),
+        zIndex: 690,          // 比里程(700)低一档：万一还是撞上，让里程压在上面
+        bubble: true,         // 点标签等同于点线，不拦截路线自身的点击
+      });
+      m._pill = pill;
+      m.setMap(map);
+      roadLabels.push(m);
+    });
+  });
+  applyRoadLabelsVisibility();
 }

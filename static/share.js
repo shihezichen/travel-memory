@@ -6,6 +6,7 @@ let segPolylines = [];  // 高亮相邻段时重建的分段折线
 let segLabels = [];     // 每段路线中点上的里程标签
 let routeSegs = null;   // 各段真实路线 path（shareDrawRoute 结果，供重建分段用）
 let segDists = null;    // 各段真实路线里程（米），与 routeSegs 对齐
+let segRoads = null;    // 各段走过的公路 [{code, meters, lng, lat}]，与 routeSegs 对齐；捞不到就是空数组
 let fallbackSegs = false; // 临时分段标记
 let drivingLoaded = false;
 let renderSeq = 0;
@@ -447,8 +448,9 @@ function shareRenderMap() {
       if (box) {
         pmEl.classList.add('on-stack-layer');
         box.appendChild(pmEl);
+        // 右上角，理由同主页面（右下方是「地名 + 海拔」小标的地盘）
         photoBadgeItems.push({ el: pmEl, lng: group[0].p.lng, lat: group[0].p.lat,
-                               dx: 10, dy: 10 });
+                               dx: 10, dy: -36 });
       }
     }
   });
@@ -485,6 +487,7 @@ function shareClearMap() {
   fallbackSegs = false;
   routeSegs = null;
   segDists = null;
+  segRoads = null;
   shareStopReplay(false); // 切换行程/清空时停止轨迹回放
 }
 
@@ -634,6 +637,8 @@ function shareRenderSegLabels() {
     m.setMap(map);
     segLabels.push(m);
   }
+  applySegLabelsVisibility();   // 关着里程时，这批新标签建出来就不该露面
+  renderRoadLabels(segRoads || []);   // 公路编号另起一批，骑在各自那截路的中点上
   shareStyleSegLabels(currentPointId);
 }
 function shareStyleSegLabels(pointId) {
@@ -723,7 +728,9 @@ function shareDriveOnce(policy, from, to) {
         (route.steps || []).forEach(step => {
           (step.path || []).forEach(p => path.push([p.lng, p.lat]));
         });
-        resolve(path.length >= 2 ? { path, distance: route.distance || 0 } : null);
+        // steps 里顺手捞公路编号连同它覆盖的那截路，见 common.js 的 segRoadRuns
+        const roadRuns = segRoadRuns(route.steps, route.distance);
+        resolve(path.length >= 2 ? { path, roadRuns, distance: route.distance || 0 } : null);
       } else {
         resolve(null);
       }
@@ -736,7 +743,7 @@ function shareDriveOnce(policy, from, to) {
 async function planSegment(a, b) {
   const mode = a.route_mode || 'drive';
   if (mode !== 'drive' || distKm(a, b) <= 1) {
-    return { path: [[a.lng, a.lat], [b.lng, b.lat]], distance: distKm(a, b) * 1000 };
+    return { path: [[a.lng, a.lat], [b.lng, b.lat]], roadRuns: [], distance: distKm(a, b) * 1000 };
   }
   let seg = null;
   if (isInChina(a.lng, a.lat) && isInChina(b.lng, b.lat)) {
@@ -745,7 +752,7 @@ async function planSegment(a, b) {
   if (!seg) seg = await shareRouteViaOsm(a, b);
   return (seg && seg.path && seg.path.length >= 2)
     ? seg
-    : { path: [[a.lng, a.lat], [b.lng, b.lat]], distance: distKm(a, b) * 1000 };
+    : { path: [[a.lng, a.lat], [b.lng, b.lat]], roadRuns: [], distance: distKm(a, b) * 1000 };
 }
 
 // 并行规划所有段（串行 16 段 OSRM 太慢，导致曲线迟迟不出现）
@@ -758,6 +765,7 @@ async function shareDrawRoute(points, seq) {
     if (seq !== renderSeq) return;
     routeSegs = segs.map(s => s.path);
     segDists = segs.map(s => s.distance || 0);
+    segRoads = segs.map(s => s.roadRuns || []);
     let routePath = [];
     segs.forEach((seg) => {
       // seg 结构为 { path, distance }；旧代码误用 seg.length 导致 routePath 恒为空 → 主路线永远是直线
@@ -968,6 +976,7 @@ function shareStopReplay(hide = true) {
     const pts = (shareData && shareData.points) || [];
     $('#replay-launch').classList.toggle('hidden', !pts || pts.length < 2);
   }
+  replayT = 0;              // 停止 = 复位，别让残留进度把下次播放判成「暂停中」
   $('#replay-fill').style.width = '0%';
   $('#replay-name').textContent = '';
   $('#replay-toggle').textContent = '▶';
@@ -976,10 +985,13 @@ function shareStopReplay(hide = true) {
 function shareToggleReplay() {
   if (replayActive) { sharePauseReplay(); return; }
   if (replayT >= replayTotal) { shareStartReplay(); return; } // 播完或首次 → 从头播
-  if (replayTotal > 0 && replayPath.length >= 2) {
+  if (replayTotal > 0 && replayPath.length >= 2 && replayMarker) {
     replayActive = true; // 续播
     replayLast = 0;
     $('#replay-toggle').textContent = '⏸';
+    replayMarker.setMap(map);   // 停过就被摘下来了，续播前补挂回去
+    ensureReplayLines();
+    updateReplayLines();
     sharePlayLoop();
   } else {
     shareStartReplay();
@@ -1940,6 +1952,18 @@ function shareRestoreLayerState() {
     photoCb.checked = want;
     if (want) { try { shareToggleLayerPhotos(true, true); } catch (e) {} }
   }
+  // 「里程标签」默认开，理由同主页面：加开关前它就是常驻的
+  const mileageCb = $('#lay-mileage');
+  if (mileageCb) {
+    mileageCb.checked = s.mileage === undefined ? true : !!s.mileage;
+    applySegLabelsVisibility();
+  }
+  // 「公路编号」同理：默认开
+  const roadCb = $('#lay-road');
+  if (roadCb) {
+    roadCb.checked = s.road === undefined ? true : !!s.road;
+    applyRoadLabelsVisibility();
+  }
   shareSyncPhotoMarkersVisibility();
 }
 
@@ -1967,6 +1991,8 @@ function shareInitLayerControls() {
   $('#lay-satellite').addEventListener('change', function () { toggleLayerSatellite(this.checked); shareSaveLayerState({ satellite: this.checked }); });
   $('#lay-traffic').addEventListener('change', function () { toggleLayerTraffic(this.checked); shareSaveLayerState({ traffic: this.checked }); });
   $('#lay-photos').addEventListener('change', function () { shareToggleLayerPhotos(this.checked); shareSaveLayerState({ photos: this.checked }); });
+  $('#lay-mileage').addEventListener('change', function () { applySegLabelsVisibility(); shareSaveLayerState({ mileage: this.checked }); });
+  $('#lay-road').addEventListener('change', function () { applyRoadLabelsVisibility(); shareSaveLayerState({ road: this.checked }); });
 }
 
 // ---------- 移动端：左右滑动切换 tab ----------

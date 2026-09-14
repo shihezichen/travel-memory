@@ -17,7 +17,8 @@ let drivingInstance = null; // 驾车路线规划（懒加载单例）
 let routeCandidates = []; // 多方案选择时临时绘制的候选路线（Polyline）
 let segPolylines = [];  // 逐段绘制的路线（每段可点击），对应 segmentData
 let segLabels = [];     // 选中点时贴在相邻两段路线中点的里程标签
-let segmentData = [];   // 每段路线的信息：{ i, from, to, mode, choices, path }
+let segmentData = [];   // 每段路线的信息：{ i, from, to, mode, choices, path, picked }
+                        // picked：用户在「选择路线方案」里挑中的那条 choice，没挑过为 null
 let fallbackSegs = false; // 直线兜底临时分段标记（真实路线未就绪时高亮相邻段用）
 let renderSeq = 0;      // 渲染序号，防止异步路线规划竞态
 let viewRestored = false; // 本次渲染是否用了保存的地图视野（用了就别再自适应顶掉它）
@@ -230,13 +231,27 @@ async function restoreLayerState() {
   apply('#lay-satellite', 'satellite', () => toggleLayerSatellite(true));
   apply('#lay-traffic', 'traffic', () => toggleLayerTraffic(true));
   apply('#lay-heatmap', 'heatmap', () => toggleLayerHeatmap(true));
-  // 「照片视频」默认开：用户没显式关过（本地没存过这个偏好）就自动打开，
-  // 一进来就能在地图上看到照片。关过一次之后就一直尊重用户的选择。
+  // 「照片视频」默认关：照片一多，堆在地图上就把路线和地名全盖住了，
+  // 第一眼该看清的是轨迹本身。想看照片的人自己勾，勾过之后一直尊重他的选择。
   const photoCb = $('#lay-photos');
   if (photoCb) {
-    const want = s.photos === undefined ? true : !!s.photos;
+    const want = s.photos === undefined ? false : !!s.photos;
     photoCb.checked = want;
     if (want) { try { toggleLayerPhotos(true, true); } catch (e) {} }
+  }
+  // 「里程标签」默认开：加开关之前它就是常驻的，没显式关过就保持原样。
+  // 这里不能用上面的 apply()——那个只在勾上时才执行，而里程恰好要在**取消**勾选时
+  // 才需要动手（默认状态是显示）。
+  const mileageCb = $('#lay-mileage');
+  if (mileageCb) {
+    mileageCb.checked = s.mileage === undefined ? true : !!s.mileage;
+    applySegLabelsVisibility();
+  }
+  // 「公路编号」同理：默认开，没显式关过就显示
+  const roadCb = $('#lay-road');
+  if (roadCb) {
+    roadCb.checked = s.road === undefined ? true : !!s.road;
+    applyRoadLabelsVisibility();
   }
 }
 async function restoreLightboxState() {
@@ -436,7 +451,9 @@ $('#btn-logout').onclick = async () => {
   currentTripId = null;
   currentPointId = null;
   clearMap();
-  showLogin();
+  // 退出后回站点首页（未登录状态下那里是宣传页），而不是把人留在
+  // /app 的登录浮层上 —— 那个浮层是「想进去的人」才需要看到的东西。
+  location.href = '/';
 };
 
 // 强制重新计算路线（清空后端缓存后重画当前行程曲线）
@@ -547,7 +564,9 @@ function calcTotalDistance() {
   let meters = 0;
   if (segmentData.length) {
     meters = segmentData.reduce((s, seg) => {
-      const d = (seg.choices && seg.choices[0] && seg.choices[0].distance) || 0;
+      // 和标签一样认 picked 优先，否则挑了别的方案后总里程还是默认那条的
+      const src = seg.picked || (seg.choices && seg.choices[0]);
+      const d = (src && src.distance) || 0;
       if (d) return s + d;
       // 该段路线规划失败 → 用球面直线距离兜底，避免总里程缺段
       if (seg.from && seg.to) return s + Math.round(distKm(seg.from, seg.to) * 1000);
@@ -994,8 +1013,12 @@ function renderPhotoBadges(points) {
       openPointPhotos(group[0].id);
     };
     box.appendChild(pmEl);
-    // 角标原来的 offset 是 (10,10)，换算成自建层的定位补偿
-    photoBadgeItems.push({ el: pmEl, lng: group[0].lng, lat: group[0].lat, dx: 10, dy: 10 });
+    // 角标放在轨迹点的**右上角**：点的正下方（top:32px）挂着「地名 + 海拔」小标，
+    // 原来的右下方 (10,10) 会和它撞在一起——关掉「照片视频」图层时角标才显示出来，
+    // 于是一关图层就看到 📷 压着海拔。右上方只有照片堆会占，而照片堆只在图层【开】时
+    // 出现，那时角标本来就是隐藏的，两者永远不同框。
+    // -36 = 圆点半径外的 45° 切点(-10) 再减角标自身高度(26)，让它斜贴着圆点右上。
+    photoBadgeItems.push({ el: pmEl, lng: group[0].lng, lat: group[0].lat, dx: 10, dy: -36 });
   });
   // 新建出来的角标要按当前「照片图层」的开关状态决定显不显示
   syncPhotoMarkersVisibility();
@@ -1151,8 +1174,11 @@ function unhighlightSegments() {
 
 // 获取第 i 段里程（米）：真实路线取当前选中方案 distance，直线/兜底用球面距离
 function segDistanceMeters(i, pts) {
-  const d = segmentData[i] && segmentData[i].choices && segmentData[i].choices[0]
-    ? segmentData[i].choices[0].distance : 0;
+  // picked 是用户在「选择路线方案」里挑的那条；没挑过就用默认（choices[0]，即最快）。
+  // 不看 picked 的话，挑了「最短」之后标签还挂着「最快」的里程，和线对不上。
+  const sd = segmentData[i];
+  const src = (sd && sd.picked) || (sd && sd.choices && sd.choices[0]);
+  const d = src ? src.distance : 0;
   if (d) return d;
   const P = pts || lastPoints;
   if (P && P[i] && P[i + 1]) {
@@ -1167,6 +1193,14 @@ function segDistanceMeters(i, pts) {
 // 选中某个点时，它的来时路变绿、即将去变橙，其余淡化——颜色已经把归属说清楚了，
 // 所以标签里只留数字，不写「来时路 / 即将去」。
 // 沿折线走到总长一半的那个点。返回 [lng, lat]。
+// 第 i 段走过的各条公路（[{code, meters, lng, lat}]）。
+// 直线段没有路可言；驾车段没捞到编号（海外线路 / 全是无名道路）就返回空，不标。
+function segRoadRunsOf(i) {
+  const sd = segmentData[i];
+  if (!sd || sd.mode === 'line') return [];
+  const src = sd.picked || (sd.choices && sd.choices[0]);
+  return (src && src.roadRuns) || [];
+}
 function segMidPoint(i) {
   const seg = segPolylines[i];
   let path = null;
@@ -1223,6 +1257,10 @@ function renderSegLabels() {
     m.setMap(map);
     segLabels.push(m);
   }
+  applySegLabelsVisibility();   // 关着里程时，这批新标签建出来就不该露面
+  // 公路编号是另一批标签（骑在各自那截路的中点上，不跟着里程走），
+  // 但重建时机完全一致 —— 换行程、真实路线算完、改路线方案，两边都得重来。
+  renderRoadLabels(lastPoints.slice(0, -1).map((_, i) => segRoadRunsOf(i)));
   styleSegLabels(currentPointId);
 }
 // 按当前选中点给标签上色：来时路绿、即将去橙、其余淡化（与线的配色一致）
@@ -1321,7 +1359,10 @@ function driveOnce(policy, from, to) {
             (route.steps || []).forEach(step => {
               (step.path || []).forEach(p => path.push([p.lng, p.lat]));
             });
-            return { path, time: route.time || 0, distance: route.distance || 0 };
+            // steps 里顺手把公路编号连同它覆盖的那截路一起捞出来，见 segRoadRuns。
+            // 每条备选路线各算各的——「最快」走高速、「最短」走国道，走的路本来就不一样。
+            const roadRuns = segRoadRuns(route.steps, route.distance);
+            return { path, roadRuns, time: route.time || 0, distance: route.distance || 0 };
           }).filter(r => r.path && r.path.length >= 2);
           resolve(routes);
         } else {
@@ -1354,7 +1395,8 @@ async function planSegmentChoices(from, to) {
                 + Math.round(r.distance / 100);
       if (!seen.has(key)) {
         seen.add(key);
-        choices.push({ label: s.label, path: r.path, time: r.time, distance: r.distance });
+        choices.push({ label: s.label, path: r.path, roadRuns: r.roadRuns || [],
+                       time: r.time, distance: r.distance });
       }
     }
   }
@@ -1594,7 +1636,7 @@ function showSegmentPanel(i) {
     if (chooseBtn) {
       ov.remove();
       const picked = await showMapRouteChooser(title, choices);
-      if (picked && picked.path) redrawSegment(i, picked.path);
+      if (picked && picked.path) redrawSegment(i, picked.path, picked);
       return;
     }
     if (e.target.closest('button[data-cancel]')) { ov.remove(); return; }
@@ -1622,7 +1664,7 @@ async function setSegmentMode(i, mode) {
 
   // 3. 只重绘这一段（不触发全量渲染、不缩放地图）
   if (mode === 'line') {
-    redrawSegment(i, [[from.lng, from.lat], [to.lng, to.lat]]);
+    redrawSegment(i, [[from.lng, from.lat], [to.lng, to.lat]], null);
     if (segmentData[i]) segmentData[i].choices = [];
   } else {
     // 驾车：现场规划这一段的备选路线
@@ -1639,13 +1681,13 @@ async function setSegmentMode(i, mode) {
       // 多条路线：可视化选线（颜色区分 + 确定）
       const title = `${from.name || '起点'} → ${to.name || '终点'}`;
       const picked = await showMapRouteChooser(title, choices);
-      if (picked && picked.path) redrawSegment(i, picked.path);
-      else if (choices[0]) redrawSegment(i, choices[0].path);
-      else redrawSegment(i, [[from.lng, from.lat], [to.lng, to.lat]]);
+      if (picked && picked.path) redrawSegment(i, picked.path, picked);
+      else if (choices[0]) redrawSegment(i, choices[0].path, choices[0]);
+      else redrawSegment(i, [[from.lng, from.lat], [to.lng, to.lat]], null);
     } else if (choices.length === 1) {
-      redrawSegment(i, choices[0].path);
+      redrawSegment(i, choices[0].path, choices[0]);
     } else {
-      redrawSegment(i, [[from.lng, from.lat], [to.lng, to.lat]]);
+      redrawSegment(i, [[from.lng, from.lat], [to.lng, to.lat]], null);
     }
   }
   // 4. 同步侧边栏图标（不重载列表）
@@ -1662,12 +1704,18 @@ function updateSegmentDivider(i) {
   rm.textContent = mode === 'drive' ? '🚗' : '📏';
 }
 
-// 重画第 i 段路线为指定 path（多方案选择后）
-function redrawSegment(i, path) {
+// 重画第 i 段路线为指定 path（多方案选择后）。
+// choice 是用户挑中的那条方案（里程 + 公路编号都跟着它走），切成直线时传 null。
+function redrawSegment(i, path, choice) {
   const poly = segPolylines[i];
   if (!poly) return;
   poly.setPath(path);
-  if (segmentData[i]) segmentData[i].path = path;
+  if (segmentData[i]) {
+    segmentData[i].path = path;
+    segmentData[i].picked = choice || null;
+  }
+  // 换了路线，中点、里程、公路编号全变了，标签得重建
+  renderSegLabels();
 }
 
 // ---------- 详情 ----------
@@ -3427,7 +3475,7 @@ function startReplay() {
   replayLast = 0;
   $('#replay-launch').classList.add('hidden');
   $('#replay-bar').classList.remove('hidden');
-  $('#replay-toggle').textContent = '⏸';
+  setReplayIcon('pause');
   if (!replayMarker) {
     replayMarker = new AMap.Marker({
       position: path[0],
@@ -3518,6 +3566,7 @@ function stopReplay(hide = true) {
     const pts = lastPoints || [];
     $('#replay-launch').classList.toggle('hidden', !pts || pts.length < 2);
   }
+  replayT = 0;              // 停止 = 复位；不归零的话 toggleReplay 会一直判成「暂停中」，点了没反应
   $('#replay-fill').style.width = '0%';
   $('#replay-name').textContent = '';
   $('#replay-count').textContent = '';
@@ -3531,18 +3580,34 @@ function minimizeReplay() {
   $('#replay-launch').classList.toggle('hidden', !pts || pts.length < 2);
 }
 
-// 点击「▶ 回放」：已初始化过（最小化/暂停/停止后）→ 只恢复回放条；从未播过 → 从头开始
+// 从暂停处接着走。stopReplay 会把 marker 摘下地图、清掉路线，所以这里按需补挂回来，
+// 不然续播时点是在跑，地图上却什么都看不见。
+function resumeReplay() {
+  if (!replayTotal || replayPath.length < 2) { startReplay(); return; }
+  replayActive = true;
+  replayLast = 0;   // 归零，否则 dt 会把暂停的那段时长一次性补进去、画面直接跳一大截
+  $('#replay-launch').classList.add('hidden');
+  $('#replay-bar').classList.remove('hidden');
+  setReplayIcon('pause');
+  if (replayMarker) replayMarker.setMap(map);
+  else { startReplay(); return; }
+  ensureReplayLines();
+  updateReplayLines();
+  playLoop();
+}
+
+// 点击「▶ 回放」：暂停/播完后最小化过的 → 只恢复回放条；没播过或已停止 → 从头开始
 function openReplayBar() {
   $('#replay-launch').classList.add('hidden');
   $('#replay-bar').classList.remove('hidden');
-  if (!replayTotal || replayPath.length < 2) startReplay();
+  if (!replayTotal || replayPath.length < 2 || replayT <= 0) startReplay();
 }
 
-// 控制按钮三态循环：播放中→暂停，暂停中→停止（复位），停止后→从头播放
+// 控制按钮：播放中→暂停，暂停中→从断点续播，播完→重播
 function toggleReplay() {
   if (replayActive) { pauseReplay(); return; }
-  if (replayT > 0 && replayT < replayTotal) { stopReplay(true); return; } // 暂停中 → 停止
-  startReplay(); // 停止/播完/首次 → 从头播
+  if (replayT > 0 && replayT < replayTotal) { resumeReplay(); return; } // 暂停中 → 续播
+  startReplay(); // 播完 / 停止 / 首次 → 从头播
 }
 
 // ---------- 媒体灯箱 ----------
@@ -3607,7 +3672,10 @@ function buildLightboxCaption(m, idx) {
   const more = el('button', 'lb-caption-more', '展开');
   more.type = 'button';
   more.hidden = true;
-  const edit = el('span', 'lb-caption-edit', '✎');
+  // 编辑入口：整个说明栏唯一的进编辑方式（文字区和整条都不再触发）。
+  // 没有描述时也在——「＋ 添加描述」那行既然不再可点，这里不常驻就没入口了。
+  // 常驻的代价只是 26px 的点击区（见 style.css 的 ::before），说明栏高度不变。
+  const edit = el('button', 'lb-caption-edit', '✎');
 
   const render = () => {
     const has = !!(m.caption && m.caption.trim());
@@ -3637,14 +3705,13 @@ function buildLightboxCaption(m, idx) {
   box.appendChild(row);
 
   // 文字区：展开/收起（没超行就什么也不做，避免误触）
+  // 这里**不**进编辑。描述区横跨整幅画面，手指落上去的概率极高，而用户多半
+  // 只是想选文字或者滑动翻页；以前点一下就把编辑器弹出来，误触发太频繁。
+  // 现在只有右边那个 ✎ 才进编辑，和「展开/收起」彻底分开。
   txt.onclick = (e) => {
     e.stopPropagation();
     // 点说明里的链接就是打开链接，别顺手把说明栏展开/收起了
     if (e.target.closest && e.target.closest('a')) return;
-    // 还没有描述时，点「＋ 添加描述」这几个字本身也要能开始写。
-    // 上面的 stopPropagation 挡住了冒泡到 box.onclick，所以这里得自己接住，
-    // 否则只有点到说明栏的空白边距才有反应，正好点在字上反而没用。
-    if (box.classList.contains('empty')) { startEdit(e); return; }
     if (more.hidden) return;
     const on = box.classList.toggle('expanded');
     more.textContent = on ? '收起' : '展开';
@@ -3664,10 +3731,9 @@ function buildLightboxCaption(m, idx) {
     }
   };
   edit.onclick = startEdit;
-  // 还没有描述时，点整条都能开始写（此时没有可展开的内容）
-  box.onclick = (e) => {
-    if (box.classList.contains('empty')) startEdit(e);
-  };
+  // 整条说明栏不再接管点击（原来是 empty 时点一下就开始写）。除了误触，这块
+  // 区域还是唯一能**真实选中说明文字**的地方——挂上点击就等于用户刚框选完，
+  // 手指一松编辑器就弹出来，selection 当场丢掉。现在一律不拦。
   return box;
 }
 function closeLightbox() {
@@ -6141,6 +6207,8 @@ function initLayerControls() {
   $('#lay-traffic').addEventListener('change', function () { toggleLayerTraffic(this.checked); saveLayerState({ traffic: this.checked }); });
   $('#lay-heatmap').addEventListener('change', function () { toggleLayerHeatmap(this.checked); saveLayerState({ heatmap: this.checked }); });
   $('#lay-photos').addEventListener('change', function () { toggleLayerPhotos(this.checked); saveLayerState({ photos: this.checked }); });
+  $('#lay-mileage').addEventListener('change', function () { applySegLabelsVisibility(); saveLayerState({ mileage: this.checked }); });
+  $('#lay-road').addEventListener('change', function () { applyRoadLabelsVisibility(); saveLayerState({ road: this.checked }); });
 }
 
 // 按「最上层优先」依次尝试关闭一层，关掉了返回 true。

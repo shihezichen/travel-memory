@@ -128,7 +128,8 @@ COOKIE_NAME = "tm_token"
 GATE_COOKIE = "tm_gate"
 
 # 无需登录即可访问的路径（首页、登录/注册接口、静态资源、只读分享页、路线规划、门禁接口）
-PUBLIC_PATHS = ("/", "/api/login", "/api/register", "/logout", "/api/route",
+PUBLIC_PATHS = ("/", "/app", "/welcome",
+                "/api/login", "/api/register", "/logout", "/api/route",
                 "/api/gate", "/api/gate/status", "/health")
 
 
@@ -147,6 +148,9 @@ def is_public_path(path: str) -> bool:
         return True
     # 媒体文件（图片/视频）：分享页匿名访问必需，且为只读静态资源
     if path.startswith("/uploads/"):
+        return True
+    # 站长验证文件：必须在登录和访问口令门禁之外，否则验证方拿到的是 401
+    if path.endswith(".txt") and path.count("/") == 1:
         return True
     # 视频清晰度档位（只读 GET）：分享页是匿名的，它要能查「转码好了没」，
     # 否则轮询一路 401，档位菜单永远停在「转码中」。返回的只是档位文件名，
@@ -516,8 +520,21 @@ def render_markdown(filename: str):
 
 
 
-@app.get("/")
-def index(request: Request):
+def render_landing(cacheable: bool) -> HTMLResponse:
+    """公开的宣传页。完全自包含（不引 style.css / app.js / 高德），
+    所以除了备案号没有别的占位符要填。
+
+    cacheable 只有 /welcome 能给 True。/ 的响应体是随 cookie 变的
+    （登录了给应用、没登录给宣传页），一旦标成 public，中间的 CDN / 反代
+    就可能把宣传页缓存下来发给已登录的人，反过来也一样。
+    """
+    html = (BASE / "static" / "landing.html").read_text(encoding="utf-8")
+    html = html.replace("__ICP_FOOTER__", icp_footer_html())
+    cc = "public, max-age=300" if cacheable else "no-cache, no-store, must-revalidate"
+    return HTMLResponse(html, headers={"Cache-Control": cc})
+
+
+def render_app(request: Request) -> HTMLResponse:
     html = (BASE / "static" / "index.html").read_text(encoding="utf-8")
     html = html.replace("__AMAP_KEY__", AMAP_KEY)
     html = html.replace("__AMAP_SECURITY__", AMAP_SECURITY)
@@ -531,6 +548,62 @@ def index(request: Request):
     # 静态资源版本号由文件 mtime/size 算出来，不再手写（见 deps.asset_version）
     html = stamp_assets(html)
     return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.get("/")
+def index(request: Request):
+    """根路径按登录态分流：没登录的访客看宣传页，登录过的人直接进应用。
+
+    刻意不用 302 —— 跳转会在浏览器历史里多留一格，退出登录后按后退就在
+    「/」和宣传页之间来回弹。同一个 URL 给不同内容，前进后退都是干净的。
+    宣传页上的「登录」指向 /app，那条路无论登没登录都进应用，不会绕回来。
+    """
+    if not db.get_session_user(request.cookies.get(COOKIE_NAME)):
+        return render_landing(cacheable=False)
+    return render_app(request)
+
+
+@app.get("/app")
+def app_page(request: Request):
+    """应用本体的固定入口。未登录时照旧由前端弹登录浮层。"""
+    return render_app(request)
+
+
+@app.get("/welcome")
+def welcome(request: Request):
+    """宣传页的固定入口 —— 登录状态下也想再看一眼介绍时走这里。"""
+    return render_landing(cacheable=True)
+
+
+# ---------- 站长验证文件 ----------
+# 微信、Google、百度这类「证明你是网站管理员」的流程，都要求在根目录放一个
+# 指定文件名和内容的 txt。每来一个就加一条硬编码路由太蠢 —— 统一从 verify/
+# 目录取，加文件即生效，不用改代码也不用重启。
+VERIFY_DIR = BASE / "verify"
+
+
+def verify_file_path(fname: str):
+    """把根目录的 <fname>.txt 映射到 verify/ 里的文件；不合法或不存在返回 None。
+
+    文件名白名单只留字母数字和 _ - ，路径穿越（..、/、%2f）在这一步就断了，
+    不依赖后面的 resolve 兜底。
+    """
+    if not fname or len(fname) > 80:
+        return None
+    if not all(c.isalnum() or c in "_-" for c in fname):
+        return None
+    p = VERIFY_DIR / (fname + ".txt")
+    return p if p.is_file() else None
+
+
+@app.get("/{fname}.txt")
+def root_verify_txt(fname: str):
+    p = verify_file_path(fname)
+    if not p:
+        raise HTTPException(404, "not found")
+    # 验证方大多不带 If-None-Match，缓存久了反而不好排查，给个短的
+    return FileResponse(p, media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": "public, max-age=300"})
 
 
 # ============================================================

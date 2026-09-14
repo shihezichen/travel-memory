@@ -363,3 +363,133 @@ def test_heatmap_requests_the_current_viewport(page, e2e_user):
     assert seen, "打开足迹图层没有请求 /api/footprint"
     assert "bbox=" in seen[-1], f"请求里没带视野范围：{seen[-1]}"
     assert "zoom=" in seen[-1]
+
+
+# ==========================================================================
+# 里程标签的图层开关
+# ==========================================================================
+# 用户反馈：地图上每段路线中点那个公里数是常驻的，点多了整张图全是小胶囊，
+# 想看底图得先把它们弄走 —— 但没有任何地方能关。现在归到「图层控制」里，
+# 和景区/卫星/路况/照片一样是个勾选框。
+#
+# 判定看的是胶囊上那个 .seg-label-off（`display:none`）—— 这正是把标签藏起来的
+# 那个机制本身，不是我们另记的一本账。不查 AMap 的私有字段（跨版本会碎），
+# 也不查 DOM 里有没有 .seg-label 元素：e2e 跑的是 amap_stub.js，
+# 桩里的 Marker 根本不把 content 挂进 DOM，那样断言会永远是 0。
+
+_VISIBLE_PILLS = ("segLabels.filter(m => m._pill && "
+                  "!m._pill.classList.contains('seg-label-off')).length")
+
+
+def _wait_seg_labels(page):
+    """等里程标签建出来（3 个点 = 2 段）。"""
+    page.wait_until("Array.isArray(segLabels) && segLabels.length >= 2", timeout=15000)
+
+
+def test_里程标签默认显示(page, e2e_user):
+    """加开关之前它就是常驻的，默认值不能因为多了个勾选框就变。"""
+    _login(page, e2e_user)
+    _wait_seg_labels(page)
+    assert page.eval("document.querySelector('#lay-mileage').checked") is True
+    assert page.eval(_VISIBLE_PILLS) >= 2, "默认状态下里程标签应当看得见"
+
+
+def test_取消勾选里程标签就从地图上消失(page, e2e_user):
+    _login(page, e2e_user)
+    _wait_seg_labels(page)
+    page.eval("""() => {
+      const cb = document.querySelector('#lay-mileage');
+      cb.checked = false;
+      cb.dispatchEvent(new Event('change'));
+    }""")
+    page.wait_until(f"{_VISIBLE_PILLS} === 0", timeout=8000)
+    # 再勾回来要能恢复 —— 不能是「关了就永久没了」
+    page.eval("""() => {
+      const cb = document.querySelector('#lay-mileage');
+      cb.checked = true;
+      cb.dispatchEvent(new Event('change'));
+    }""")
+    page.wait_until(f"{_VISIBLE_PILLS} >= 2", timeout=8000)
+
+
+def test_关掉之后重建标签不会自己冒回来(page, e2e_user):
+    """最容易漏的一条。
+
+    里程标签会被反复重建：真实路线算完一次、切行程一次、临时分段建好一次。
+    如果只在「点勾选框」那一刻 hide()，那么关掉里程之后随便触发一次重建，
+    标签就全回来了 —— 用户的感受是「这个开关时灵时不灵」。
+    """
+    _login(page, e2e_user)
+    _wait_seg_labels(page)
+    page.eval("""() => {
+      const cb = document.querySelector('#lay-mileage');
+      cb.checked = false;
+      cb.dispatchEvent(new Event('change'));
+    }""")
+    page.wait_until(f"{_VISIBLE_PILLS} === 0", timeout=8000)
+    # 直接调重建，等价于真实路线算完那一下
+    page.eval("renderSegLabels()")
+    page.wait_ms(300)
+    assert page.eval(_VISIBLE_PILLS) == 0, "重建之后里程标签又冒回来了，开关没守住"
+    assert page.eval("segLabels.length") >= 2, "标签本身应当还在，只是不显示"
+
+
+def test_里程开关刷新后还记得(page, e2e_user):
+    """和其它图层一样存在 localStorage 里，刷新不该丢。"""
+    _login(page, e2e_user)
+    _wait_seg_labels(page)
+    page.eval("""() => {
+      const cb = document.querySelector('#lay-mileage');
+      cb.checked = false;
+      cb.dispatchEvent(new Event('change'));
+    }""")
+    page.wait_until(f"{_VISIBLE_PILLS} === 0", timeout=8000)
+    page.reload()
+    page.wait_until("document.querySelectorAll('#point-list li').length === 3",
+                    timeout=15000)
+    _wait_seg_labels(page)
+    assert page.eval("document.querySelector('#lay-mileage').checked") is False
+    page.wait_ms(300)
+    assert page.eval(_VISIBLE_PILLS) == 0, "刷新之后里程标签又回来了，偏好没存住"
+
+
+def test_图层面板在矮地图上不会被裁掉(browser, live_server, e2e_user):
+    """加了第 6 项之后的新风险。
+
+    手机端 `.map` 是 `height:45~55vh` + `overflow:hidden`，面板绝对定位在里面。
+    项数一多，面板底部会被直接裁掉 —— 最后一项（正好是新加的「里程标签」）
+    既看不见也点不到，而且没有任何滚动条提示还有内容。
+    这里把地图压到很矮，断言面板仍然收在地图里、且最后一项够得着。
+    """
+    pg = browser.new_page(live_server, mobile=True)
+    try:
+        _login(pg, e2e_user)
+        # 压到 260px —— 比 iPhone SE 上 45vh（约 256px）略宽松，正是会出事的尺寸
+        pg.eval("document.getElementById('map').style.height = '260px'")
+        pg.click("#btn-layers")
+        pg.wait_for("#layer-panel:not(.hidden)")
+        g = pg.eval("""(() => {
+          const p = document.getElementById('layer-panel');
+          const m = document.getElementById('map');
+          const last = document.querySelector('#lay-mileage');
+          const pr = p.getBoundingClientRect(), mr = m.getBoundingClientRect();
+          // 把最后一项滚进视野（面板限高后内部可滚）
+          last.scrollIntoView({block: 'nearest'});
+          const lr = last.getBoundingClientRect();
+          return {
+            panelBottom: pr.bottom, mapBottom: mr.bottom,
+            scrollable: p.scrollHeight > p.clientHeight + 1,
+            lastTop: lr.top, lastBottom: lr.bottom,
+            panelTop: pr.top,
+          };
+        })()""")
+        assert g["panelBottom"] <= g["mapBottom"] + 1, (
+            f"面板超出地图下沿，会被 overflow:hidden 裁掉："
+            f"面板底 {g['panelBottom']}，地图底 {g['mapBottom']}")
+        # 面板确实被限高了（说明 max-height 生效），且最后一项能滚到可视区内
+        assert g["scrollable"], "面板没有进入可滚动状态，限高可能没生效"
+        assert g["panelTop"] - 1 <= g["lastTop"] and g["lastBottom"] <= g["panelBottom"] + 1, (
+            f"「里程标签」滚不进面板可视区：项 {g['lastTop']}~{g['lastBottom']}，"
+            f"面板 {g['panelTop']}~{g['panelBottom']}")
+    finally:
+        pg.close()

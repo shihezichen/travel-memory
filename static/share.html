@@ -40,6 +40,8 @@
           <label class="layer-item"><input type="checkbox" id="lay-satellite"> 卫星底图</label>
           <label class="layer-item"><input type="checkbox" id="lay-traffic"> 路况</label>
           <label class="layer-item" title="本行程各点的照片和视频，多图重叠"><input type="checkbox" id="lay-photos"> 照片视频</label>
+          <label class="layer-item" title="每段路线中点上的公里数"><input type="checkbox" id="lay-mileage" checked> 里程标签</label>
+          <label class="layer-item" title="路线上走过的国道/省道/县道编号，标在各自那一截路的中点"><input type="checkbox" id="lay-road" checked> 公路编号</label>
         </div>
         <button id="btn-map-fullscreen" class="map-fab fab-fullscreen" title="地图全屏" aria-label="地图全屏">⛶</button>
         <button id="btn-fit-view" class="map-fab fab-fit" title="全览：把整个行程收进视野" aria-label="全览整个行程">⤢</button>
@@ -47,7 +49,7 @@
         <button id="btn-panel-open" class="map-fab hidden" title="展开详情" aria-label="展开详情">☰</button>
         <button id="replay-launch" class="replay-launch hidden" title="轨迹回放：沿路线播放旅程动画" aria-label="轨迹回放">▶</button>
         <div id="replay-bar" class="replay-bar hidden">
-          <button id="replay-toggle" class="replay-btn" title="轨迹回放：播放中点击=暂停，暂停中点击=停止，停止后点击=从头播放">▶</button>
+          <button id="replay-toggle" class="replay-btn" title="轨迹回放：播放中点击=暂停，暂停中点击=继续，播完点击=重播">▶</button>
           <div class="replay-progress"><div id="replay-fill" class="replay-fill"></div><span id="replay-count" class="replay-count"></span></div>
           <span id="replay-name" class="replay-name"></span>
           <div class="replay-speed">

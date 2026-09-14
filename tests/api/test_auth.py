@@ -134,3 +134,61 @@ def test_gate_blocks_then_lets_through(client, monkeypatch, make_user):
     assert client.post("/api/gate", data={"password": "openme"}).status_code == 200
     assert client.get("/api/trips").status_code == 200
     assert client.get("/api/gate/status").json() == {"enabled": True, "ok": True}
+
+
+def test_root_serves_landing_when_anonymous(client):
+    """没登录时根路径给宣传页，不是应用壳。"""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "把一趟旅行" in r.text          # 宣传页 h1
+    assert "login-overlay" not in r.text   # 不是应用页
+
+
+def test_root_serves_app_when_logged_in(client):
+    client.post("/api/register", data={"username": "lander", "password": "pw123456"})
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "login-overlay" in r.text
+    assert "__AMAP_KEY__" not in r.text
+
+
+def test_app_and_welcome_are_public(client):
+    """/app 无论登没登录都给应用壳；/welcome 始终给宣传页。"""
+    r = client.get("/app")
+    assert r.status_code == 200 and "login-overlay" in r.text
+    assert "no-store" in r.headers.get("cache-control", "")
+
+    r = client.get("/welcome")
+    assert r.status_code == 200 and "把一趟旅行" in r.text
+
+
+def test_landing_has_no_unreplaced_placeholder(client):
+    assert "__ICP_FOOTER__" not in client.get("/welcome").text
+
+
+def test_verify_txt_is_public(client, tmp_path, monkeypatch):
+    """站长验证文件：不登录就能取到，内容原样返回。"""
+    import app as app_mod
+    d = app_mod.VERIFY_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "tm_unit_probe.txt"
+    f.write_text("probe-token-123", encoding="utf-8")
+    try:
+        r = client.get("/tm_unit_probe.txt")
+        assert r.status_code == 200
+        assert r.text == "probe-token-123"
+    finally:
+        f.unlink(missing_ok=True)
+
+
+def test_verify_txt_missing_is_404(client):
+    assert client.get("/definitely_not_here.txt").status_code == 404
+
+
+def test_verify_txt_rejects_traversal(client):
+    """文件名白名单：带路径分隔符或点的一律不给。"""
+    import app as app_mod
+    assert app_mod.verify_file_path("../icp") is None
+    assert app_mod.verify_file_path("a/b") is None
+    assert app_mod.verify_file_path("") is None
+    assert app_mod.verify_file_path("x" * 81) is None

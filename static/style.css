@@ -268,6 +268,11 @@ body.map-fullscreen-on { overflow: hidden; }
   background: #fff; border: 1px solid var(--border);
   box-shadow: 0 4px 16px rgba(0,0,0,.18);
   font-size: 13px; color: var(--text);
+  /* 手机端地图只有 45~55vh，而 .map 是 overflow:hidden —— 图层项一多，
+     面板底部会被直接裁掉，最后一项点不到也看不见。限高 + 内部滚动兜住。
+     66px = top 的 54px + 底下留 12px，和 .map-fab 的边距对齐。 */
+  max-height: calc(100% - 66px);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
 .layer-panel .layer-title { font-weight: 600; margin-bottom: 6px; }
 .layer-item { display: flex; align-items: center; gap: 6px; padding: 5px 0; cursor: pointer; }
@@ -488,6 +493,9 @@ body.map-fullscreen-on { overflow: hidden; }
    选中某个点时来时路变绿、即将去变橙——颜色已经说清归属，所以不再写
    「来时路 / 即将去」几个字，只留数字。 */
 .seg-label-anchor { position: relative; width: 0; height: 0; }
+/* 图层控制里关掉「里程标签」时用。外层锚点本来就是零尺寸，
+   把胶囊收掉之后这个 marker 在视觉上就彻底不存在了。 */
+.seg-label-off { display: none !important; }
 .seg-label {
   position: absolute; left: 0; top: 0;
   transform: translate(-50%, -50%);
@@ -504,6 +512,33 @@ body.map-fullscreen-on { overflow: hidden; }
 }
 .seg-label.in  { background: rgba(22, 163, 74, .94); }   /* 绿：来时路，与线同色 */
 .seg-label.out { background: rgba(249, 115, 22, .95); }  /* 橙：即将去 */
+
+/* ---------- 公路编号标签（G318 / S217 / X245…） ---------- */
+/* 和里程标签是两回事，样式也要一眼分得开：
+   里程是「实心彩色胶囊」，编号做成「白底 + 彩色描边」的小牌子，像路边的路牌。
+   为什么不跟里程共用一个胶囊：一段轨迹常常连着走好几条路（G214 转 G318），
+   里程只有一个数、编号有好几个，挤一起读不出谁对应哪一截。
+   位置也因此分开 —— 编号骑在它自己那截路的中点上，还抬高 20px 避开里程。 */
+.road-label {
+  position: absolute; left: 0; top: 0;
+  transform: translate(-50%, -50%);
+  display: inline-block; white-space: nowrap;
+  padding: 0 5px; border-radius: 4px;
+  font-size: 10px; line-height: 15px; font-weight: 800;
+  letter-spacing: .4px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+  pointer-events: none;
+  forced-color-adjust: none;                  /* 强制深色模式下不被改色 */
+}
+/* 按等级配色：一眼看出走的是国道还是县道，比光给个号有用。
+   取色对着国内路牌的习惯来：国道红、省道蓝、县乡道灰。 */
+.road-label.road-g { color: #b91c1c; border: 1.5px solid #b91c1c; }   /* G：国道 / 国家高速 */
+.road-label.road-s { color: #1d4ed8; border: 1.5px solid #1d4ed8; }   /* S：省道 */
+.road-label.road-x { color: #475569; border: 1.5px solid #94a3b8; }   /* X/Y/Z：县道、乡道 */
+/* 缩得太小时整体收起（类名打在 #map 上，见 syncElevLabelsVisibility） */
+.map.hide-road .road-label { display: none; }
 
 
 /* ---------- 轨迹点旁的海拔小标 ---------- */
@@ -1322,6 +1357,9 @@ body.map-fullscreen-on { overflow: hidden; }
 .lb-caption-text {
   flex: 1; min-width: 0;
   white-space: pre-wrap; word-break: break-word;
+  /* 说明栏整条不再挂点击之后，长按选中才有意义。纵向滑动照旧交给浏览器翻页，
+     选中是长按触发的，不会和翻页打架。 */
+  user-select: text; -webkit-user-select: text;
   /* 默认最多 3 行，超出省略号收住，不让长文把整张图糊死 */
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
   overflow: hidden;
@@ -1370,9 +1408,18 @@ body.map-fullscreen-on { overflow: hidden; }
 .lb-caption-text.md del { opacity: .68; }
 .lb-caption-text.md strong { font-weight: 700; }
 .lb-caption-edit {
-  flex: none; font-size: 15px; opacity: .75;
-  padding: 2px 4px;
+  flex: none; position: relative;
+  font-size: 15px; opacity: .75; padding: 2px 4px;
+  border: none; background: none; color: inherit;   /* 点击区靠零尺寸扩展，不能撑高说明栏 */
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
+/* 手指点得到的最小半径。::-webkit-details-marker 之类的伪元素不行（零尺寸元素不渲染），
+   改用 ::before 往四周扩，视觉不动，只把命中区撑到 26×26。 */
+.lb-caption-edit::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 26px; height: 26px; transform: translate(-50%, -50%);
+}
+.lb-caption-edit:active { color: #cfe0ff; }
 .lb-caption.readonly .lb-caption-edit { display: none; }
 /* 放大态：说明栏淡下去但不消失，既不挡图也还能看见 */
 .lightbox.zoomed .lb-caption { opacity: .45; }

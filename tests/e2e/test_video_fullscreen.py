@@ -122,7 +122,7 @@ def test_点控制条右下角落在视频上而不是说明栏(page, e2e_user, 
 
 
 def test_照片格不受影响说明栏照旧铺在底部(page, e2e_user, video_media):
-    """让位只对视频格生效 —— 照片上那条「点整条加描述」的交互不能被顺手改掉。"""
+    """让位只对视频格生效 —— 照片格的说明栏应当仍然贴着灯箱底边。"""
     _open_video_lightbox(page, e2e_user, video_media)
     g = page.eval("""(() => {
       const idx = lightboxMedia.findIndex(m => m.type === 'photo');
@@ -178,3 +178,92 @@ def test_清晰度下载关闭三枚控件在同一行(page, e2e_user, video_med
         "三枚控件的命中高度应该一致（都是 --lb-tap）")
     # 清晰度在左、下载和关闭在右，别叠在一起
     assert r["quality"]["right"] < r["download"]["left"]
+
+
+# ------------------------------------------------- 描述区分开「展开」和「编辑」
+# 用户反馈：看图时手指落在描述区域，只是想滑一下或者选个文字，编辑器就弹出来了 ——
+# 说明栏横跨整幅画面，可点面积太大，误触率高得离谱。
+# 现在整条说明栏都不进编辑：文字区只负责展开/收起，编辑只有右边那个 ✎ 能触发。
+
+def _caption_geometry(page):
+    """说明栏上几个关键点的落点和「点下去会不会进编辑」。"""
+    return page.eval("""(() => {
+      const cap = document.querySelector('#lightbox .lb-slide.cur .lb-caption');
+      if (!cap) return null;
+      const txt = cap.querySelector('.lb-caption-text');
+      const edit = cap.querySelector('.lb-caption-edit');
+      if (!txt || !edit) return null;
+      const tr = txt.getBoundingClientRect(), er = edit.getBoundingClientRect();
+      const hit = (x, y) => {
+        const e = document.elementFromPoint(x, y);
+        return { tag: e ? e.tagName.toLowerCase() : null,
+                 cls: e ? e.className : null,
+                 isEdit: !!(e && e.closest && e.closest('.lb-caption-edit')) };
+      };
+      return {
+        text: hit(tr.left + tr.width / 2, tr.top + tr.height / 2),   // 文字正中
+        meta: (() => { const m = cap.querySelector('.lb-caption-meta');
+                       if (!m) return null; const r = m.getBoundingClientRect();
+                       return hit(r.left + r.width / 2, r.top + r.height / 2); })(),
+        editH: er.height,
+        // ✎ 的点击区：视觉没变，命中区靠 ::before 撑开，必须明显大于字形本身
+        editHitW: (() => { let n = 0;
+          for (let dx = -22; dx <= 22; dx += 1) {
+            const e = document.elementFromPoint(er.left + er.width / 2 + dx,
+                                                er.top + er.height / 2);
+            if (e && e.closest && e.closest('.lb-caption-edit')) n += 1;
+          }
+          return n; })(),
+        capHeight: cap.getBoundingClientRect().height,
+      };
+    })()""")
+
+
+def test_点描述文字不进编辑只展开收起(page, e2e_user, video_media):
+    """这条是用户反馈的那次误触。文字区点一下不许弹编辑器。"""
+    _open_video_lightbox(page, e2e_user, video_media)
+    g = _caption_geometry(page)
+    assert g, "灯箱里没渲染出说明栏的文字区和 ✎"
+    assert not g["text"]["isEdit"], (
+        f"点说明文字落在了编辑入口上（命中 {g['text']['tag']}.{g['text']['cls']}）")
+    assert not (g["meta"] or {}).get("isEdit"), "点「地点 · 时间」那一行也进了编辑"
+
+
+def test_编辑只认那个铅笔图标(page, e2e_user, video_media):
+    """反过来也要成立：✎ 本身点得动，而且命中区不能只有字形那么大。"""
+    _open_video_lightbox(page, e2e_user, video_media)
+    g = _caption_geometry(page)
+    assert g, "灯箱里没渲染出说明栏的文字区和 ✎"
+    # 手指点得到的最小半径。字形本身不到 10px 宽，靠 ::before 撑到 26px。
+    assert g["editHitW"] >= 20, (
+        f"✎ 的命中宽度只有 {g['editHitW']}px，手指点不准")
+
+
+def test_没有描述时铅笔图标照样在(page, e2e_user, video_media):
+    """整条不再可点之后，「＋ 添加描述」这行字就只剩提示作用了 ——
+    ✎ 要是不常驻，新加的图就没地方写描述。"""
+    _open_video_lightbox(page, e2e_user, video_media)
+    page.eval("""() => {
+      const m = lightboxMedia[lightboxIndex];
+      m.caption = ''; renderLightbox();
+    }""")
+    page.wait_for("#lightbox:not(.hidden)")
+    has = page.eval(
+        "!!document.querySelector('#lightbox .lb-slide.cur .lb-caption.empty .lb-caption-edit')")
+    assert has, "没有描述时说明栏里没有 ✎，用户没法加描述"
+
+
+def test_常驻铅笔图标不撑高说明栏(page, e2e_user, video_media):
+    """✎ 从「有描述时才出现」变成常驻，说明栏高度不许跟着变 ——
+    视频格的控制条让位是按说明栏实际高度算的（tmReserveCaptionSpace）。"""
+    _open_video_lightbox(page, e2e_user, video_media)
+    with_cap = _caption_geometry(page)["capHeight"]
+    page.eval("""() => {
+      const m = lightboxMedia[lightboxIndex];
+      if (!m.caption) m.caption = '占位描述，用来对比两种状态下的说明栏高度';
+      renderLightbox();
+    }""")
+    page.wait_for("#lightbox:not(.hidden)")
+    without_cap = _caption_geometry(page)["capHeight"]
+    assert abs(with_cap - without_cap) <= 2, (
+        f"有没有描述，说明栏高度不一致：{with_cap} vs {without_cap}")
