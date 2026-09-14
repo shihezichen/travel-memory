@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 import db
 import media as media_mod
+import media_purge
 import mcp_http
 import transcode
 
@@ -1010,7 +1011,12 @@ def ai_delete_point(request: Request, point_id: int):
         raise HTTPException(404, "地点不存在")
     if not _key_is_owner(key, db.get_point_owner_id(point_id)):
         raise HTTPException(404, "地点不存在")
+    # 必须在 delete 之前捞：行一删，媒体记录跟着级联消失，文件名就无从查起了。
+    # （这里原来什么文件都不删，删完点位磁盘和 OSS 上全是查无主的孤儿。）
+    files = db.get_point_media_files(point_id)
+    variants = db.get_point_variant_files(point_id)
     db.delete_point(point_id)
+    media_purge.purge_file_pairs(UPLOAD_DIR, media_mod.THUMB_DIR, files, variants)
     _audit(key, "points.delete", "ok", detail=f"point={point_id}")
     return {"ok": True}
 
@@ -1024,11 +1030,9 @@ def ai_delete_trip(request: Request, trip_id: int):
     if not _key_is_owner(key, db.get_trip_owner_id(trip_id)):
         raise HTTPException(404, "行程不存在")
     files = db.get_trip_media_files(trip_id)
+    variants = db.get_trip_variant_files(trip_id)   # 必须在 delete 之前捞（行会级联消失）
     db.delete_trip(trip_id)
-    for fname, thumb in files:
-        (UPLOAD_DIR / fname).unlink(missing_ok=True)
-        if thumb:
-            (media_mod.THUMB_DIR / thumb).unlink(missing_ok=True)
+    media_purge.purge_file_pairs(UPLOAD_DIR, media_mod.THUMB_DIR, files, variants)
     _audit(key, "trips.delete", "ok", detail=f"trip={trip_id}")
     return {"ok": True}
 
@@ -1198,10 +1202,9 @@ def ai_delete_media(request: Request, media_id: int):
         raise HTTPException(404, "媒体不存在")
     m = db.get_media(media_id)
     if m:
-        (UPLOAD_DIR / m["filename"]).unlink(missing_ok=True)
-        if m["thumb_filename"]:
-            (media_mod.THUMB_DIR / m["thumb_filename"]).unlink(missing_ok=True)
+        variants = db.delete_variants(media_id)
         db.delete_media(media_id)
+        media_purge.purge_media_row(UPLOAD_DIR, media_mod.THUMB_DIR, m, variants)
     _audit(key, "media.delete", "ok", detail=f"media={media_id}")
     return {"ok": True}
 

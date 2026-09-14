@@ -28,6 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 import db
 import download  # 媒体「另存为」（Content-Disposition: attachment，见 download.py）
 import media as media_mod
+import media_purge  # 删媒体时一并清掉 OSS 上的对象（见 media_purge.py）
 import oss           # OSS 直传签名（见 oss.py）
 import oss_backfill  # 直传之后把对象拉回本机存档（见 oss_backfill.py）
 import transcode  # 视频清晰度分层转码（后台线程，见 transcode.py 顶部的诊断说明）
@@ -698,12 +699,7 @@ def api_delete_trip(request: Request, trip_id: int):
     files = db.get_trip_media_files(trip_id)
     variants = db.get_trip_variant_files(trip_id)   # 必须在 delete 之前捞（行会级联消失）
     db.delete_trip(trip_id)
-    for fname, thumb in files:
-        (UPLOAD_DIR / fname).unlink(missing_ok=True)
-        if thumb:
-            (media_mod.THUMB_DIR / thumb).unlink(missing_ok=True)
-    for vname in variants:
-        (UPLOAD_DIR / "variants" / vname).unlink(missing_ok=True)
+    media_purge.purge_file_pairs(UPLOAD_DIR, media_mod.THUMB_DIR, files, variants)
     return {"ok": True}
 
 
@@ -1050,12 +1046,7 @@ def api_delete_point(request: Request, point_id: int):
     files = db.get_point_media_files(point_id)
     variants = db.get_point_variant_files(point_id)  # 必须在 delete 之前捞（行会级联消失）
     db.delete_point(point_id)
-    for fname, thumb in files:
-        (UPLOAD_DIR / fname).unlink(missing_ok=True)
-        if thumb:
-            (media_mod.THUMB_DIR / thumb).unlink(missing_ok=True)
-    for vname in variants:
-        (UPLOAD_DIR / "variants" / vname).unlink(missing_ok=True)
+    media_purge.purge_file_pairs(UPLOAD_DIR, media_mod.THUMB_DIR, files, variants)
     return {"ok": True}
 
 
@@ -1814,13 +1805,10 @@ def api_delete_media(request: Request, media_id: int):
     require_owner(current_user(request), db.get_media_owner_id(media_id), "媒体")
     m = db.get_media(media_id)
     if m:
-        (UPLOAD_DIR / m["filename"]).unlink(missing_ok=True)
-        if m["thumb_filename"]:
-            (media_mod.THUMB_DIR / m["thumb_filename"]).unlink(missing_ok=True)
         # 转码档位文件也要一起清掉，否则删了视频还留着一堆 720p/480p 占盘
-        for vname in db.delete_variants(media_id):
-            (UPLOAD_DIR / "variants" / vname).unlink(missing_ok=True)
+        variants = db.delete_variants(media_id)
         db.delete_media(media_id)
+        media_purge.purge_media_row(UPLOAD_DIR, media_mod.THUMB_DIR, m, variants)
     return {"ok": True}
 
 
