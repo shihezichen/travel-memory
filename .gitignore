@@ -22,6 +22,12 @@ data.db-wal
 data.db-shm
 uploads/
 
+# ---- 演示素材池（只在发布时用到，不进库）----
+# assets/demo-media/ 是 fetch_demo_assets.py 从 Wikimedia 抓来的 31MB 图片视频。
+# 它只被 publish_demo_assets.py 用一次（发布到 OSS），之后 seed 完全不需要它。
+# 生产机上根本不用有这个目录，所以没必要让每个 clone 都背着它。
+assets/demo-media/
+
 # ---- 运行时产物 ----
 logs/
 *.log

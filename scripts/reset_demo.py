@@ -7,12 +7,13 @@
 做的事：
   1. 踢掉该账号所有登录会话（别人正开着的页面下次操作会被要求重新登录）
   2. 清掉该账号在各张附属表里的痕迹：API Key、偏好、生成记录、幂等键、审计日志、点元数据
-  3. 调用 seed_test_user.py 重建行程 / 地点 / 照片 / 描述（它自己会先清行程、点、媒体、分享和磁盘文件）
+  3. 调用 seed_test_user.py 重建行程 / 地点 / 照片 / 描述（只写库；媒体在 OSS 上，
+     由 scripts/publish_demo_assets.py 一次性发布，这里不碰文件）
   4. 重置密码为出厂值，并把「上次打开的行程」指回第一个
 
 用法：
     python3 scripts/reset_demo.py            # 重置默认演示账号 test
-    DEMO_USER=demo python3 scripts/reset_demo.py
+    DEMO_USER=其他账号名 python3 scripts/reset_demo.py   # 换个账号（默认就是 test）
 
 想关掉这个功能，把定时器停掉即可，脚本本身不会被任何请求触发。
 """
@@ -63,7 +64,24 @@ def main():
         c.close()
         log("已清理：%d 个会话、%d 个 API Key，以及偏好/生成/审计/点元数据" % (n_sess, n_keys))
 
-    # 重建行程与照片（seed 脚本本身幂等：先清行程/点/媒体/分享和磁盘文件，再重建）
+    # 先确保 OSS 上素材齐全，再重建库里的行。
+    #
+    # 为什么这步不能省：演示账号的媒体只存在 OSS 上，而「页面上删掉一张照片」现在
+    # 会连 OSS 对象一起删（见 media_purge.py）。谁在演示账号里点了删除，
+    # 那个对象就真没了 —— 只重建数据库行的话，行指向一个不存在的对象，
+    # 演示账号从此永久缺一张图。所以每晚顺手补齐。
+    #
+    # 代价很小：publish 脚本对每个对象先 HEAD 一下，齐全时一个字节都不传。
+    # 素材池不在这台机器上（或者 OSS 没配）时它会自己报错退出，那就跳过 ——
+    # 补不齐总比整个重置失败好，库里的行照样重建。
+    pub = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "publish_demo_assets.py")],
+                         capture_output=True, text=True, cwd=ROOT)
+    if pub.returncode == 0:
+        log("  素材检查：" + (pub.stdout.strip().splitlines() or ["（无输出）"])[-1])
+    else:
+        log("  素材检查跳过（%s）" % (pub.stdout.strip().splitlines() or [pub.stderr.strip()[-200:]])[-1])
+
+    # 重建行程与照片（seed 幂等：先清行程/点/媒体/分享，再重建。只写库，不产生文件）
     r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "seed_test_user.py")],
                        capture_output=True, text=True, cwd=ROOT)
     if r.returncode != 0:
