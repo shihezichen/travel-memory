@@ -53,7 +53,14 @@ Thumbs.db
 # ---- Agent / 本机运维专用，不属于项目本体 ----
 # 这些是把代码和数据同步到另一台机器、发飞书告警、切域名之类的私有基建脚本，
 # 里面是特定机器的路径和主机名，对别人没有意义。文件仍留在本地磁盘上。
-ops/
+ops/*
+# sync-oss.sh 是例外：它是媒体分发链路的一部分（媒体绕开 frp 隧道全靠它），
+# 热备机和别人的 clone 都要能跑，不该只活在这一台机器的磁盘上。
+# 注意这里必须写成 `ops/*` 而不是 `ops/` —— git 的规则是父目录被忽略之后，
+# 里面的文件再怎么否定都恢复不回来。
+!ops/sync-oss.sh
+!ops/oss_referenced_names.py
+
 backup.sh
 switch-to-domain.sh
 sync-to-top001.sh
