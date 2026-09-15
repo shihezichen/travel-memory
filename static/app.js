@@ -1727,14 +1727,13 @@ function showSegmentPanel(i) {
   const data = segmentData[i] || { i, from, to, mode: from.route_mode || 'drive', choices: [], path: null };
   const mode = data.mode;
   const choices = data.choices || [];
-  const title = `${from.name || '起点'} → ${to.name || '终点'}`;
+  const title = `${from.name || '起点'} 至 ${to.name || '终点'}`;
 
   const ov = document.createElement('div');
   ov.className = 'modal';
   ov.innerHTML = `
     <div class="modal-box">
-      <h2>路径段</h2>
-      <div class="seg-panel-title">${esc(title)}</div>
+      <h2>${esc(title)} 路径</h2>
       <div class="seg-mode-row">
         <button type="button" class="btn ${mode === 'drive' ? 'btn-primary' : ''}" data-mode="drive">🚗 驾车</button>
         <button type="button" class="btn ${mode === 'line' ? 'btn-primary' : ''}" data-mode="line">📏 直线</button>
@@ -1756,6 +1755,9 @@ function showSegmentPanel(i) {
     const chooseBtn = e.target.closest('button[data-choose]');
     if (chooseBtn) {
       ov.remove();
+      // 让浏览器先把「框已经没了」这一帧画出来，再去做几秒钟的规划。
+      // 不让这一帧的话，点完按钮框还杵在那儿，像是没响应。
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
       let list = choices;
       // 定过路线的段，加载时直接用存下来的那条、不再规划，所以这里只有一条 ——
       // 不现场补一次的话，用户定完就再也改不回去了（按钮压根不出现）。
@@ -1845,6 +1847,9 @@ function redrawSegment(i, path, choice) {
   }
   // 换了路线，中点、里程、公路编号全变了，标签得重建
   renderSegLabels();
+  // 顶栏那行统计里的总里程也是按各段加起来的，不刷一下就还是旧数
+  // —— 表现出来就是「换完路要刷新页面才看到变化」
+  updateStatsDistance();
   // 挑定的方案要存下来，否则一刷新就被重新规划的结果顶掉 —— 这个功能原来
   // 只改内存，选完看着是生效的，切个行程回来又变回默认那条。
   saveSegmentRoute(i, choice);
