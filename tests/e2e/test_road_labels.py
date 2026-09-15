@@ -68,3 +68,22 @@ def test_prefers_the_source_that_explains_more(page):
     assert page.eval("roadDistLooksSame(328130, 330699)") is True
     # 328 公里 vs 1361 公里：高德绕远了，换过去标签会飘到没有线的地方
     assert page.eval("roadDistLooksSame(328130, 1360765)") is False
+
+
+def test_detour_ratio_flags_the_seasonal_closure_case(page):
+    """绕行系数：那拉提→库车该被判成「高德绕远了」，正常的段不该被误判。
+
+    独库公路每年十月到次年五月封山，高德按「此刻能不能走」规划，于是给出
+    1361 公里绕大半个新疆的方案（直线才 203 公里），三种策略给的全是绕行 ——
+    连个能换的都没有。而这条行程记的是 2025 年 7 月已经走过的路。
+    超过这个系数就把 OSRM 那条也摆进备选，并让它当默认。
+    """
+    page.goto("/app")
+    # 那拉提 → 库车：直线约 203 公里
+    straight = page.eval("distKm({lng:84.15,lat:43.31667},{lng:82.96204,lat:41.71786}) * 1000")
+    assert 190000 < straight < 215000
+    assert 1360765 / straight > page.eval("DETOUR_SUSPECT")      # 高德那条：绕了
+    assert 330699 / straight < page.eval("DETOUR_SUSPECT")       # OSRM 那条：没绕
+    # 乌鲁木齐 → 独山子，高德规划得挺好，不该触发
+    s2 = page.eval("distKm({lng:87.61688,lat:43.82563},{lng:84.88596,lat:44.32812}) * 1000")
+    assert 251073 / s2 < page.eval("DETOUR_SUSPECT")

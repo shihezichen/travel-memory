@@ -749,6 +749,15 @@ async function planSegment(a, b) {
   let seg = null;
   if (isInChina(a.lng, a.lat) && isInChina(b.lng, b.lat)) {
     seg = await shareDriveOnce(AMap.DrivingPolicy.LEAST_TIME, new AMap.LngLat(a.lng, a.lat), new AMap.LngLat(b.lng, b.lat));
+    // 高德绕得离谱时换 OSRM 那条。只读页不弹选择，所以这里直接替换掉。
+    // 高德按「此刻能不能走」规划，碰上季节性封闭的路（独库公路十月到五月封山）
+    // 会给一条绕大半个新疆的方案 —— 而这条行程记的是 2025 年 7 月走过的路。
+    // 主页面同一处逻辑见 withShorterAlternative。
+    const straight = distKm(a, b) * 1000;
+    if (seg && straight > 0 && (seg.distance || 0) / straight > DETOUR_SUSPECT) {
+      const alt = await shareRouteViaOsm(a, b);
+      if (alt && alt.distance && alt.distance < seg.distance * 0.8) seg = alt;
+    }
     // 高德对编号的识别不全时换成 OSRM 的（独库公路那段 328 公里，高德只认得出
     // 开头 12 公里的「218国道」，OSRM 还能给出随后 293 公里的 G217）。
     // 路径仍用高德的。10km 以下不值得为标签多发一次请求。

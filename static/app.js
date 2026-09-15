@@ -1464,6 +1464,20 @@ async function betterRoadRuns(a, b, amap) {
   return theirs > mine ? alt.runs : amap.roadRuns;
 }
 
+// 高德那几条都绕远了的话，补一条 OSRM 的进备选，并把它排到最前当默认。
+// 不是无条件补：绝大多数段高德规划得挺好，白白多发一次请求不值当。
+async function withShorterAlternative(a, b, choices) {
+  const straight = distKm(a, b) * 1000;
+  if (!choices.length || straight <= 0) return choices;
+  const best = Math.min(...choices.map(c => c.distance || Infinity));
+  if (!isFinite(best) || best / straight <= DETOUR_SUSPECT) return choices;
+  const alt = await routeViaOsm(a, b);
+  // 只在明显更短时才插队。差不多长就说明高德没绕，是这一带本来就得那么走
+  if (!alt.length || !(alt[0].distance < best * 0.8)) return choices;
+  alt[0].label = '更短';
+  return [alt[0]].concat(choices);
+}
+
 // 规划单段（第 i 段：points[i] → points[i+1]）的驾车/直线路线，返回段信息
 async function planOneSegment(i, a, b) {
   const mode = a.route_mode || 'drive';
@@ -1476,6 +1490,12 @@ async function planOneSegment(i, a, b) {
       const from = new AMap.LngLat(a.lng, a.lat);
       const to = new AMap.LngLat(b.lng, b.lat);
       choices = await planSegmentChoices(from, to);
+      // 高德绕得离谱时，把 OSRM 那条也摆进备选，并让它当默认。
+      // 高德只按「此刻能不能走」规划，碰上季节性封闭的路（独库公路十月到五月封山）
+      // 就给一条绕大半个新疆的方案：那拉提→库车直线 203 公里，它规划 1361 公里，
+      // 三种策略给的全是绕行，连个能换的都没有。
+      choices = await withShorterAlternative(a, b, choices);
+      // seg 要在补完备选之后再取：补进来的那条排在最前，它才是默认展示的
       if (choices.length) seg = choices[0].path;
       // 高德对编号的识别不全时换成 OSRM 的。只处理默认展示的那条 ——
       // 其余备选走的是别的路，硬套过去反而会标错。
