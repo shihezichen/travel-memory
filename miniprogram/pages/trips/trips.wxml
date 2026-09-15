@@ -1,0 +1,28 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="loading">加载中…</view>
+
+  <block wx:elif="{{!user}}">
+    <view class="card hero">
+      <view class="hero-title">把一趟旅行，变成能重新走一遍的记忆</view>
+      <view class="muted hero-sub">地图上的真实路线、每个落脚点的照片与心情。</view>
+      <button class="btn" bindtap="onDemo" loading="{{demoing}}">一键体验，无需注册</button>
+      <button class="btn btn-ghost mt" bindtap="onLogin">已有账号，登录</button>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view wx:if="{{!trips.length}}" class="empty">
+      <view>还没有行程</view>
+      <view class="tiny">去网页版建一趟，再回来看</view>
+    </view>
+    <view wx:for="{{trips}}" wx:key="id" class="card trip" bindtap="onOpen" data-id="{{item.id}}">
+      <view class="trip-head">
+        <text class="trip-name">{{item.name}}</text>
+        <text class="badge {{item.statusClass}}">{{item.statusText}}</text>
+      </view>
+      <view class="muted">{{item.range}}{{item.days ? ' · ' + item.days + ' 天' : ''}}</view>
+      <view wx:if="{{item.description}}" class="tiny desc">{{item.description}}</view>
+    </view>
+    <view class="tiny logout" bindtap="onLogout">退出登录（{{user.display_name || user.username}}）</view>
+  </block>
+</view>

@@ -1,0 +1,9 @@
+<view class="page">
+  <view class="card">
+    <input class="in" placeholder="用户名" value="{{username}}" bindinput="onU" />
+    <input class="in" placeholder="密码" password value="{{password}}" bindinput="onP" bindconfirm="onSubmit" />
+    <button class="btn" bindtap="onSubmit" loading="{{busy}}">登录</button>
+    <view wx:if="{{err}}" class="err">{{err}}</view>
+  </view>
+  <view class="tiny tip">没有账号？网页版 top001.xin 可以注册，也可以直接用体验账号逛。</view>
+</view>

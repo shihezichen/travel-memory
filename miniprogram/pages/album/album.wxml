@@ -1,0 +1,14 @@
+<view class="page" wx:if="{{videoUrl}}">
+  <video class="fullvideo" src="{{videoUrl}}" controls autoplay
+         show-fullscreen-btn enable-play-gesture object-fit="contain" />
+</view>
+<view class="page" wx:else>
+  <view wx:if="{{loading}}" class="loading">加载中…</view>
+  <view wx:elif="{{!media.length}}" class="empty">这趟还没有照片</view>
+  <view class="grid">
+    <view wx:for="{{media}}" wx:key="id" class="cell" bindtap="onPreview" data-idx="{{index}}">
+      <image class="thumb" src="{{item.thumb}}" mode="aspectFill" lazy-load />
+      <view wx:if="{{item.type === 'video'}}" class="play">▶</view>
+    </view>
+  </view>
+</view>

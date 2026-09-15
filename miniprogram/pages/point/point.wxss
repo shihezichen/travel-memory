@@ -1,0 +1,10 @@
+.name { font-size: 38rpx; font-weight: 600; }
+.desc { margin-top: 16rpx; color: #3B4A60; }
+.grid { display: flex; flex-wrap: wrap; gap: 8rpx; }
+.cell { width: calc((100% - 16rpx) / 3); aspect-ratio: 1; position: relative; border-radius: 12rpx; overflow: hidden; background: #E6EBF2; }
+.thumb { width: 100%; height: 100%; display: block; }
+.play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 40rpx; text-shadow: 0 2rpx 12rpx rgba(0,0,0,.6); }
+.time { position: absolute; left: 8rpx; bottom: 8rpx; color: #fff; font-size: 20rpx; text-shadow: 0 1rpx 4rpx rgba(0,0,0,.8); }
+.cap { margin-top: 16rpx; }
+.cap-text { margin-top: 8rpx; }
+.upload { margin: 32rpx 0 48rpx; }

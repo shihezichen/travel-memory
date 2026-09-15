@@ -1,0 +1,25 @@
+<view class="page">
+  <view class="card">
+    <view class="name">{{point.name}}</view>
+    <view class="muted">{{dateText}}{{point.elevation ? ' · 海拔 ' + point.elevation + ' m' : ''}}</view>
+    <view wx:if="{{point.description}}" class="desc">{{point.description}}</view>
+  </view>
+
+  <view wx:if="{{loading}}" class="loading">加载中…</view>
+  <view wx:elif="{{!media.length}}" class="empty">这个点还没有照片</view>
+
+  <view class="grid">
+    <view wx:for="{{media}}" wx:key="id" class="cell" bindtap="onPreview" data-idx="{{index}}">
+      <image class="thumb" src="{{item.thumb}}" mode="aspectFill" lazy-load />
+      <view wx:if="{{item.type === 'video'}}" class="play">▶</view>
+      <view wx:if="{{item.timeText}}" class="time">{{item.timeText}}</view>
+    </view>
+  </view>
+
+  <view wx:for="{{captioned}}" wx:key="id" class="card cap">
+    <view class="tiny">{{item.timeText}}</view>
+    <view class="cap-text">{{item.caption}}</view>
+  </view>
+
+  <button class="btn upload" bindtap="onUpload" loading="{{uploading}}">＋ 添加照片 / 视频</button>
+</view>

@@ -1,0 +1,46 @@
+/* 全局样式。配色跟 Web 端宣传页一致：深蓝 + 蓝色强调色。 */
+page {
+  background: #F5F7FA;
+  color: #1A2233;
+  font-size: 30rpx;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page { padding: 24rpx; }
+
+.card {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 28rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 2rpx 12rpx rgba(16, 32, 64, .06);
+}
+
+.muted { color: #6B7A90; font-size: 26rpx; }
+.tiny  { color: #93A1B5; font-size: 24rpx; }
+
+.btn {
+  background: #2F6FED;
+  color: #fff;
+  border-radius: 999rpx;
+  padding: 22rpx 0;
+  text-align: center;
+  font-size: 31rpx;
+  border: none;
+}
+.btn::after { border: none; }
+.btn-ghost { background: rgba(47,111,237,.1); color: #2F6FED; }
+
+/* 状态徽标：计划中 / 进行中 / 已完成 / 已归档 */
+.badge {
+  display: inline-block; padding: 4rpx 16rpx; border-radius: 999rpx;
+  font-size: 22rpx; line-height: 1.5;
+}
+.badge-planning  { background: #FFF3E0; color: #C77700; }
+.badge-ongoing   { background: #E3F2FD; color: #1565C0; }
+.badge-completed { background: #E8F5E9; color: #2E7D32; }
+.badge-archived  { background: #ECEFF1; color: #607D8B; }
+
+.empty { text-align: center; padding: 120rpx 40rpx; color: #93A1B5; }
+.loading { text-align: center; padding: 60rpx; color: #93A1B5; font-size: 26rpx; }

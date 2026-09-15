@@ -1,0 +1,24 @@
+{
+  "pages": [
+    "pages/trips/trips",
+    "pages/trip/trip",
+    "pages/point/point",
+    "pages/album/album",
+    "pages/login/login"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#0B1220",
+    "navigationBarTitleText": "旅行记忆",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#F5F7FA",
+    "enablePullDownRefresh": false
+  },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于在地图上显示你当前的位置，方便添加落脚点"
+    }
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

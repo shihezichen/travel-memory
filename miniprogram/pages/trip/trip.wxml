@@ -1,0 +1,44 @@
+<view class="wrap">
+  <map
+    id="tripmap"
+    class="map"
+    latitude="{{center.lat}}"
+    longitude="{{center.lng}}"
+    scale="{{scale}}"
+    markers="{{markers}}"
+    polyline="{{polyline}}"
+    include-points="{{includePoints}}"
+    show-location="{{false}}"
+    enable-rotate="{{false}}"
+    bindmarkertap="onMarkerTap"
+  />
+
+  <view wx:if="{{routeHint}}" class="route-hint" bindtap="onLoadRoute">{{routeHint}}</view>
+
+  <scroll-view class="panel" scroll-y>
+    <view class="stat card">
+      <view class="stat-row">
+        <view class="stat-cell"><text class="n">{{stats.point_count || 0}}</text><text class="k">地点</text></view>
+        <view class="stat-cell"><text class="n">{{stats.photo_count || 0}}</text><text class="k">照片</text></view>
+        <view class="stat-cell"><text class="n">{{stats.video_count || 0}}</text><text class="k">视频</text></view>
+        <view class="stat-cell"><text class="n">{{totalKm}}</text><text class="k">公里</text></view>
+      </view>
+      <view wx:if="{{stats.description}}" class="tiny desc">{{stats.description}}</view>
+    </view>
+
+    <view class="card act" bindtap="onAlbum">
+      <text>相册 · {{stats.media_count || 0}} 项</text><text class="chev">›</text>
+    </view>
+
+    <view wx:for="{{points}}" wx:key="id" class="card pt" bindtap="onPoint" data-id="{{item.id}}">
+      <view class="pt-idx">{{index + 1}}</view>
+      <view class="pt-body">
+        <view class="pt-name">{{item.name}}</view>
+        <view class="tiny">{{item.dateText}}{{item.elevation ? ' · 海拔 ' + item.elevation + ' m' : ''}}</view>
+        <view wx:if="{{item.description}}" class="tiny desc">{{item.description}}</view>
+      </view>
+      <text class="chev">›</text>
+    </view>
+    <view class="pad"></view>
+  </scroll-view>
+</view>

@@ -1,0 +1,8 @@
+.hero { padding: 48rpx 32rpx; }
+.hero-title { font-size: 42rpx; font-weight: 600; line-height: 1.4; }
+.hero-sub { margin: 16rpx 0 40rpx; }
+.mt { margin-top: 20rpx; }
+.trip-head { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.trip-name { font-size: 34rpx; font-weight: 600; flex: 1; }
+.desc { margin-top: 12rpx; }
+.logout { text-align: center; padding: 40rpx 0; }

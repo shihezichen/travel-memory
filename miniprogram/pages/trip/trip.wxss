@@ -1,0 +1,24 @@
+.wrap { height: 100vh; display: flex; flex-direction: column; position: relative; }
+.map { width: 100%; height: 44vh; }
+.route-hint {
+  position: absolute; top: calc(44vh - 68rpx); left: 24rpx;
+  background: rgba(11,18,32,.82); color: #fff; font-size: 24rpx;
+  padding: 12rpx 24rpx; border-radius: 999rpx;
+}
+.panel { flex: 1; padding: 20rpx 24rpx 0; box-sizing: border-box; }
+.stat-row { display: flex; }
+.stat-cell { flex: 1; text-align: center; }
+.stat-cell .n { display: block; font-size: 38rpx; font-weight: 600; }
+.stat-cell .k { display: block; font-size: 22rpx; color: #93A1B5; }
+.desc { margin-top: 12rpx; }
+.act { display: flex; align-items: center; justify-content: space-between; }
+.pt { display: flex; align-items: flex-start; gap: 20rpx; }
+.pt-idx {
+  width: 44rpx; height: 44rpx; border-radius: 50%; flex: none;
+  background: #2F6FED; color: #fff; font-size: 24rpx;
+  display: flex; align-items: center; justify-content: center; margin-top: 4rpx;
+}
+.pt-body { flex: 1; min-width: 0; }
+.pt-name { font-size: 32rpx; font-weight: 600; }
+.chev { color: #C2CCDA; font-size: 36rpx; line-height: 1; }
+.pad { height: 40rpx; }
