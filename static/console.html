@@ -229,7 +229,6 @@
           <input id="key-name" type="text" placeholder="例如：Cursor 接入 / 爱马仕总控">
         </div>
         <label style="font-size:12px;color:var(--muted)">权限范围（scope）</label>
-        <div class="muted" id="scope-hint" style="font-size:12px;margin-top:2px"></div>
         <div class="scope-row">
           <label><input type="checkbox" id="sc-read" checked onchange="syncScopes()"> read 只读</label>
           <label><input type="checkbox" id="sc-write" onchange="syncScopes()"> write 写入</label>
@@ -466,17 +465,14 @@ function buildPromptPreview(keyObj) {
 
 /* ---------- 权限勾选联动 ----------
    write 默认蕴含 read：没有 read 的 write key 连自己刚写进去的东西都读不回来。
-   所以勾了 write 就把 read 勾上并锁住，取消 write 再放开。 */
+   所以勾了 write 就把 read 勾上并锁住，取消 write 再放开。
+
+   刻意不配文字说明：这是常识，而且那行字一出一进会让弹窗高度跳一下。
+   勾选框自己变成「已选中 + 不可点」已经把规则说清楚了。 */
 function syncScopes() {
   const read = $('sc-read'), write = $('sc-write');
-  if (write.checked) {
-    read.checked = true;
-    read.disabled = true;
-    $('scope-hint').textContent = 'write 已包含 read —— 否则写进去的数据自己也读不回来。';
-  } else {
-    read.disabled = false;
-    $('scope-hint').textContent = '';
-  }
+  if (write.checked) read.checked = true;
+  read.disabled = write.checked;
 }
 
 /* ---------- 加载 ---------- */
