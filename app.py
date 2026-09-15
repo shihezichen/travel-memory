@@ -27,6 +27,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import db
 import download  # 媒体「另存为」（Content-Disposition: attachment，见 download.py）
+import formfix  # urlencoded 表单的 UTF-8 兜底（见 formfix.py 顶部）
 import media as media_mod
 import media_purge  # 删媒体时一并清掉 OSS 上的对象（见 media_purge.py）
 import oss           # OSS 直传签名（见 oss.py）
@@ -120,6 +121,11 @@ app = FastAPI(title="旅行记忆系统")
 # 线程池压缩，所以 3.5MB 的行政区划不会把事件循环堵住；图片/视频类 content-type
 # 也在它的 exclude_content_types 默认名单里，不会做无用功。
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+
+# ---------- 表单编码兜底 ----------
+# Starlette 解 urlencoded 表单是按 latin-1 解字节的，`curl -d "name=芒康"`
+# 这种「body 里放 UTF-8 裸字节」的请求会被静悄悄存成乱码。详见 formfix.py。
+app.add_middleware(formfix.Utf8FormMiddleware)
 
 db.init_db()
 

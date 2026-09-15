@@ -11,8 +11,10 @@
 """
 import base64
 import json
+import re
 import time
 import uuid
+from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
@@ -877,7 +879,8 @@ def ai_create_trip(request: Request, name: str = Form(...), start_date: str = Fo
             raise HTTPException(400, "行程名称不能为空")
         status = _normalize_trip_status(status)
         user = {"id": key["user_id"], "is_admin": 0}
-        tid = db.create_trip(user, name, start_date or None, end_date or None,
+        tid = db.create_trip(user, name, _normalize_date(start_date, "start_date"),
+                             _normalize_date(end_date, "end_date"),
                              description, status)
         _audit(key, "trips.create", "ok", detail=f"trip={tid} name={name}")
         result = {"id": tid}
@@ -898,7 +901,8 @@ def ai_update_trip(request: Request, trip_id: int, name: str = Form(None),
         raise HTTPException(404, "行程不存在")
     if not _key_is_owner(key, db.get_trip_owner_id(trip_id)):
         raise HTTPException(404, "行程不存在")
-    db.update_trip(trip_id, name, start_date or None, end_date or None,
+    db.update_trip(trip_id, name, _normalize_date(start_date, "start_date"),
+                   _normalize_date(end_date, "end_date"),
                    description or None,
                    _normalize_trip_status(status) if status else None)
     _audit(key, "trips.update", "ok", detail=f"trip={trip_id}")
@@ -968,8 +972,9 @@ def ai_create_point(request: Request, trip_id: int, name: str = Form(...),
         mode = route_mode if route_mode in ("drive", "line") else "drive"
         wp = 1 if is_waypoint in ("1", "true", "on", "yes") else 0
         gcj_lng, gcj_lat, src, fmt = _resolve_point_coords(name, lat, lng)
-        pid = db.create_point(trip_id, name, gcj_lat, gcj_lng, start_date or None,
-                              end_date or None, description, mode, wp)
+        pid = db.create_point(trip_id, name, gcj_lat, gcj_lng,
+                              _normalize_date(start_date, "start_date"),
+                              _normalize_date(end_date, "end_date"), description, mode, wp)
         _audit(key, "points.create", "ok", detail=f"trip={trip_id} name={name} coord={src}")
         result = {"id": pid, "coord_source": src, "formatted": fmt}
         _idempotency_save(key, client_request_id, result)
@@ -997,8 +1002,9 @@ def ai_update_point(request: Request, point_id: int, name: str = Form(...),
     mode = route_mode if route_mode in ("drive", "line") else "drive"
     wp = 1 if is_waypoint in ("1", "true", "on", "yes") else 0
     gcj_lng, gcj_lat, src, fmt = _resolve_point_coords(name, lat, lng)
-    db.update_point(point_id, name, gcj_lat, gcj_lng, start_date or None,
-                    end_date or None, description, mode, wp)
+    db.update_point(point_id, name, gcj_lat, gcj_lng,
+                    _normalize_date(start_date, "start_date"),
+                    _normalize_date(end_date, "end_date"), description, mode, wp)
     _audit(key, "points.update", "ok", detail=f"point={point_id} coord={src}")
     return {"ok": True, "coord_source": src, "formatted": fmt}
 
@@ -1270,3 +1276,31 @@ TRIP_STATUSES = ("planning", "traveling", "completed", "archived")
 def _normalize_trip_status(status_s: str) -> str:
     """校验行程状态，非法值回退 planning。"""
     return status_s if status_s in TRIP_STATUSES else "planning"
+
+
+# agent 写日期的花样比人多：「2026/10/8」「2026年10月8日」都见过。
+# 这几种能无歧义还原的直接收下，剩下的（「10月8日」缺年份、「下周二」是相对的）
+# 一律 400 —— 原来是原样塞进库里，时间线上就多一个排不进去的点。
+_DATE_PATTERNS = (
+    re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$"),
+    re.compile(r"^(\d{4})/(\d{1,2})/(\d{1,2})$"),
+    re.compile(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})$"),
+    re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日?$"),
+)
+
+
+def _normalize_date(raw: str, field: str) -> str | None:
+    """'2026/10/8' → '2026-10-08'。空值返回 None，认不出来抛 400。"""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    for pattern in _DATE_PATTERNS:
+        m = pattern.match(text)
+        if not m:
+            continue
+        y, mo, d = (int(x) for x in m.groups())
+        try:
+            return date(y, mo, d).isoformat()
+        except ValueError:
+            break
+    raise HTTPException(400, f"{field} 格式无法识别：「{text}」，请用 YYYY-MM-DD")
