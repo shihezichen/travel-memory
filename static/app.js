@@ -1839,7 +1839,12 @@ function updateSegmentDivider(i) {
 // choice 是用户挑中的那条方案（里程 + 公路编号都跟着它走），切成直线时传 null。
 function redrawSegment(i, path, choice) {
   const poly = segPolylines[i];
-  if (!poly) return;
+  if (!poly) {
+    // 没有这一段的折线对象就什么也画不了。以前是直接 return，于是「选完毫无反应、
+    // 也没有任何提示」，查起来毫无头绪。宁可说一声。
+    tmToast('这一段还没画出来，稍等一下再试');
+    return;
+  }
   poly.setPath(path);
   if (segmentData[i]) {
     segmentData[i].path = path;
@@ -1875,6 +1880,9 @@ async function saveSegmentRoute(i, choice) {
   }
   try {
     await api(`/api/points/${from.id}/route`, { method: 'PUT', body });
+    if (choice && choice.distance) {
+      tmToast('已选用 ' + Math.round(choice.distance / 1000) + ' 公里这条');
+    }
   } catch (e) {
     // 存不上不该打断操作：这一次的选择在内存里是生效的，只是刷新后会回到默认
     tmAlert('路线没能保存：' + e.message);
