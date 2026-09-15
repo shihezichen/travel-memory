@@ -200,8 +200,12 @@ class Page:
 
     # ---------- 登录快捷方式 ----------
     def login(self, username: str, password: str):
-        """走真实登录表单（而不是直接塞 cookie）—— 登录本身也是被测行为。"""
-        self.goto("/")
+        """走真实登录表单（而不是直接塞 cookie）—— 登录本身也是被测行为。
+
+        入口是 /app 不是 / ：根路径现在按登录态分流，未登录访客拿到的是宣传页，
+        上面没有 #login-overlay。/app 无论登没登录都进应用本体。
+        """
+        self.goto("/app")
         self.wait_for("#login-overlay:not(.hidden)")
         self.fill("#login-username", username)
         self.fill("#login-password", password)

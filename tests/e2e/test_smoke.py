@@ -16,7 +16,7 @@ ALLOWED_CONSOLE = (
 
 
 def test_amap_stub_is_installed_and_page_boots(page):
-    page.goto("/")
+    page.goto("/app")
     page.wait_until("window.__AMAP_STUB_LOADED__ === true")
     assert page.eval("typeof AMap.Map") == "function"
     # 桩生效 = app.js 顶层的 initMap() 没炸，map 全局变量已就绪
@@ -24,7 +24,7 @@ def test_amap_stub_is_installed_and_page_boots(page):
 
 
 def test_unauthenticated_shows_login_overlay(page):
-    page.goto("/")
+    page.goto("/app")
     page.wait_for("#login-overlay:not(.hidden)")
     assert page.visible("#login-username")
     assert page.eval("document.querySelectorAll('#trip-select option').length") == 0
@@ -52,7 +52,7 @@ def test_login_then_trip_and_points_render(page, e2e_user):
 
 
 def test_wrong_password_shows_error_and_stays_logged_out(page, e2e_user):
-    page.goto("/")
+    page.goto("/app")
     page.wait_for("#login-overlay:not(.hidden)")
     page.fill("#login-username", e2e_user["username"])
     page.fill("#login-password", "definitely-wrong")
@@ -90,7 +90,7 @@ def test_screenshot_and_pixel_diff_tooling_works(page, e2e_user, tmp_path):
     这条既是冒烟，也是驱动模块自身的自测。"""
     from driver import pixel_diff_ratio
 
-    page.goto("/")
+    page.goto("/app")
     page.wait_for("#login-overlay:not(.hidden)")
     before = page.screenshot(path=tmp_path / "before-login.png")
 

@@ -238,6 +238,23 @@ def test_audit_filters_by_key_and_renders_cards(mobile_page, live_server, e2e_us
         "document.querySelector('#audit-cards').textContent.includes('还没有调用记录')")
 
 
+def test_audit_shows_source_ip(mobile_page):
+    """日志里要看得出请求来自哪儿；没采过的老记录显示「—」而不是留白。"""
+    _make_key(mobile_page, "IP Key", ["sc-read"])
+    mobile_page.click(".tabbar button[data-page=audit]")
+    mobile_page.wait_until("document.querySelectorAll('#audit-cards .item').length > 0")
+    assert "来自" in mobile_page.text("#audit-cards")
+    assert "来源 IP" in mobile_page.text("#page-audit thead")
+    out = mobile_page.eval("""() => ({
+      empty: auditIp({}),
+      local: auditIp({client_ip: '127.0.0.1'}),
+      real: auditIp({client_ip: '203.0.113.7'}),
+    })""")
+    assert out["empty"] == '<span class="muted">—</span>'
+    assert "本机" in out["local"]
+    assert out["real"] == "203.0.113.7"
+
+
 def test_console_has_no_page_errors_on_mobile(mobile_page):
     mobile_page.click(".tabbar button[data-page=usage]")
     mobile_page.click(".tabbar button[data-page=audit]")
