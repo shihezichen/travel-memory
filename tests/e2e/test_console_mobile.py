@@ -33,15 +33,17 @@ def mobile_page(browser, live_server, e2e_user):
     pg.close()
 
 
-def _make_key(page, name, scope_ids):
+def _make_key(page, name, scope_ids, expire_days=""):
+    before = page.count("#keys-cards .item")
     page.fill("#key-name", name)
+    page.fill("#key-expire", str(expire_days))
     for sid in scope_ids:
         page.eval(f"document.getElementById('{sid}').checked || "
                   f"document.getElementById('{sid}').click()")
     page.click("#btn-create")
     page.wait_for("#key-modal.show")
     page.eval("closeModal()")
-    page.wait_until("document.querySelectorAll('#keys-cards .item').length > 0")
+    page.wait_until(f"document.querySelectorAll('#keys-cards .item').length > {before}")
 
 
 def test_bottom_tabbar_is_visible_and_tables_are_not(mobile_page):
@@ -75,6 +77,53 @@ def test_keys_render_as_cards_not_table(mobile_page):
     assert mobile_page.count("#keys-cards .item") == 1
     card = mobile_page.text("#keys-cards .item")
     assert "手机端 Key" in card and "有效" in card and "创建" in card
+
+
+def test_key_card_and_table_show_expiry(mobile_page):
+    """有效期得能看见 —— 原来列表里根本没有这一栏，Key 什么时候失效全靠猜。"""
+    _make_key(mobile_page, "永久 Key", ["sc-read"])
+    _make_key(mobile_page, "限期 Key", ["sc-read"], expire_days=30)
+
+    cards = mobile_page.text("#keys-cards")
+    assert "有效期 永久" in cards
+    assert "剩 30 天" in cards
+
+    # 宽屏那份表格也得有这一列（同一份数据渲染两遍，别只改一边）
+    head = mobile_page.text("#page-keys thead")
+    assert "有效期" in head
+    assert "剩 30 天" in mobile_page.eval("document.getElementById('keys-body').innerText")
+
+
+def test_expiry_within_a_week_is_highlighted(mobile_page):
+    """一周内到期标黄 —— 悄悄失效的 Key 最难查。"""
+    _make_key(mobile_page, "快到期 Key", ["sc-read"], expire_days=3)
+    assert "剩 3 天" in mobile_page.text("#keys-cards")
+    assert mobile_page.eval(
+        "!!document.querySelector('#keys-cards [style*=\"amber\"]')")
+
+
+def test_expired_and_today_keys_read_correctly(mobile_page):
+    """纯前端文案：已过期 / 今天到期 两种边界，直接喂数据给渲染函数验。"""
+    out = mobile_page.eval("""() => {
+      const pad = n => String(n).padStart(2, '0');
+      const stamp = d => {
+        const x = new Date(Date.now() + d * 86400000);
+        return `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())} `
+             + `${pad(x.getHours())}:${pad(x.getMinutes())}:00`;
+      };
+      return {
+        forever: expiryText({expires_at: null}),
+        past: expiryText({expires_at: stamp(-2)}),
+        today: expiryText({expires_at: stamp(0.2)}),
+        expiredStatus: keyStatus({expires_at: stamp(-2), revoked: 0}),
+        liveStatus: keyStatus({expires_at: stamp(30), revoked: 0}),
+      };
+    }""")
+    assert "永久" in out["forever"]
+    assert "已过期" in out["past"]
+    assert "今天到期" in out["today"]
+    assert "已过期" in out["expiredStatus"]
+    assert "有效" in out["liveStatus"]
 
 
 def test_write_checkbox_forces_and_locks_read(mobile_page):

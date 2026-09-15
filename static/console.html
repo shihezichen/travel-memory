@@ -237,8 +237,8 @@
       <h2>我的 API Keys</h2>
       <div class="card">
         <table>
-          <thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>创建时间</th><th>最后使用</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody id="keys-body"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+          <thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>创建时间</th><th>有效期</th><th>最后使用</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="keys-body"><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
         </table>
         <div class="cards" id="keys-cards"><div class="empty">加载中…</div></div>
       </div>
@@ -462,7 +462,7 @@ async function loadKeys() {
     keysCache = keys;
     const body = $('keys-body'), cards = $('keys-cards');
     if (!keys.length) {
-      body.innerHTML = '<tr><td colspan="7" class="empty">还没有 API Key，上方生成第一个</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="empty">还没有 API Key，上方生成第一个</td></tr>';
       cards.innerHTML = '<div class="empty">还没有 API Key，上方生成第一个</div>';
     } else {
       body.innerHTML = keys.map(k => `<tr>
@@ -470,6 +470,7 @@ async function loadKeys() {
           <td class="mono muted">${esc(k.key_prefix)}…</td>
           <td>${scopeTags(k.scope, k.revoked)}</td>
           <td class="muted">${fmt(k.created_at)}</td>
+          <td>${expiryText(k)}</td>
           <td class="muted">${k.last_used_at ? fmt(k.last_used_at) : '—'}</td>
           <td>${keyStatus(k)}</td>
           <td style="white-space:nowrap"><button class="btn small danger" onclick="deleteKey(${k.id})">删除</button></td>
@@ -481,6 +482,7 @@ async function loadKeys() {
           </div>
           <div class="meta mono">${esc(k.key_prefix)}…</div>
           <div class="tags">${scopeTags(k.scope, k.revoked)}</div>
+          <div class="meta">有效期 ${expiryText(k)}</div>
           <div class="meta">创建 ${fmt(k.created_at)}　·　最后使用 ${k.last_used_at ? fmt(k.last_used_at) : '从未'}</div>
           <div class="acts"><button class="btn small danger" onclick="deleteKey(${k.id})">删除</button></div>
         </div>`).join('');
@@ -694,8 +696,39 @@ async function logout() {
 
 function keyStatus(k) {
   if (k.revoked) return '<span class="tag revoked">已吊销</span>';
-  if (k.expires_at && k.expires_at < now()) return '<span class="tag expired">已过期</span>';
+  if (isExpired(k)) return '<span class="tag expired">已过期</span>';
   return '<span class="tag share">有效</span>';
+}
+
+/* 有效期：库里存的是「到期时刻」，人要看的是「哪天到期、还剩几天」。
+   没有 expires_at 就是永久（创建时「有效期」留空的那种）。 */
+function expiryText(k) {
+  if (!k.expires_at) return '<span class="muted">永久</span>';
+  const day = String(k.expires_at).slice(0, 10);
+  if (isExpired(k)) return `<span class="muted">${day} 已过期</span>`;
+  const left = daysLeft(k.expires_at);
+  const soon = left <= 7;                       /* 一周内到期标黄，别等它悄悄失效 */
+  const tail = day === todayStr() ? '今天到期' : `剩 ${left} 天`;
+  return `<span style="color:${soon ? 'var(--amber)' : 'inherit'}">${day} · ${tail}</span>`;
+}
+
+function isExpired(k) {
+  return !!k.expires_at && parseLocal(k.expires_at) <= new Date();
+}
+function todayStr() {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function daysLeft(ts) {
+  return Math.ceil((parseLocal(ts) - new Date()) / 86400000);
+}
+/* 库里的时间戳是 datetime('now','localtime') 写的本地时间、没有时区后缀。
+   直接 new Date('2026-09-16 07:56:33') 在部分浏览器上会当成 UTC，
+   所以自己拆字段按本地时区构造。 */
+function parseLocal(ts) {
+  const m = String(ts).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return new Date(ts);
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
 }
 function statusTag(status) {
   return status === 'ok' ? '<span class="tag share">ok</span>'
@@ -706,7 +739,7 @@ function scopeTags(scope, revoked) {
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmt(s) { return s ? String(s).replace('T', ' ').slice(0, 16) : '—'; }
-function now() { return new Date().toISOString().replace('T', ' ').slice(0, 16); }
+
 
 syncScopes();
 load();
