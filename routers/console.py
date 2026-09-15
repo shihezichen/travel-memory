@@ -42,9 +42,17 @@ def _normalize_scope(scope_s: str) -> str:
 
 @router.get("/console")
 def console_page(request: Request):
-    """开发者控制台页面（需登录 session；面向开发者，风格与旅行者界面分离）。"""
-    html = (BASE / "static" / "console.html").read_text(encoding="utf-8")
-    return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    """开发者控制台页面（需登录 session；面向开发者，风格与旅行者界面分离）。
+
+    页脚注入一个版本标识：改了东西却还看到老样子时，一眼能分辨是没生效还是
+    浏览器拿着旧页面不放（手机浏览器对 no-store 并不总是当回事）。
+    跟主应用操作菜单底部那个版本号是一个用途。
+    """
+    path = BASE / "static" / "console.html"
+    html = path.read_text(encoding="utf-8")
+    stamp = time.strftime("%m-%d %H:%M", time.localtime(path.stat().st_mtime))
+    return HTMLResponse(html.replace("__CONSOLE_VER__", stamp),
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @router.get("/api/console/me")

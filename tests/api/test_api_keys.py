@@ -468,3 +468,11 @@ def test_key_plaintext_is_not_stored_in_the_clear(auth_client, key_factory):
     blob = " ".join(str(v) for v in dict(row).values())
     assert made["key"] not in blob
     assert row["key_enc"] and row["key_enc"] != made["key"]
+
+
+def test_console_page_carries_a_version_stamp(auth_client):
+    """页脚的版本标识：改了东西却还看到老样子时，用它分辨是没生效还是浏览器拿着旧页面。"""
+    html = auth_client.get("/console").text
+    assert "__CONSOLE_VER__" not in html          # 占位符必须被替换掉
+    import re
+    assert re.search(r'console-ver">版本 \d\d-\d\d \d\d:\d\d<', html), html[-400:]

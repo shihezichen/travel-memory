@@ -126,6 +126,7 @@
   .toast.show { display: block; }
   .toast.err { border-color: var(--red); color: var(--red); }
   .empty { color: var(--muted); text-align: center; padding: 28px; font-size: 13px; }
+  .console-ver { text-align: center; color: var(--muted); font-size: 11px; padding: 18px 0 8px; }
 
   /* ---------- 卡片式列表（手机端替代表格） ----------
      表格在 375px 宽的屏幕上是没法看的：7 列挤在一起，要么横向滚动要么字小到看不清。
@@ -194,6 +195,7 @@
     #create-host { display: none; }           /* 表单搬进弹窗，首屏只留一个按钮 */
     #sec-prompt { display: none; }            /* 提示词改从每个 Key 卡片弹出 */
     #btn-open-create { width: 100%; justify-content: center; padding: 11px; }
+    .console-ver { padding-bottom: 0; }
     section { margin-top: 20px; }
     .card.pad { padding: 14px; }
     .field input, .field select { font-size: 16px; }  /* < 16px 时 iOS 会自动放大整页 */
@@ -340,6 +342,9 @@
     </section>
   </div>
 </div>
+
+<!-- 页面版本：由 routers/console.py 注入文件 mtime。看到的是不是最新版，对一下这个就知道 -->
+<div class="console-ver">版本 __CONSOLE_VER__</div>
 
 <!-- 创建弹窗：手机端点「＋ 生成 API Key」后，#create-fields 会被搬进 #create-slot -->
 <div class="modal" id="create-modal">
