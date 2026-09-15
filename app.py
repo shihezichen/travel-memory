@@ -523,7 +523,7 @@ def render_markdown(filename: str):
 
 def render_landing(cacheable: bool) -> HTMLResponse:
     """公开的宣传页。完全自包含（不引 style.css / app.js / 高德），
-    所以除了备案号没有别的占位符要填。
+    要填的占位符只有两个：备案号，和演示视频的 OSS 前缀。
 
     cacheable 只有 /welcome 能给 True。/ 的响应体是随 cookie 变的
     （登录了给应用、没登录给宣传页），一旦标成 public，中间的 CDN / 反代
@@ -531,6 +531,9 @@ def render_landing(cacheable: bool) -> HTMLResponse:
     """
     html = (BASE / "static" / "landing.html").read_text(encoding="utf-8")
     html = html.replace("__ICP_FOOTER__", icp_footer_html())
+    # 演示视频挂在 OSS 上。MEDIA_BASE_URL 为空（本机开发、没配 OSS）时替换成空串，
+    # 于是 src 退化成站内相对路径 /uploads/promo/...，照样能播。
+    html = html.replace("__MEDIA_BASE__", MEDIA_BASE_URL)
     cc = "public, max-age=300" if cacheable else "no-cache, no-store, must-revalidate"
     return HTMLResponse(html, headers={"Cache-Control": cc})
 

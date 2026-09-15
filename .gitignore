@@ -28,6 +28,12 @@ uploads/
 # 生产机上根本不用有这个目录，所以没必要让每个 clone 都背着它。
 assets/demo-media/
 
+# ---- 宣传片素材工作区 ----
+# 录屏、配音、下载的 CC0 音乐、中间产物，加起来几十 MB，而且全都能由
+# scripts/record_promo_footage.py + scripts/build_promo_video.py 重新生成。
+# 成片本身发布在 OSS 的 uploads/promo/ 下，也不需要进库。
+build/
+
 # ---- 运行时产物 ----
 logs/
 *.log

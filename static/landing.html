@@ -397,6 +397,38 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   h1{font-size:26px}
   .eyebrow{font-size:11.5px;padding:0 11px 0 8px}
 }
+
+/* ---------- 演示视频：示意图上的播放按钮 + 弹层 ---------- */
+/* 按钮压在首屏示意图上：那张图本来就是静态示意，让它"能点开看真的"最自然。 */
+.promo-cta .tri{font-size:.8em;margin-right:2px;opacity:.85}
+.promo-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  gap:12px;background:transparent;border:0;cursor:pointer;z-index:3;
+  font:inherit;color:#fff;-webkit-tap-highlight-color:transparent}
+.promo-play .ring{width:74px;height:74px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(12,18,32,.62);backdrop-filter:blur(6px);
+  border:1.5px solid rgba(255,255,255,.55);
+  box-shadow:0 10px 34px rgba(0,0,0,.34);transition:transform .22s,background .22s}
+.promo-play .ring svg{width:26px;height:26px;margin-left:4px;fill:#fff}
+.promo-play .lbl{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+  font-size:13px;letter-spacing:.02em;padding:6px 14px;border-radius:999px;
+  background:rgba(12,18,32,.62);backdrop-filter:blur(6px);white-space:nowrap}
+.promo-play:hover .ring,.promo-play:focus-visible .ring{transform:scale(1.08);background:rgba(12,18,32,.8)}
+@media (prefers-reduced-motion:reduce){.promo-play .ring{transition:none}}
+
+.promo-modal{position:fixed;inset:0;z-index:90;display:none;
+  align-items:center;justify-content:center;padding:24px;
+  background:rgba(6,10,18,.88);backdrop-filter:blur(10px)}
+.promo-modal[open]{display:flex}
+.promo-modal video{width:min(100%,1120px);max-height:82vh;border-radius:14px;
+  background:#000;box-shadow:0 24px 80px rgba(0,0,0,.6);outline:none}
+.promo-close{position:absolute;top:18px;right:20px;width:42px;height:42px;border-radius:50%;
+  border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.1);color:#fff;
+  font-size:20px;line-height:1;cursor:pointer}
+.promo-close:hover{background:rgba(255,255,255,.2)}
+@media (max-width:640px){
+  .promo-play .ring{width:60px;height:60px}
+  .promo-modal{padding:12px}
+}
 </style>
 </head>
 <body>
@@ -437,6 +469,11 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     <div class="cta-row">
       <button class="btn btn-primary btn-lg" data-demo>一键体验，无需注册</button>
       <a class="btn btn-ghost btn-lg only-pc" href="/app">已有账号，登录</a>
+      <!-- 第二个入口。压在示意图上的那个播放按钮在首屏之下，多数人滚不到那儿；
+           这里跟两个主 CTA 并排，一眼能看见。两个入口共用同一个 handler。 -->
+      <button class="btn btn-ghost btn-lg promo-cta" type="button" data-promo-open>
+        <span class="tri">▶</span> 看 60 秒演示
+      </button>
     </div>
     <p class="cta-note" id="cta-note">
       <span class="only-pc">用内置体验账号直接进去逛，看完再决定要不要注册</span>
@@ -445,7 +482,12 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     </p>
 
     <!-- 产品示意（非截图）：地图 + 真实路线 + 挂在地点上的照片堆 -->
-    <div class="stage-outer">
+    <div class="stage-outer" style="position:relative">
+      <button class="promo-play" type="button" id="promo-open"
+              aria-label="播放 60 秒产品演示视频">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>
+        <span class="lbl">▶ 看 60 秒演示</span>
+      </button>
       <div class="stage">
         <!-- preserveAspectRatio=none 是刻意的：地图是抽象图形，拉伸没人看得出来，
              但它让 viewBox 坐标和容器百分比严格一一对应 —— pin/照片堆是用
@@ -744,7 +786,60 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   <span class="hint">不用填任何信息 · 已有账号？<a href="/app">登录</a></span>
 </div>
 
+
+<!-- 演示视频弹层。视频放在 OSS 上（uploads/promo/），不走 frp 隧道 ——
+     隧道只有 4Mbps，一个 2.4MB 的视频能把首页的其他请求全堵住。
+     preload=none：没点开之前一个字节都不拉，首屏不背这个体积。 -->
+<div class="promo-modal" id="promo-modal" role="dialog" aria-modal="true" aria-label="产品演示视频">
+  <button class="promo-close" id="promo-close" type="button" aria-label="关闭">×</button>
+  <video id="promo-video" controls playsinline preload="none"
+         poster="__MEDIA_BASE__/uploads/promo/travel-memory-promo.jpg">
+    <source src="__MEDIA_BASE__/uploads/promo/travel-memory-promo.mp4" type="video/mp4">
+    你的浏览器不支持内嵌视频，<a href="__MEDIA_BASE__/uploads/promo/travel-memory-promo.mp4">直接下载观看</a>。
+  </video>
+</div>
+
 <script>
+/* ---------- 演示视频 ---------- */
+(function () {
+  var modal = document.getElementById('promo-modal');
+  var video = document.getElementById('promo-video');
+  var openBtns = document.querySelectorAll('#promo-open, [data-promo-open]');
+  var closeBtn = document.getElementById('promo-close');
+  if (!modal || !video || !openBtns.length) return;
+  var lastFocus = null;
+
+  function open() {
+    lastFocus = document.activeElement;
+    modal.setAttribute('open', '');
+    document.body.style.overflow = 'hidden';
+    closeBtn.focus();
+    // 自动播放可能被策略拦下（省流模式、低电量），拦了就让用户自己点 —— 别报错
+    var p = video.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+  function close() {
+    modal.removeAttribute('open');
+    document.body.style.overflow = '';
+    video.pause();
+    // 归零：下次点开从头看，而不是接着上次的进度
+    try { video.currentTime = 0; } catch (e) {}
+    if (lastFocus) lastFocus.focus();
+  }
+
+  openBtns.forEach(function (b) { b.addEventListener('click', open); });
+  closeBtn.addEventListener('click', close);
+  // 点背景关掉，但点到视频本身不关（拖进度条常常会滑出视频区域）
+  modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !modal.hasAttribute('open')) return;
+    // 全屏状态下 Esc 归浏览器管（退出全屏），别顺手把弹层也关了
+    if (document.fullscreenElement) return;
+    close();
+  });
+  video.addEventListener('ended', close);
+})();
+
 // 顶栏滚动后加边框；同一个 scroll 回调顺带管吸底条，不要挂两个监听
 const hdr = document.getElementById('hdr');
 const dock = document.getElementById('dock');

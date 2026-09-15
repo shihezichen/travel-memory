@@ -117,13 +117,21 @@ for r in c.execute("SELECT t.id,t.name,t.status,count(DISTINCT p.id) pts, count(
     print('  #%d %-22s %-9s %d 个点 / %d 个媒体' % (r['id'], r['name'], r['status'], r['pts'], r['med']))
 print('  照片 %d 张' % total_photos)
 
-# 默认落在「媒体最多」的那个行程：写死 id 只在造它的那台机器上成立，
-# 别人全新安装时 id 从 1 开始，会指向一个不存在的行程。
+# 默认落在 demo_dataset.LANDING_TRIP 指定的那一趟（按名字查，不写死 id ——
+# 写死只在造它的那台机器上成立，别人全新安装时 id 从 1 开始会指向不存在的行程）。
+# 为什么不按「媒体最多」挑：那样会落到关西，而高德在境外没有底图，
+# 访客第一眼就是白底地图。详见 demo_dataset.LANDING_TRIP 的注释。
 _land = c.execute("SELECT t.id, t.name, COUNT(m.id) n FROM trips t "
                   "LEFT JOIN points p ON p.trip_id=t.id "
                   "LEFT JOIN media m ON m.point_id=p.id "
-                  "WHERE t.user_id=? GROUP BY t.id ORDER BY n DESC, t.id ASC LIMIT 1",
-                  (u['id'],)).fetchone()
+                  "WHERE t.user_id=? AND t.name=? GROUP BY t.id",
+                  (u['id'], ds.LANDING_TRIP)).fetchone()
+if not _land:      # 名字对不上（改过行程名）时退回媒体最多的那趟，别让落地页空着
+    _land = c.execute("SELECT t.id, t.name, COUNT(m.id) n FROM trips t "
+                      "LEFT JOIN points p ON p.trip_id=t.id "
+                      "LEFT JOIN media m ON m.point_id=p.id "
+                      "WHERE t.user_id=? GROUP BY t.id ORDER BY n DESC, t.id ASC LIMIT 1",
+                      (u['id'],)).fetchone()
 c.close()
 if _land:
     db.set_last_trip(u['id'], _land['id'])

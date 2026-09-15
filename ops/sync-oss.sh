@@ -135,6 +135,10 @@ if [ -n "$PRUNE" ]; then
     rel=${key#*/uploads/}
     case "$rel" in
       .chunks|.chunks/*) ;;                  # 残留分片，永远不该在云上
+      # promo/ 是首页宣传片，它没有 media 表的行（本来就不是用户媒体），
+      # 按「库里没引用就删」的判据会被每天清掉一次。豁免掉。
+      # 放在 uploads/ 下而不是桶根，是因为这个 AK 的权限只覆盖 uploads/*。
+      promo/*) continue ;;
       */) continue ;;                        # 目录占位：0 字节，留着无害
       *)
         base=${rel##*/}                      # 去掉 thumbs/ variants/ 前缀
