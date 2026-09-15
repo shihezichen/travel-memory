@@ -414,7 +414,9 @@ body.map-fullscreen-on { overflow: hidden; }
 .btn-fab:hover { background: #1d4ed8; }
 
 /* 按钮 */
-.btn { padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer; font-size: 14px; color: var(--text); }
+/* inline-block + 去下划线：.btn 现在也会用在 <a> 上（顶栏的「开发者控制台」
+   要真的开新标签，见 app.js 里的说明），不加这两条锚点会带下划线、内边距也塌。 */
+.btn { display: inline-block; padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer; font-size: 14px; color: var(--text); text-decoration: none; line-height: normal; }
 .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn-block { display: block; width: 100%; text-align: center; }
@@ -965,11 +967,14 @@ body.map-fullscreen-on { overflow: hidden; }
   display: grid; grid-template-columns: repeat(4, 1fr);
   gap: 2px; padding: 4px 0 2px;
 }
+/* 「开发者控制台」那一项是 <a target="_blank">（见 app.js 里的说明），
+   其余是 <button>。两种标签要长成一个样，所以连 text-decoration 一起收拾。 */
 .more-sheet-item {
   display: flex; flex-direction: column; align-items: center; gap: 7px;
   padding: 12px 2px 10px;
   border: none; background: none; color: var(--text);
   cursor: pointer; border-radius: 12px;
+  text-decoration: none; font: inherit;
 }
 .more-sheet-item:active { background: #f3f4f6; }
 .more-sheet-item .ico {

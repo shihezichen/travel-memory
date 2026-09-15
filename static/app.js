@@ -5008,17 +5008,24 @@ function openMoreSheet() {
     { ico: svg(ICON.refresh),  lbl: '重新计算路线', fn: () => $('#btn-recalc').click() },
     { ico: svg(ICON.download), lbl: '导出行程',     fn: exportTrip },
     { ico: svg(ICON.upload),   lbl: '导入行程',     fn: () => $('#import-file-input').click() },
-    { ico: svg(ICON.terminal), lbl: '开发者控制台', fn: () => { window.open('/console', '_blank'); } },
+    // 用真锚点而不是 window.open：手机浏览器（尤其微信内置和 iOS Safari）
+    // 会把「非用户手势同步调用」的 window.open 当弹窗拦掉，然后降级成
+    // 当前标签导航 —— 地图页就被控制台顶掉了。<a target=_blank> 不受这个限制。
+    { ico: svg(ICON.terminal), lbl: '开发者控制台', href: '/console' },
     { ico: svg(ICON.logout),   lbl: '退出登录',     fn: () => $('#btn-logout').click(), danger: true },
   ];
   const mask = document.createElement('div');
   mask.className = 'more-sheet-mask';
   const sheet = document.createElement('div');
   sheet.className = 'more-sheet';
-  const body = items.map(it =>
-    `<button type="button" class="more-sheet-item${it.danger ? ' danger' : ''}" data-idx="${items.indexOf(it)}">
-      <span class="ico">${it.ico}</span><span class="lbl">${it.lbl}</span>
-    </button>`).join('');
+  const body = items.map(it => {
+    const inner = `<span class="ico">${it.ico}</span><span class="lbl">${it.lbl}</span>`;
+    const cls = `more-sheet-item${it.danger ? ' danger' : ''}`;
+    const idx = items.indexOf(it);
+    return it.href
+      ? `<a class="${cls}" data-idx="${idx}" href="${it.href}" target="_blank" rel="noopener">${inner}</a>`
+      : `<button type="button" class="${cls}" data-idx="${idx}">${inner}</button>`;
+  }).join('');
   // 底部显示当前前端版本号：改了东西却还看到老样子时，一眼能分辨是没生效还是浏览器缓存
   const ver = (function () {
     const s = [...document.scripts].map(x => x.src).find(x => /app\.js/.test(x)) || '';
@@ -5041,11 +5048,11 @@ function openMoreSheet() {
     btn.onclick = () => {
       const it = items[parseInt(btn.dataset.idx, 10)];
       close();
-      it.fn();
+      if (it.fn) it.fn();      // 锚点项没有 fn，收起面板后让浏览器自己去开新标签
     };
   });
 }
-$('#btn-console').onclick = () => window.open('/console', '_blank');
+// 顶栏那个入口同理：模板里已经是 <a target="_blank">，这里不再拦截它的默认行为。
 $('#btn-more').onclick = openMoreSheet;
 
 // ---------- 事件绑定 ----------
