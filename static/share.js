@@ -749,11 +749,17 @@ async function planSegment(a, b) {
   let seg = null;
   if (isInChina(a.lng, a.lat) && isInChina(b.lng, b.lat)) {
     seg = await shareDriveOnce(AMap.DrivingPolicy.LEAST_TIME, new AMap.LngLat(a.lng, a.lat), new AMap.LngLat(b.lng, b.lat));
-    // 高德有些路段只给路名不给编号（独库公路那段 328 公里就是这样），
-    // 路径仍用高德的，编号跟 OSRM 要。10km 以下不值得为标签多发一次请求。
-    if (seg && !(seg.roadRuns || []).length && distKm(a, b) > 10) {
+    // 高德对编号的识别不全时换成 OSRM 的（独库公路那段 328 公里，高德只认得出
+    // 开头 12 公里的「218国道」，OSRM 还能给出随后 293 公里的 G217）。
+    // 路径仍用高德的。10km 以下不值得为标签多发一次请求。
+    if (seg && distKm(a, b) > 10
+        && roadRunsCoverage(seg.roadRuns, seg.distance) < ROAD_COVERAGE_MIN) {
       const alt = await shareRouteViaOsm(a, b);
-      if (alt && (alt.roadRuns || []).length) seg.roadRuns = alt.roadRuns;
+      if (alt && roadDistLooksSame(seg.distance, alt.distance)
+          && roadRunsCoverage(alt.roadRuns, alt.distance)
+             > roadRunsCoverage(seg.roadRuns, seg.distance)) {
+        seg.roadRuns = alt.roadRuns;
+      }
     }
   }
   if (!seg) seg = await shareRouteViaOsm(a, b);

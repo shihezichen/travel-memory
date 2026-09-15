@@ -1431,12 +1431,16 @@ function pathMidPoint(path) {
 
 // 一段路线最多标几个编号。再多就不是信息是花边了 —— 而且这种段本来就是市区绕行，
 // 编号频繁切换，标出来也没人看。超出的按里程取最长的几条。
-const ROAD_MAX_PER_SEG = 3;
+const ROAD_MAX_PER_SEG = 4;
 // 缩到这个级别以下整体收起（类名打在 #map 上，见 syncElevLabelsVisibility）
 const ROAD_MIN_ZOOM = 6;
-// 一截路至少要走这么远才值得标：绝对下限 3km，同时不少于本段的 8%。
-// 上下匝道、借道几百米这种「蹭一下」的路占着标签位置，纯属干扰。
+// 一截路至少要走这么远才值得标：本段的 8%，再夹在 3km ~ 10km 之间。
+// 下限挡掉上下匝道、借道几百米这种「蹭一下」的路，它们占着标签位置纯属干扰。
+// 上限是后补的：8% 在长段上会变得离谱 —— 独库公路那 328 公里，门槛算出来
+// 26 公里，于是开头实实在在走了 12.7 公里的 G218 被判成「蹭一下」滤掉了。
+// 走了十公里以上的路，不管这一段总共多长，都该标出来。
 const ROAD_MIN_METERS = 3000;
+const ROAD_MIN_METERS_CAP = 10000;
 const ROAD_MIN_SHARE = 0.08;
 
 // 把 steps 切成若干「连着走同一条路」的小段，每段给出编号 + 里程 + 中点坐标。
@@ -1470,7 +1474,8 @@ function segRoadRuns(steps, totalMeters) {
     }
   });
   const total = Number(totalMeters) || items.reduce((s, it) => s + it.meters, 0);
-  const minMeters = Math.max(ROAD_MIN_METERS, total * ROAD_MIN_SHARE);
+  const minMeters = Math.min(ROAD_MIN_METERS_CAP,
+                             Math.max(ROAD_MIN_METERS, total * ROAD_MIN_SHARE));
   let kept = runs.filter(r => r && r.meters >= minMeters && r.path.length);
   // 同一个编号出现多截（绕出去又拐回来）只留最长的那截，省得同一个号在一段里标两遍
   const best = new Map();
@@ -1487,6 +1492,33 @@ function segRoadRuns(steps, totalMeters) {
     const mid = pathMidPoint(r.path);
     return mid ? { code: r.code, meters: r.meters, lng: mid[0], lat: mid[1] } : null;
   }).filter(Boolean);
+}
+
+// 这份编号覆盖了本段的多少里程。用来在高德和 OSRM 两份结果之间挑更全的那个：
+// 高德只认得出「218国道」这类写法，碰上「独库公路」「铁力买提隧道」就交白卷，
+// 同一段路 OSRM 的 ref 能给出 G217 —— 谁把这段路解释得更完整就用谁。
+// 高德这份编号解释了这一段的多少里程；低于这个比例就去问问 OSRM。
+// 0.6 是个手感值：高德认全了的段（比如整段走 G30）覆盖率在 0.8 以上，
+// 白白多发一次请求不值当；只认出零星一两截的才值得换一份。
+const ROAD_COVERAGE_MIN = 0.6;
+// 换用 OSRM 的编号之前，先确认两边走的是同一条路：编号标签的位置来自 OSRM 的
+// 轨迹，画在图上的线却是高德的。两边里程差得多，就说明根本不是一条路 ——
+// 实测见过高德给那拉提→库车规划 1361 公里的大绕行、OSRM 走 330 公里独库公路，
+// 这时候把 G217 标上去，标签会飘在一片没有线经过的地方。
+// 取短的比长的，低于这个比值就不换。
+const ROAD_ALT_DIST_MATCH = 0.8;
+
+// 两条路线的里程像不像同一条路。任一边缺里程就当不像，宁可不换。
+function roadDistLooksSame(a, b) {
+  const x = Number(a) || 0, y = Number(b) || 0;
+  if (x <= 0 || y <= 0) return false;
+  return Math.min(x, y) / Math.max(x, y) >= ROAD_ALT_DIST_MATCH;
+}
+
+function roadRunsCoverage(runs, totalMeters) {
+  const total = Number(totalMeters) || 0;
+  if (!runs || !runs.length || total <= 0) return 0;
+  return runs.reduce((s, r) => s + (Number(r.meters) || 0), 0) / total;
 }
 
 // ---------- 公路编号标签 ----------
