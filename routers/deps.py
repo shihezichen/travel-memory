@@ -133,3 +133,30 @@ def stamp_assets(html: str) -> str:
     改了就加载不出来（见 _ASSET_V_RE 上面那段）。
     """
     return _ASSET_V_RE.sub(r"\1v=" + asset_version(), html)
+
+# 每个 step 的轨迹最多留这么多点。标签只需要沿路取个中点，原样存下来会让
+# 一条 300 公里的路线在缓存里膨胀到几十 KB，而中点位置差那几百米没人看得出来。
+OSRM_STEP_MAX_PTS = 30
+
+
+def osrm_steps(route):
+    """OSRM 的 legs[].steps[] → 前端 segRoadRuns 认识的 [{road, distance, path}]。
+
+    road 优先用 ref（"G217"、有时是 "G217; G218"），没有 ref 才退回 name。
+    无名的 step 也要保留 —— segRoadRuns 靠它们判断两截同编号的路中间是不是
+    只隔了个服务区出入口，丢了就会把一条长路劈成够不着里程门槛的碎段。
+    """
+    out = []
+    for leg in route.get("legs") or []:
+        for st in leg.get("steps") or []:
+            pts = ((st.get("geometry") or {}).get("coordinates")) or []
+            if len(pts) > OSRM_STEP_MAX_PTS:
+                k = (len(pts) - 1) / (OSRM_STEP_MAX_PTS - 1)
+                pts = [pts[min(len(pts) - 1, int(round(i * k)))]
+                       for i in range(OSRM_STEP_MAX_PTS)]
+            out.append({
+                "road": (st.get("ref") or st.get("name") or "").strip(),
+                "distance": st.get("distance", 0),
+                "path": [[c[0], c[1]] for c in pts],
+            })
+    return out

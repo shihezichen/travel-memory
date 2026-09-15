@@ -1421,13 +1421,24 @@ async function routeViaOsm(a, b) {
                 + Math.round(r.distance / 100);
       if (!seen.has(key)) {
         seen.add(key);
-        choices.push({ label: '', path: r.path, time: r.duration, distance: r.distance });
+        // OSRM 的 steps 已经在后端整理成跟高德同样的字段，这里共用一套解析
+        choices.push({ label: '', path: r.path, time: r.duration, distance: r.distance,
+                       roadRuns: segRoadRuns(r.steps, r.distance) });
       }
     });
     return choices;
   } catch (e) {
     return [];
   }
+}
+
+// 只跟 OSRM 要公路编号，路径还用高德的。
+// 起因：高德有些路段给的是路名而不是编号 —— 独库公路那段 328 公里，steps 里写的是
+// 「独库公路」「铁力买提隧道」，一个 G 字都没有，于是整段标不出编号（开头那 12 公里
+// 「218国道」又够不上里程门槛）。同一段路 OSRM 的 ref 给的是 G217，拿来补上。
+async function roadRunsViaOsm(a, b) {
+  const cs = await routeViaOsm(a, b);
+  return (cs[0] && cs[0].roadRuns) || [];
 }
 
 // 规划单段（第 i 段：points[i] → points[i+1]）的驾车/直线路线，返回段信息
@@ -1443,6 +1454,14 @@ async function planOneSegment(i, a, b) {
       const to = new AMap.LngLat(b.lng, b.lat);
       choices = await planSegmentChoices(from, to);
       if (choices.length) seg = choices[0].path;
+      // 高德只给了路名没给编号时，用 OSRM 的 ref 补。只补默认展示的那条 ——
+      // 其余备选走的是别的路，硬套过去反而会标错。
+      // 10km 以下不值得为标签多发一次请求（里程门槛本来也过不了）。
+      if (choices.length && !(choices[0].roadRuns || []).length
+          && distKm(a, b) > 10) {
+        const runs = await roadRunsViaOsm(a, b);
+        if (runs.length) choices[0].roadRuns = runs;
+      }
     }
     // 海外（或国内高德无结果）：用 OSRM 全球路线（后端已按端点坐标缓存，命中秒回）
     if (!seg) {

@@ -346,7 +346,7 @@ def gate_login(request: Request, password: str = Form(...)):
 # app.current_user / app.require_owner 等历史访问点保持不变。
 from routers.deps import (  # noqa: F401
     current_user, require_owner, _public_user,
-    amap_version, amap_key_notice_html, _route_cache_key,
+    amap_version, amap_key_notice_html, _route_cache_key, osrm_steps,
     asset_version, stamp_assets,
 )
 
@@ -624,17 +624,25 @@ def api_route(from_lng: float, from_lat: float, to_lng: float, to_lat: float,
               refresh: int = 0):
     """全球驾车路线规划：高德不支持海外路线，用 OSRM 兜底。
     返回 routes 数组，每条含 polyline 坐标 path [[lng,lat],...]（与高德坐标顺序一致）、
-    distance（米）、duration（秒）；无结果返回空 routes。
+    distance（米）、duration（秒）、steps（见下）；无结果返回空 routes。
+
+    steps 是给公路编号标签用的：`[{road, distance, path}]`，字段名对齐高德的
+    step，前端两条来源（高德 / OSRM）可以共用 common.js 的 segRoadRuns。
+    没有它的时候，凡是落到 OSRM 兜底的路段就一个编号都标不出来 —— 独库公路
+    那段 293 公里的 G217 就是这么丢的。
 
     结果按端点坐标缓存（route_cache 表），命中直接返回，避免每次刷新重复计算；
     仅当端点坐标变化（增删点/移动点）或 refresh=1 时才重新计算。"""
     cache_key = _route_cache_key(from_lng, from_lat, to_lng, to_lat)
     if not refresh:
         cached = db.get_route_cache(cache_key)
-        if cached and cached.get("routes"):
+        # 老缓存是加 steps 之前存的，没有公路编号。当未命中处理，让它自然重算，
+        # 不用整表清空（清了所有海外线路都要重新向 OSRM 要一遍）。
+        if (cached and cached.get("routes")
+                and all("steps" in r for r in cached["routes"])):
             return cached
     url = (f"{OSRM_URL}/{from_lng},{from_lat};{to_lng},{to_lat}"
-           f"?overview=simplified&geometries=geojson&alternatives=true")
+           f"?overview=simplified&geometries=geojson&alternatives=true&steps=true")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "travel-memory/1.0"})
         with urllib.request.urlopen(req, timeout=OSRM_TIMEOUT) as resp:
@@ -650,6 +658,7 @@ def api_route(from_lng: float, from_lat: float, to_lng: float, to_lat: float,
             "path": [[c[0], c[1]] for c in coords],
             "distance": r.get("distance", 0),
             "duration": r.get("duration", 0),
+            "steps": osrm_steps(r),
         })
     result = {"routes": routes}
     if routes:

@@ -30,6 +30,7 @@ import transcode
 from config import AMAP_KEY, AMAP_SECURITY, OSRM_URL, MEDIA_BASE_URL
 from routers.deps import (
     current_user, require_owner, amap_version, amap_key_notice_html, _route_cache_key,
+    osrm_steps,
     stamp_assets,
 )
 
@@ -182,8 +183,10 @@ def _osrm_route_path(a_lng, a_lat, b_lng, b_lat):
     cached = db.get_route_cache(cache_key)
     if cached and cached.get("routes"):
         return cached["routes"][0]["path"]
+    # 带上 steps：这里写的缓存 /api/route 也会读到，格式不一致的话它会判成
+    # 旧缓存再去 OSRM 要一遍，等于白存
     url = (f"{OSRM_URL}/{a_lng},{a_lat};{b_lng},{b_lat}"
-           f"?overview=simplified&geometries=geojson")
+           f"?overview=simplified&geometries=geojson&steps=true")
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "travel-memory/1.0"})
         with urllib.request.urlopen(req, timeout=20) as resp:
@@ -199,6 +202,7 @@ def _osrm_route_path(a_lng, a_lat, b_lng, b_lat):
             "path": path,
             "distance": data["routes"][0].get("distance", 0),
             "duration": data["routes"][0].get("duration", 0),
+            "steps": osrm_steps(data["routes"][0]),
         }]})
     return path if len(path) >= 2 else None
 

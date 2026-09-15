@@ -229,11 +229,28 @@ def test_route_api_serves_from_cache_without_network(client):
     import db
     key = "drive|120.100000,30.200000|121.400000,31.200000"
     db.set_route_cache(key, {"routes": [{"path": [[120.1, 30.2], [121.4, 31.2]],
-                                         "distance": 100.0, "duration": 60.0}]})
+                                         "distance": 100.0, "duration": 60.0,
+                                         "steps": []}]})
     r = client.get("/api/route", params={"from_lng": 120.1, "from_lat": 30.2,
                                          "to_lng": 121.4, "to_lat": 31.2})
     assert r.status_code == 200
     assert r.json()["routes"][0]["distance"] == 100.0
+
+
+def test_route_api_refetches_cache_without_steps(client):
+    """steps 是后加的，加之前存下的缓存没有公路编号。
+
+    这种缓存要当未命中处理、重新去要一次，否则那些路段永远标不出编号
+    （独库公路那段 G217 就是这么丢的）。这里断网，所以重算的结果是空 —— 
+    能拿到空就说明它没有把旧缓存直接端出来。"""
+    import db
+    key = "drive|120.100000,30.200000|121.400000,31.200000"
+    db.set_route_cache(key, {"routes": [{"path": [[120.1, 30.2], [121.4, 31.2]],
+                                         "distance": 100.0, "duration": 60.0}]})
+    r = client.get("/api/route", params={"from_lng": 120.1, "from_lat": 30.2,
+                                         "to_lng": 121.4, "to_lat": 31.2})
+    assert r.status_code == 200
+    assert r.json() == {"routes": []}
 
 
 def test_route_refresh_bypasses_cache_and_degrades(client):
@@ -276,3 +293,29 @@ def test_同步路由的线程池容量被提高了(client):
         lambda: anyio.to_thread.current_default_thread_limiter().total_tokens)
     assert got == app_mod.THREADPOOL_LIMIT
     assert got > 40, "提高线程池容量的启动钩子没生效"
+
+
+def test_osrm_steps_prefers_ref_and_keeps_unnamed():
+    """OSRM 的 steps → 前端认识的 [{road, distance, path}]。
+
+    三件事：ref 优先于 name（高德给「独库公路」，OSRM 给 G217，要的是后者）；
+    没有 ref 的 step 也得留着（segRoadRuns 靠它们判断两截同编号的路中间是不是
+    只隔了个服务区，丢了会把长路劈成够不着门槛的碎段）；超长的轨迹要抽稀，
+    否则一条 300 公里的路线能把缓存撑到几十 KB。
+    """
+    from routers.deps import osrm_steps, OSRM_STEP_MAX_PTS
+    route = {"legs": [{"steps": [
+        {"ref": "G217", "name": "独库公路", "distance": 293049.0,
+         "geometry": {"coordinates": [[84.0 + i * 0.01, 43.0] for i in range(200)]}},
+        {"ref": "", "name": "", "distance": 120.0,
+         "geometry": {"coordinates": [[85.0, 42.0], [85.1, 42.0]]}},
+        {"name": "友谊路", "distance": 758.0,
+         "geometry": {"coordinates": [[86.0, 41.0], [86.1, 41.0]]}},
+    ]}]}
+    out = osrm_steps(route)
+    assert [s["road"] for s in out] == ["G217", "", "友谊路"]
+    assert out[0]["distance"] == 293049.0
+    assert len(out[0]["path"]) == OSRM_STEP_MAX_PTS      # 抽稀过
+    assert out[0]["path"][0] == [84.0, 43.0]             # 首尾必须保住
+    assert out[0]["path"][-1] == [84.0 + 199 * 0.01, 43.0]
+    assert len(out[1]["path"]) == 2                      # 够短的原样留着

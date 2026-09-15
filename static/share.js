@@ -711,7 +711,10 @@ async function shareRouteViaOsm(a, b) {
     const routes = data.routes || [];
     if (!routes.length) return null;
     const path = routes[0].path;
-    return (path && path.length >= 2) ? { path, distance: routes[0].distance || 0 } : null;
+    return (path && path.length >= 2)
+      ? { path, distance: routes[0].distance || 0,
+          roadRuns: segRoadRuns(routes[0].steps, routes[0].distance) }
+      : null;
   } catch (e) {
     clearTimeout(timer);
     return null;
@@ -748,6 +751,12 @@ async function planSegment(a, b) {
   let seg = null;
   if (isInChina(a.lng, a.lat) && isInChina(b.lng, b.lat)) {
     seg = await shareDriveOnce(AMap.DrivingPolicy.LEAST_TIME, new AMap.LngLat(a.lng, a.lat), new AMap.LngLat(b.lng, b.lat));
+    // 高德有些路段只给路名不给编号（独库公路那段 328 公里就是这样），
+    // 路径仍用高德的，编号跟 OSRM 要。10km 以下不值得为标签多发一次请求。
+    if (seg && !(seg.roadRuns || []).length && distKm(a, b) > 10) {
+      const alt = await shareRouteViaOsm(a, b);
+      if (alt && (alt.roadRuns || []).length) seg.roadRuns = alt.roadRuns;
+    }
   }
   if (!seg) seg = await shareRouteViaOsm(a, b);
   return (seg && seg.path && seg.path.length >= 2)
