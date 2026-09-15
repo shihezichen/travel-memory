@@ -40,7 +40,8 @@ def test_share_prefix_does_not_leak_write_routes():
     ("", "read"),
     (None, "read"),
     ("read", "read"),
-    ("write", "write"),
+    ("write", "write,read"),                    # write 蕴含 read：只写不读的 Key 没有用
+    ("write,share", "write,share,read"),
     ("read,write", "read,write"),
     ("write,read,write", "write,read"),        # 去重，保留首次出现顺序
     ("read bogus admin", "read,admin"),        # 空格分隔 + 丢弃非法 token

@@ -125,6 +125,66 @@
   .toast.show { display: block; }
   .toast.err { border-color: var(--red); color: var(--red); }
   .empty { color: var(--muted); text-align: center; padding: 28px; font-size: 13px; }
+
+  /* ---------- 卡片式列表（手机端替代表格） ----------
+     表格在 375px 宽的屏幕上是没法看的：7 列挤在一起，要么横向滚动要么字小到看不清。
+     所以同一份数据渲染两遍 —— 宽屏走 <table>，窄屏走这里的 .item 卡片，
+     由下面的 media query 决定显示哪一份。 */
+  .cards { display: none; }
+  .item { padding: 13px 14px; border-bottom: 1px solid var(--border); }
+  .item:last-child { border-bottom: none; }
+  .item .r1 { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .item .t { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+  .item .t.mono { font-size: 13px; }
+  .item .tags { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .item .meta { color: var(--muted); font-size: 12px; margin-top: 7px; line-height: 1.55; overflow-wrap: anywhere; }
+  .item .acts { margin-top: 10px; display: flex; gap: 8px; }
+  .item .kv { display: flex; gap: 22px; margin-top: 10px; }
+  .item .kv > div { font-size: 11.5px; color: var(--muted); }
+  .item .kv b { display: block; font-size: 18px; color: var(--text); font-weight: 600;
+                font-variant-numeric: tabular-nums; line-height: 1.3; }
+
+  /* 日志/统计的 Key 筛选条 */
+  .filterbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .filterbar span { font-size: 12px; color: var(--muted); }
+  .filterbar select {
+    flex: 1; min-width: 150px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px; outline: none;
+  }
+
+  /* ---------- 底部常驻 Tab（仅手机端） ---------- */
+  .tabbar { display: none; }
+
+  @media (max-width: 720px) {
+    .wrap { padding: 16px 12px 84px; }        /* 底部留出 tabbar 的高度 */
+    header { flex-direction: column; align-items: flex-start; gap: 10px; padding-bottom: 14px; }
+    header .user { width: 100%; justify-content: space-between; }
+    .tabs { display: none; }                  /* 顶部 tab 让位给底部常驻 tab */
+    table { display: none; }
+    .cards { display: block; }
+    section { margin-top: 20px; }
+    .card.pad { padding: 14px; }
+    .field input, .field select { font-size: 16px; }  /* < 16px 时 iOS 会自动放大整页 */
+    .scope-row { gap: 10px 16px; }
+    .prompt-box { font-size: 12px; max-height: 260px; }
+    .prompt-head { align-items: stretch; flex-direction: column; gap: 8px; }
+    .prompt-head .sel { flex-direction: column; align-items: stretch; gap: 6px; }
+    .prompt-head select { width: 100%; font-size: 16px; }
+    .toast { left: 12px; right: 12px; bottom: 76px; text-align: center; }
+    .modal .box { padding: 18px; }
+    .tabbar {
+      display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+      background: var(--panel); border-top: 1px solid var(--border);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .tabbar button {
+      flex: 1; background: none; border: none; color: var(--muted); cursor: pointer;
+      padding: 8px 0 7px; font-size: 11px; line-height: 1.3;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+    }
+    .tabbar button em { font-style: normal; font-size: 19px; line-height: 1; }
+    .tabbar button.active { color: var(--accent2); }
+  }
 </style>
 </head>
 <body>
@@ -158,9 +218,10 @@
           <input id="key-name" type="text" placeholder="例如：Cursor 接入 / 爱马仕总控">
         </div>
         <label style="font-size:12px;color:var(--muted)">权限范围（scope）</label>
+        <div class="muted" id="scope-hint" style="font-size:12px;margin-top:2px"></div>
         <div class="scope-row">
-          <label><input type="checkbox" id="sc-read" checked> read 只读</label>
-          <label><input type="checkbox" id="sc-write"> write 写入</label>
+          <label><input type="checkbox" id="sc-read" checked onchange="syncScopes()"> read 只读</label>
+          <label><input type="checkbox" id="sc-write" onchange="syncScopes()"> write 写入</label>
           <label><input type="checkbox" id="sc-share"> share 分享</label>
           <label id="sc-admin-wrap" style="display:none"><input type="checkbox" id="sc-admin"> admin 管理员</label>
         </div>
@@ -179,6 +240,7 @@
           <thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>创建时间</th><th>最后使用</th><th>状态</th><th>操作</th></tr></thead>
           <tbody id="keys-body"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
         </table>
+        <div class="cards" id="keys-cards"><div class="empty">加载中…</div></div>
       </div>
     </section>
 
@@ -209,10 +271,13 @@
     <section>
       <h2>用量统计</h2>
       <div class="card">
+        <!-- Token 消耗这一列去掉了：这些接口绝大多数是纯 SQL 查询，tokens_used 恒为 0，
+             一整列零对读的人没有任何信息量，在手机上还白占一份宽度。 -->
         <table>
-          <thead><tr><th>Key</th><th>调用次数</th><th>成功</th><th>Token 消耗</th><th>最后使用</th></tr></thead>
-          <tbody id="usage-body"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+          <thead><tr><th>Key</th><th>调用次数</th><th>成功</th><th>最后使用</th></tr></thead>
+          <tbody id="usage-body"><tr><td colspan="4" class="empty">加载中…</td></tr></tbody>
         </table>
+        <div class="cards" id="usage-cards"><div class="empty">加载中…</div></div>
       </div>
     </section>
   </div>
@@ -221,15 +286,29 @@
   <div class="page" id="page-audit">
     <section>
       <h2>审计日志</h2>
+      <div class="filterbar">
+        <span>筛选 Key：</span>
+        <select id="audit-key" onchange="loadAudit()">
+          <option value="0">全部</option>
+        </select>
+      </div>
       <div class="card">
         <table>
-          <thead><tr><th>时间</th><th>动作</th><th>scope</th><th>状态</th><th>详情</th></tr></thead>
-          <tbody id="audit-body"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+          <thead><tr><th>时间</th><th>Key</th><th>动作</th><th>scope</th><th>状态</th><th>详情</th></tr></thead>
+          <tbody id="audit-body"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
         </table>
+        <div class="cards" id="audit-cards"><div class="empty">加载中…</div></div>
       </div>
     </section>
   </div>
 </div>
+
+<!-- 底部常驻 Tab：只在手机端显示（宽屏走顶部 .tabs） -->
+<nav class="tabbar">
+  <button data-page="keys" class="active" onclick="switchTab('keys')"><em>🔑</em>API Keys</button>
+  <button data-page="usage" onclick="switchTab('usage')"><em>📊</em>统计</button>
+  <button data-page="audit" onclick="switchTab('audit')"><em>📜</em>日志</button>
+</nav>
 
 <!-- 生成 key 结果弹窗：raw key + 自动拼好的提示词 -->
 <div class="modal" id="key-modal">
@@ -279,14 +358,43 @@ async function api(method, path, form) {
 
 /* ---------- Tab 切换 ---------- */
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.page === name));
+  /* 顶部 .tab（宽屏）和底部 .tabbar button（手机）是同一套状态的两个视图，一起切 */
+  document.querySelectorAll('.tab, .tabbar button')
+    .forEach(t => t.classList.toggle('active', t.dataset.page === name));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
+  window.scrollTo(0, 0);
   if (name === 'usage') loadUsage();
   if (name === 'audit') loadAudit();
 }
 
-/* ---------- 提示词模板（唯一接入方式） ---------- */
-const PROMPT_TEMPLATE = (key, scope, name) => `你可以通过标准 MCP 协议接入我的旅行记忆平台（Travel Memory），帮我管理旅行行程和回忆。
+/* ---------- 提示词模板（唯一接入方式） ----------
+   提示词必须跟着 Key 的 scope 走：给一个只读 Key 配一段「你可以创建/修改行程」的
+   提示词，agent 会照着试，然后一路撞 403 —— 用户看到的是「这东西坏了」。 */
+const CAPS = [
+  ['read',  '查询我的行程、地点、照片视频清单'],
+  ['read',  '读取行程记忆、语义检索，基于真实数据回答我的问题'],
+  ['read',  '生成旅行内容（总结 / 路书 / 明信片 / 日记等）'],
+  ['read',  '导出行程数据'],
+  ['write', '创建 / 修改 / 删除我的行程和地点'],
+  ['write', '上传行程照片视频'],
+  ['share', '创建 / 撤销行程分享链接'],
+  ['admin', '管理端接口（用户与 Key 管理）'],
+];
+
+function scopeSet(scope) {
+  return new Set(String(scope || 'read').split(',').map(x => x.trim()).filter(Boolean));
+}
+
+const PROMPT_TEMPLATE = (key, scope, name) => {
+  const has = scopeSet(scope);
+  const caps = CAPS.filter(([need]) => has.has(need)).map(([, text]) => '- ' + text).join('\n');
+  const limits = [];
+  if (!has.has('write')) limits.push('• 没有 write 权限：不要尝试创建、修改或删除任何行程、地点或媒体，这类调用会被拒绝（403）。');
+  if (!has.has('share')) limits.push('• 没有 share 权限：不要尝试创建或撤销分享链接。');
+  const limitBlock = limits.length
+    ? `\n\n【这个 Key 不能做什么】\n${limits.join('\n')}`
+    : '';
+  return `你可以通过标准 MCP 协议接入我的旅行记忆平台（Travel Memory），帮我管理旅行行程和回忆。
 
 【接入信息】
 • 端点：${location.origin}/mcp
@@ -295,14 +403,13 @@ const PROMPT_TEMPLATE = (key, scope, name) => `你可以通过标准 MCP 协议�
 • 权限范围：${scope || 'read'}
 
 【你的能力】
-- 查询/创建/修改/删除我的旅行行程和地点
-- 读取行程记忆、生成旅行内容（总结 / 路书 / 明信片 / 日记等）
-- 上传/查看行程照片视频、导出行程数据、创建分享链接
+${caps || '- （该 Key 未授予任何可用能力）'}${limitBlock}
 
 【使用步骤】
 1. 接入后先调用 tools/list 查看全部可用工具
-2. 按需调用工具读写我的旅行数据
+2. 按需调用工具${has.has('write') ? '读写' : '读取'}我的旅行数据
 3. 回答我的问题时基于真实数据，不要编造`;
+};
 
 /* 真实提示词（含完整 key）。key 只在生成弹窗 / 创建后暂存期可见。 */
 function buildPromptWithKey(keyObj) {
@@ -315,8 +422,23 @@ function buildPromptPreview(keyObj) {
   if (pendingRaw && String(pendingRaw.id) === String(keyObj.id)) {
     return buildPromptWithKey({ ...keyObj, raw: pendingRaw.raw });
   }
-  const scope = keyObj.scope || 'read';
-  return PROMPT_TEMPLATE(keyObj.key_prefix + '…（完整 Key 仅生成时可见）', scope, keyObj.name);
+  return PROMPT_TEMPLATE(keyObj.key_prefix + '…（完整 Key 仅生成时可见）',
+                         keyObj.scope || 'read', keyObj.name);
+}
+
+/* ---------- 权限勾选联动 ----------
+   write 默认蕴含 read：没有 read 的 write key 连自己刚写进去的东西都读不回来。
+   所以勾了 write 就把 read 勾上并锁住，取消 write 再放开。 */
+function syncScopes() {
+  const read = $('sc-read'), write = $('sc-write');
+  if (write.checked) {
+    read.checked = true;
+    read.disabled = true;
+    $('scope-hint').textContent = 'write 已包含 read —— 否则写进去的数据自己也读不回来。';
+  } else {
+    read.disabled = false;
+    $('scope-hint').textContent = '';
+  }
 }
 
 /* ---------- 加载 ---------- */
@@ -338,27 +460,33 @@ async function loadKeys() {
   try {
     const { keys } = await api('GET', '/api/console/keys');
     keysCache = keys;
-    const body = $('keys-body');
+    const body = $('keys-body'), cards = $('keys-cards');
     if (!keys.length) {
       body.innerHTML = '<tr><td colspan="7" class="empty">还没有 API Key，上方生成第一个</td></tr>';
+      cards.innerHTML = '<div class="empty">还没有 API Key，上方生成第一个</div>';
     } else {
-      body.innerHTML = keys.map(k => {
-        const status = k.revoked ? '<span class="tag revoked">已吊销</span>'
-          : (k.expires_at && k.expires_at < now() ? '<span class="tag expired">已过期</span>'
-             : '<span class="tag share">有效</span>');
-        const ops = `<button class="btn small danger" onclick="deleteKey(${k.id})">删除</button>`;
-        return `<tr>
+      body.innerHTML = keys.map(k => `<tr>
           <td>${esc(k.name)}</td>
           <td class="mono muted">${esc(k.key_prefix)}…</td>
           <td>${scopeTags(k.scope, k.revoked)}</td>
           <td class="muted">${fmt(k.created_at)}</td>
           <td class="muted">${k.last_used_at ? fmt(k.last_used_at) : '—'}</td>
-          <td>${status}</td>
-          <td style="white-space:nowrap">${ops}</td>
-        </tr>`;
-      }).join('');
+          <td>${keyStatus(k)}</td>
+          <td style="white-space:nowrap"><button class="btn small danger" onclick="deleteKey(${k.id})">删除</button></td>
+        </tr>`).join('');
+      cards.innerHTML = keys.map(k => `<div class="item">
+          <div class="r1">
+            <div class="t">${esc(k.name)}</div>
+            ${keyStatus(k)}
+          </div>
+          <div class="meta mono">${esc(k.key_prefix)}…</div>
+          <div class="tags">${scopeTags(k.scope, k.revoked)}</div>
+          <div class="meta">创建 ${fmt(k.created_at)}　·　最后使用 ${k.last_used_at ? fmt(k.last_used_at) : '从未'}</div>
+          <div class="acts"><button class="btn small danger" onclick="deleteKey(${k.id})">删除</button></div>
+        </div>`).join('');
     }
     refreshPromptSelector();
+    refreshAuditSelector();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -445,32 +573,80 @@ async function deleteKey(id) {
 async function loadUsage() {
   try {
     const { usage } = await api('GET', '/api/console/usage');
-    const body = $('usage-body');
-    if (!usage.length) { body.innerHTML = '<tr><td colspan="5" class="empty">暂无调用记录</td></tr>'; return; }
+    const body = $('usage-body'), cards = $('usage-cards');
+    if (!usage.length) {
+      body.innerHTML = '<tr><td colspan="4" class="empty">暂无调用记录</td></tr>';
+      cards.innerHTML = '<div class="empty">暂无调用记录</div>';
+      return;
+    }
     body.innerHTML = usage.map(u => `
       <tr>
         <td>${esc(u.name)} <span class="muted mono">${esc(u.key_prefix)}…</span></td>
         <td>${u.calls || 0}</td>
         <td>${u.ok_calls || 0}</td>
-        <td>${u.tokens || 0}</td>
         <td class="muted">${u.last_used_at ? fmt(u.last_used_at) : '—'}</td>
       </tr>`).join('');
+    cards.innerHTML = usage.map(u => {
+      const calls = u.calls || 0, ok = u.ok_calls || 0;
+      return `<div class="item">
+        <div class="r1"><div class="t">${esc(u.name)}</div></div>
+        <div class="meta mono">${esc(u.key_prefix)}…</div>
+        <div class="kv">
+          <div><b>${calls}</b>调用</div>
+          <div><b>${ok}</b>成功</div>
+          <div><b>${calls - ok}</b>失败</div>
+        </div>
+        <div class="meta">最后使用 ${u.last_used_at ? fmt(u.last_used_at) : '从未'}</div>
+      </div>`;
+    }).join('');
   } catch (e) { toast(e.message, true); }
+}
+
+/* 日志的 Key 筛选器。控制台自己的操作（建 Key / 删 Key）没有 api_key_id，
+   归在「全部」里；选具体 Key 时只看这个 Key 发出的调用。 */
+function refreshAuditSelector() {
+  const sel = $('audit-key');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="0">全部</option>' + keysCache.map(k =>
+    `<option value="${k.id}">${esc(k.name)}（${esc(k.key_prefix)}…）</option>`).join('');
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function auditKeyLabel(a) {
+  if (a.key_name) return `${esc(a.key_name)} · ${esc(a.key_prefix || '')}…`;
+  return a.method === 'CONSOLE' ? '控制台' : '—';
 }
 
 async function loadAudit() {
   try {
-    const { audit } = await api('GET', '/api/console/audit?limit=100');
-    const body = $('audit-body');
-    if (!audit.length) { body.innerHTML = '<tr><td colspan="5" class="empty">暂无审计记录</td></tr>'; return; }
+    const keyId = $('audit-key') ? $('audit-key').value : '0';
+    const { audit } = await api('GET', `/api/console/audit?limit=100&key_id=${keyId}`);
+    const body = $('audit-body'), cards = $('audit-cards');
+    if (!audit.length) {
+      const msg = keyId !== '0' ? '这个 Key 还没有调用记录' : '暂无审计记录';
+      body.innerHTML = `<tr><td colspan="6" class="empty">${msg}</td></tr>`;
+      cards.innerHTML = `<div class="empty">${msg}</div>`;
+      return;
+    }
     body.innerHTML = audit.map(a => `
       <tr>
         <td class="muted mono">${fmt(a.created_at)}</td>
+        <td class="muted">${auditKeyLabel(a)}</td>
         <td class="mono">${esc(a.action)}</td>
         <td>${a.scope ? `<span class="tag ${a.scope.split(',')[0]}">${esc(a.scope)}</span>` : '—'}</td>
-        <td>${a.status === 'ok' ? '<span class="tag share">ok</span>' : '<span class="tag admin">' + esc(a.status) + '</span>'}</td>
+        <td>${statusTag(a.status)}</td>
         <td class="muted">${esc(a.detail || '')}</td>
       </tr>`).join('');
+    cards.innerHTML = audit.map(a => `
+      <div class="item">
+        <div class="r1">
+          <div class="t mono">${esc(a.action)}</div>
+          ${statusTag(a.status)}
+        </div>
+        <div class="meta">${fmt(a.created_at)}　·　${auditKeyLabel(a)}</div>
+        ${a.detail ? `<div class="meta mono">${esc(a.detail)}</div>` : ''}
+      </div>`).join('');
   } catch (e) { toast(e.message, true); }
 }
 
@@ -516,6 +692,15 @@ async function logout() {
   location.href = '/';
 }
 
+function keyStatus(k) {
+  if (k.revoked) return '<span class="tag revoked">已吊销</span>';
+  if (k.expires_at && k.expires_at < now()) return '<span class="tag expired">已过期</span>';
+  return '<span class="tag share">有效</span>';
+}
+function statusTag(status) {
+  return status === 'ok' ? '<span class="tag share">ok</span>'
+                         : `<span class="tag admin">${esc(status)}</span>`;
+}
 function scopeTags(scope, revoked) {
   return scope.split(',').map(s => `<span class="tag ${revoked ? 'revoked' : s}">${s}</span>`).join(' ');
 }
@@ -523,6 +708,7 @@ function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','
 function fmt(s) { return s ? String(s).replace('T', ' ').slice(0, 16) : '—'; }
 function now() { return new Date().toISOString().replace('T', ' ').slice(0, 16); }
 
+syncScopes();
 load();
 </script>
 </body>

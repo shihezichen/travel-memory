@@ -1782,6 +1782,15 @@ def revoke_api_key(key_id, user_id):
     conn.close()
 
 
+def api_key_belongs_to(key_id, user_id) -> bool:
+    """这个 Key 是不是这个用户的 —— 控制台按 Key 筛日志前先验一道归属。"""
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM api_keys WHERE id=? AND user_id=?",
+                       (key_id, user_id)).fetchone()
+    conn.close()
+    return row is not None
+
+
 def delete_api_key(key_id, user_id):
     """彻底删除 API Key。audit_log 外键为 ON DELETE SET NULL，审计记录保留。"""
     conn = get_conn()
@@ -1857,15 +1866,24 @@ def idempotency_discard(api_key_id, client_request_id):
     conn.close()
 
 
-def list_audit(user_id=None, limit=100):
+def list_audit(user_id=None, limit=100, api_key_id=None):
+    """审计日志。api_key_id 给控制台按 Key 筛选用；顺带带出 Key 名字/前缀，
+    否则前端只拿到一个 id，展示不出「这条是哪个 Key 调的」。"""
     conn = get_conn()
+    sql = ("SELECT a.*, k.name AS key_name, k.key_prefix AS key_prefix "
+           "FROM audit_log a LEFT JOIN api_keys k ON k.id = a.api_key_id")
+    where, params = [], []
     if user_id:
-        rows = conn.execute(
-            "SELECT * FROM audit_log WHERE user_id=? ORDER BY id DESC LIMIT ?",
-            (user_id, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        where.append("a.user_id=?")
+        params.append(user_id)
+    if api_key_id is not None:
+        where.append("a.api_key_id=?")
+        params.append(api_key_id)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY a.id DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     return rows_to_dicts(rows)
 

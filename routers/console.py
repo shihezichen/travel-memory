@@ -23,11 +23,18 @@ VALID_SCOPES = ("read", "write", "share", "admin")
 
 
 def _normalize_scope(scope_s: str) -> str:
-    """校验并规范化 scope：去重、排序、只保留合法 token（read/write/share/admin）。"""
+    """校验并规范化 scope：去重、排序、只保留合法 token（read/write/share/admin）。
+
+    write 蕴含 read：一个只有 write 的 Key 能写进去却读不回来，创建者自己都查不了
+    自己刚写的数据 —— 没有任何场景需要这种 Key。控制台的勾选框也是这么联动的，
+    这里再兜一道，免得绕过页面直接调接口建出个残废 Key。
+    """
     tokens = []
     for t in (scope_s or "read").replace(",", " ").split():
         if t in VALID_SCOPES and t not in tokens:
             tokens.append(t)
+    if "write" in tokens and "read" not in tokens:
+        tokens.append("read")
     return ",".join(tokens) if tokens else "read"
 
 
@@ -87,8 +94,11 @@ def console_usage(request: Request):
 
 
 @router.get("/api/console/audit")
-def console_audit(request: Request, limit: int = 100):
-    """审计日志（管理员看全部，普通用户只看自己）。"""
+def console_audit(request: Request, limit: int = 100, key_id: int = 0):
+    """审计日志（管理员看全部，普通用户只看自己）。key_id>0 时只看该 Key 的调用。"""
     user = current_user(request)
-    rows = db.list_audit(user_id=user["id"] if not user["is_admin"] else None, limit=limit)
+    if key_id and not db.api_key_belongs_to(key_id, user["id"]):
+        raise HTTPException(404, "Key 不存在或不属于当前用户")
+    rows = db.list_audit(user_id=user["id"] if not user["is_admin"] else None,
+                         limit=limit, api_key_id=key_id or None)
     return {"audit": rows}

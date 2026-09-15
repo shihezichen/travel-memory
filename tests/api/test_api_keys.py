@@ -214,3 +214,43 @@ def test_ai_geocode_degrades_offline(client, key_factory):
     assert r.status_code in (200, 404, 502), r.text
     if r.status_code == 200:
         assert r.json().get("result") in (None, {}) or r.json().get("found") is False
+
+
+# ---------------- 控制台：手机端改版带来的接口行为 ----------------
+def test_write_scope_implies_read(key_factory):
+    """只有 write 的 Key 写得进读不出 —— 建的人自己都查不了自己写的数据。"""
+    assert "read" in key_factory(scope="write")["scope"].split(",")
+    assert "read" in key_factory(scope="write,share")["scope"].split(",")
+
+
+def test_audit_can_be_filtered_by_key(auth_client, key_factory):
+    """日志页要能按 Key 分别看，所以接口得支持 key_id 过滤。"""
+    a = key_factory(name="key-a", scope="read")
+    b = key_factory(name="key-b", scope="read")
+    auth_client.get("/api/ai/trips", headers=_bearer(a["key"]))
+    auth_client.get("/api/ai/trips", headers=_bearer(b["key"]))
+    auth_client.get("/api/ai/trips", headers=_bearer(b["key"]))
+
+    only_b = auth_client.get(f"/api/console/audit?key_id={b['id']}").json()["audit"]
+    assert len(only_b) == 2
+    assert {r["api_key_id"] for r in only_b} == {b["id"]}
+    # 日志卡片上要显示「这条是哪个 Key 调的」，所以结果里得带 Key 名字
+    assert {r["key_name"] for r in only_b} == {"key-b"}
+
+    all_rows = auth_client.get("/api/console/audit").json()["audit"]
+    assert len([r for r in all_rows if r["api_key_id"] in (a["id"], b["id"])]) == 3
+
+
+def test_audit_filter_rejects_other_users_key(auth_client, other_client):
+    mine = other_client.post("/api/console/keys",
+                             data={"name": "别人的", "scope": "read"}).json()
+    assert auth_client.get(f"/api/console/audit?key_id={mine['id']}").status_code == 404
+
+
+def test_console_audit_of_key_less_actions_still_listed(auth_client, key_factory):
+    """建 Key 这种控制台操作没有 api_key_id，不能因为加了 JOIN 就从「全部」里漏掉。"""
+    key_factory(name="k")
+    rows = auth_client.get("/api/console/audit").json()["audit"]
+    created = [r for r in rows if r["action"] == "key.create"]
+    assert created and created[0]["api_key_id"] is None
+    assert created[0]["key_name"] is None
