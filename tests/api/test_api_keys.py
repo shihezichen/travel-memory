@@ -254,3 +254,56 @@ def test_console_audit_of_key_less_actions_still_listed(auth_client, key_factory
     created = [r for r in rows if r["action"] == "key.create"]
     assert created and created[0]["api_key_id"] is None
     assert created[0]["key_name"] is None
+
+
+# ---------------- 审计日志：请求来自哪里 ----------------
+def test_audit_records_client_ip_from_forwarded_header(auth_client, key_factory):
+    """链路是 公网 → frps → frpc → uvicorn，传输层地址永远是隧道本地地址，
+    所以真实来源只能从 X-Forwarded-For 拿。"""
+    k = key_factory(scope="read")
+    auth_client.get("/api/ai/trips",
+                    headers={**_bearer(k["key"]), "X-Forwarded-For": "203.0.113.7, 10.0.0.1"})
+    row = auth_client.get(f"/api/console/audit?key_id={k['id']}").json()["audit"][0]
+    assert row["client_ip"] == "203.0.113.7"        # 取最左一段 = 最初的客户端
+
+
+def test_audit_falls_back_to_real_ip_then_peer(auth_client, key_factory):
+    k = key_factory(scope="read")
+    auth_client.get("/api/ai/trips",
+                    headers={**_bearer(k["key"]), "X-Real-IP": "198.51.100.9"})
+    rows = auth_client.get(f"/api/console/audit?key_id={k['id']}").json()["audit"]
+    assert rows[0]["client_ip"] == "198.51.100.9"
+
+    auth_client.get("/api/ai/trips", headers=_bearer(k["key"]))
+    rows = auth_client.get(f"/api/console/audit?key_id={k['id']}").json()["audit"]
+    assert rows[0]["client_ip"]                      # 没有头就退回传输层地址，不能是空
+
+
+def test_console_key_actions_also_record_ip(auth_client):
+    auth_client.post("/api/console/keys", data={"name": "ip-test", "scope": "read"},
+                     headers={"X-Forwarded-For": "203.0.113.20"})
+    rows = auth_client.get("/api/console/audit").json()["audit"]
+    created = [r for r in rows if r["action"] == "key.create"][0]
+    assert created["client_ip"] == "203.0.113.20"
+
+
+def test_mcp_call_forwards_caller_ip_not_localhost(client, auth_client, monkeypatch):
+    """MCP 走的是自调用（127.0.0.1 → 自己）。不透传的话每条 MCP 记录都是本机地址，
+    等于没记 —— 而 MCP 恰恰是远程 agent 的主入口。"""
+    import mcp_http
+    made = auth_client.post("/api/console/keys",
+                            data={"name": "mcp-ip", "scope": "read"}).json()
+
+    def _in_process(method, path, api_key, form=None, json_body=None, client_ip=None):
+        headers = {"Authorization": f"Bearer {api_key}"}
+        if client_ip:
+            headers["X-Forwarded-For"] = client_ip
+        r = client.request(method, path, headers=headers, data=form or None)
+        return r.status_code, (r.json() if r.headers.get("content-type", "").startswith("application/json") else {})
+
+    monkeypatch.setattr(mcp_http, "_call_domain_api", _in_process)
+    client.post("/mcp", headers={**_bearer(made["key"]), "X-Forwarded-For": "203.0.113.55"},
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                      "params": {"name": "list_trips", "arguments": {}}})
+    row = auth_client.get(f"/api/console/audit?key_id={made['id']}").json()["audit"][0]
+    assert row["client_ip"] == "203.0.113.55"

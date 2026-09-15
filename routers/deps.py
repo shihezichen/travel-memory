@@ -17,6 +17,25 @@ from fastapi import HTTPException, Request
 from config import AMAP_KEY
 
 
+# 反代会把真实来源藏在头里。链路是 公网 → frps → frpc 隧道 → uvicorn，
+# uvicorn 看到的 request.client 往往就是隧道的本地地址，直接记下来全是 127.0.0.1。
+# 所以按标准顺序找：XFF 最左一段（最初的客户端）→ X-Real-IP → 传输层地址。
+#
+# 这两个头是可以伪造的。审计日志用它「看看请求大概来自哪儿」没问题，
+# 但别拿它做鉴权或封禁判断 —— 那需要一个可信代理白名单，这里没有。
+_IP_HEADERS = ("x-forwarded-for", "x-real-ip")
+
+
+def client_ip(request: Request) -> str:
+    for h in _IP_HEADERS:
+        raw = request.headers.get(h, "")
+        if raw:
+            first = raw.split(",")[0].strip()
+            if first:
+                return first[:64]
+    return (request.client.host if request.client else "") or ""
+
+
 def current_user(request: Request):
     """从请求上下文取当前登录用户；未登录抛 401"""
     user = getattr(request.state, "user", None)

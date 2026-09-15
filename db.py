@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     tokens_used INTEGER DEFAULT 0,
     latency_ms INTEGER,
     client_request_id TEXT,
+    client_ip TEXT,                           -- 请求来自哪儿（见 routers/deps.client_ip）
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
@@ -287,6 +288,10 @@ def init_db():
     if "status" not in cols:
         conn.execute("ALTER TABLE trips ADD COLUMN status TEXT DEFAULT 'planning'")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_user ON trips(user_id)")
+    # 兼容旧库：audit_log 若无 client_ip 列则补上（历史记录留空 —— 当时没采）
+    audit_cols = [r["name"] for r in conn.execute("PRAGMA table_info(audit_log)")]
+    if "client_ip" not in audit_cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN client_ip TEXT")
     # 兼容旧库：shares 若无 expires_at 列则补上（历史分享视为永久有效）
     share_cols = [r["name"] for r in conn.execute("PRAGMA table_info(shares)")]
     if "expires_at" not in share_cols:
@@ -1823,13 +1828,15 @@ def delete_api_key(key_id, user_id):
 
 # ===== 领域 API 层：审计 =====
 def add_audit(api_key_id, user_id, action, method, path, scope, status,
-              detail=None, tokens_used=0, latency_ms=None, client_request_id=None):
+              detail=None, tokens_used=0, latency_ms=None, client_request_id=None,
+              client_ip=None):
     conn = get_conn()
     conn.execute(
         "INSERT INTO audit_log(api_key_id, user_id, action, method, path, scope, status, "
-        "detail, tokens_used, latency_ms, client_request_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        "detail, tokens_used, latency_ms, client_request_id, client_ip) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (api_key_id, user_id, action, method, path, scope, status, detail,
-         tokens_used, latency_ms, client_request_id),
+         tokens_used, latency_ms, client_request_id, client_ip),
     )
     conn.commit()
     conn.close()

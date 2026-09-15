@@ -128,10 +128,16 @@ def _ssl_context(url: str):
 
 
 def _call_domain_api(method: str, path: str, api_key: str, form: dict | None = None,
-                     json_body=None):
-    """用调用者自己的 API Key 调领域 API。返回 (status, body_dict)。"""
+                     json_body=None, client_ip: str | None = None):
+    """用调用者自己的 API Key 调领域 API。返回 (status, body_dict)。
+
+    client_ip：远端 agent 的真实来源。这一跳是**自调用**（127.0.0.1 → 自己），
+    不透传的话审计日志里每条 MCP 调用都写着 127.0.0.1，等于没记。
+    """
     url = BASE_URL + path
     headers = {"Authorization": f"Bearer {api_key}"}
+    if client_ip:
+        headers["X-Forwarded-For"] = client_ip
     data = None
     if json_body is not None:
         data = json.dumps(json_body, ensure_ascii=False).encode()
@@ -159,7 +165,7 @@ def _call_domain_api(method: str, path: str, api_key: str, form: dict | None = N
         return 503, {"error": f"领域 API 不可达（{BASE_URL}）：{e}"}
 
 
-def call_tool(name: str, args: dict, api_key: str) -> dict:
+def call_tool(name: str, args: dict, api_key: str, client_ip: str | None = None) -> dict:
     """执行 MCP 工具调用：翻译成领域 API 请求并携带调用者 key。"""
     route = TOOL_ROUTES.get(name)
     if route is None:
@@ -194,9 +200,11 @@ def call_tool(name: str, args: dict, api_key: str) -> dict:
         if not isinstance(bundle, dict):
             return _text_result("缺少参数：bundle（需为完整导出对象）", True)
         json_body = bundle
-        status, body = _call_domain_api(method, path, api_key, json_body=json_body)
+        status, body = _call_domain_api(method, path, api_key, json_body=json_body,
+                                        client_ip=client_ip)
     else:
-        status, body = _call_domain_api(method, path, api_key, merged or None)
+        status, body = _call_domain_api(method, path, api_key, merged or None,
+                                        client_ip=client_ip)
 
     if status >= 400:
         detail = body.get("detail") or body.get("error") or json.dumps(body, ensure_ascii=False)
@@ -204,7 +212,7 @@ def call_tool(name: str, args: dict, api_key: str) -> dict:
     return _text_result(json.dumps(body, ensure_ascii=False))
 
 
-def handle_jsonrpc(msg: dict, api_key: str) -> dict | None:
+def handle_jsonrpc(msg: dict, api_key: str, client_ip: str | None = None) -> dict | None:
     """处理单条 JSON-RPC 消息。返回响应 dict；通知返回 None。"""
     method = msg.get("method")
     params = msg.get("params") or {}
@@ -224,7 +232,8 @@ def handle_jsonrpc(msg: dict, api_key: str) -> dict | None:
     if method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}
-        return {"jsonrpc": "2.0", "id": msg_id, "result": call_tool(name, args, api_key)}
+        return {"jsonrpc": "2.0", "id": msg_id,
+                "result": call_tool(name, args, api_key, client_ip)}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
     if method and method.startswith("notifications/"):

@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 import db
+from routers import deps
 import media as media_mod
 import media_purge
 import mcp_http
@@ -67,6 +68,8 @@ def _api_key_auth(request: Request, required_scope: str):
                "insufficient_scope": f"API Key 缺少 {required_scope} 权限"}[err]
         raise HTTPException(401, msg)
     _enforce_rate_limit(request, key, required_scope)
+    # 把来源 IP 挂在 key 上，_audit 就能带上它而不用给几十个调用点都加参数。
+    key["client_ip"] = deps.client_ip(request)
     return key
 
 
@@ -122,6 +125,7 @@ def _audit(api_key, action, status, detail=None, tokens_used=0, latency_ms=None)
         user_id=api_key["user_id"] if api_key else None,
         action=action, method="AI", path=action, scope=api_key["scope"] if api_key else "",
         status=status, detail=detail, tokens_used=tokens_used, latency_ms=latency_ms,
+        client_ip=api_key.get("client_ip") if api_key else None,
     )
 
 
@@ -1269,7 +1273,8 @@ async def mcp_endpoint(request: Request):
             return JSONResponse(mcp_http.scope_error_response(msg_id, tool),
                                 status_code=403, headers=_mcp_headers)
     # 领域 API 调用可能耗时（如 generate 调 LLM），放线程池避免阻塞事件循环
-    resp = await run_in_threadpool(mcp_http.handle_jsonrpc, body, raw_key)
+    resp = await run_in_threadpool(mcp_http.handle_jsonrpc, body, raw_key,
+                                   deps.client_ip(request))
     if resp is None:
         return Response(status_code=202, headers=_mcp_headers)  # 通知类消息
     return JSONResponse(resp, headers=_mcp_headers)

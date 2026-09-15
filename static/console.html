@@ -308,8 +308,8 @@
       </div>
       <div class="card">
         <table>
-          <thead><tr><th>时间</th><th>Key</th><th>动作</th><th>scope</th><th>状态</th><th>详情</th></tr></thead>
-          <tbody id="audit-body"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+          <thead><tr><th>时间</th><th>来源 IP</th><th>Key</th><th>动作</th><th>scope</th><th>状态</th><th>详情</th></tr></thead>
+          <tbody id="audit-body"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
         </table>
         <div class="cards" id="audit-cards"><div class="empty">加载中…</div></div>
       </div>
@@ -687,6 +687,15 @@ function refreshAuditSelector() {
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
+/* 来源 IP。2026-09-16 之前的记录没采过这个字段，显示「—」而不是留白，
+   免得看着像「本地来的」。本机自调用（MCP 那一跳）也标出来，别让人以为是外部请求。 */
+function auditIp(a) {
+  const ip = (a.client_ip || '').trim();
+  if (!ip) return '<span class="muted">—</span>';
+  if (ip === '127.0.0.1' || ip === '::1') return `<span class="muted">${esc(ip)}（本机）</span>`;
+  return esc(ip);
+}
+
 function auditKeyLabel(a) {
   if (a.key_name) return `${esc(a.key_name)} · ${esc(a.key_prefix || '')}…`;
   return a.method === 'CONSOLE' ? '控制台' : '—';
@@ -699,13 +708,14 @@ async function loadAudit() {
     const body = $('audit-body'), cards = $('audit-cards');
     if (!audit.length) {
       const msg = keyId !== '0' ? '这个 Key 还没有调用记录' : '暂无审计记录';
-      body.innerHTML = `<tr><td colspan="6" class="empty">${msg}</td></tr>`;
+      body.innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
       cards.innerHTML = `<div class="empty">${msg}</div>`;
       return;
     }
     body.innerHTML = audit.map(a => `
       <tr>
         <td class="muted mono">${fmt(a.created_at)}</td>
+        <td class="mono">${auditIp(a)}</td>
         <td class="muted">${auditKeyLabel(a)}</td>
         <td class="mono">${esc(a.action)}</td>
         <td>${a.scope ? `<span class="tag ${a.scope.split(',')[0]}">${esc(a.scope)}</span>` : '—'}</td>
@@ -719,6 +729,7 @@ async function loadAudit() {
           ${statusTag(a.status)}
         </div>
         <div class="meta">${fmt(a.created_at)}　·　${auditKeyLabel(a)}</div>
+        <div class="meta mono">来自 ${auditIp(a)}</div>
         ${a.detail ? `<div class="meta mono">${esc(a.detail)}</div>` : ''}
       </div>`).join('');
   } catch (e) { toast(e.message, true); }

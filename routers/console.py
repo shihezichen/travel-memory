@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from pathlib import Path
 
 import db
-from routers.deps import current_user, _public_user
+from routers.deps import client_ip, current_user, _public_user
 
 BASE = Path(__file__).resolve().parent.parent
 
@@ -70,7 +70,7 @@ def console_create_key(request: Request, name: str = Form(""), scope: str = Form
     raw_key, prefix, key_id = db.create_api_key(user["id"], name, scope,
                                                 expire_days=expire_days or None)
     db.add_audit(None, user["id"], "key.create", "CONSOLE", "/api/console/keys",
-                 scope, "ok", detail=f"name={name}")
+                 scope, "ok", detail=f"name={name}", client_ip=client_ip(request))
     return {"ok": True, "id": key_id, "key": raw_key, "prefix": prefix, "scope": scope,
             "note": "raw_key 仅返回这一次，请立即保存"}
 
@@ -82,7 +82,7 @@ def console_delete_key(request: Request, key_id: int):
     if not db.delete_api_key(key_id, user["id"]):
         raise HTTPException(404, "Key 不存在或不属于当前用户")
     db.add_audit(None, user["id"], "key.delete", "CONSOLE", f"/api/console/keys/{key_id}",
-                 "", "ok", detail=f"key_id={key_id}")
+                 "", "ok", detail=f"key_id={key_id}", client_ip=client_ip(request))
     return {"ok": True}
 
 

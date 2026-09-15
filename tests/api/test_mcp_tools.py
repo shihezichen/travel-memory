@@ -116,8 +116,10 @@ def test_every_tool_maps_to_a_registered_route():
 @pytest.fixture
 def mcp_call(client, monkeypatch):
     """把 MCP 的领域 API 自调用接进同一个 TestClient，然后返回一个 tools/call 调用器。"""
-    def _in_process(method, path, api_key, form=None, json_body=None):
+    def _in_process(method, path, api_key, form=None, json_body=None, client_ip=None):
         headers = {"Authorization": f"Bearer {api_key}"}
+        if client_ip:
+            headers["X-Forwarded-For"] = client_ip
         if json_body is not None:
             r = client.request(method, path, headers=headers, json=json_body)
         else:
