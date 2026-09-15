@@ -567,9 +567,9 @@ body.map-fullscreen-on { overflow: hidden; }
 .marker-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 .marker-elev { font-variant-numeric: tabular-nums; }
 .marker-elev:empty { display: none; }                    /* 还没查到海拔就不占位 */
-/* 缩得太小时分级收起：先收地名（更占地方），再收整条标签 */
-.map.hide-pname .marker-name { display: none; }
-.map.hide-elev .marker-label { display: none; }
+/* 缩得太小时只收海拔，地名一直留着 —— 缩到全国/洲际视野时，地名正是唯一能说明
+   「这条线经过哪儿」的东西，连它一起藏就只剩一条光秃秃的线了。 */
+.map.hide-elev .marker-elev { display: none; }
 /* ---------- 上传中的占位格 ---------- */
 /* 选完文件立刻出现，压着一圈环形进度；传完换成真正的格子。
    视频和图片外观分开：视频底是深色胶片纹 + 「▶ 视频」角标，抽到第一帧就当封面。 */

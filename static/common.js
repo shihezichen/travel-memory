@@ -80,7 +80,8 @@ function syncElevLabelsVisibility() {
   if (!el0 || !map || !map.getZoom) return;
   const z = map.getZoom();
   el0.classList.toggle('hide-elev', z < ELEV_MIN_ZOOM);
-  el0.classList.toggle('hide-pname', z < NAME_MIN_ZOOM);
+  // 地名不再随缩放隐藏：缩到全国视野时，名字正是唯一能说明「这条线经过哪儿」的
+  // 东西，藏起来只剩一条光秃秃的线。挤是挤了点，但比读不出来强。
   // 公路编号的门槛比海拔低一档：全国视野下 G318 这种号反而是最有用的信息，
   // 但再缩下去（洲际视野）线都挤成一坨了，标了也读不出对应哪一截。
   el0.classList.toggle('hide-road', z < ROAD_MIN_ZOOM);
@@ -93,10 +94,13 @@ function unhighlightMapPoints() {
   });
 }
 
-// 里程格式化：>=1km 显示 x.x km，<1km 显示整数米
-function fmtKm(m) {
+// 里程格式化：>=1km 显示 km，<1km 显示整数米。
+// digits 默认 1 位小数（总里程用），两点之间的距离传 0 —— 地图上密密麻麻的段
+// 标签里那个小数位没人看，去掉之后标签更短、更不容易互相压住。
+function fmtKm(m, digits) {
   if (!m) return '';
-  return m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m';
+  const d = digits === undefined ? 1 : digits;
+  return m >= 1000 ? (m / 1000).toFixed(d) + ' km' : Math.round(m) + ' m';
 }
 
 // 里程标签和公路编号标签永远同生共死（换行程、路线重算、分段撤掉都是一起的），

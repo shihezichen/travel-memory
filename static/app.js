@@ -429,7 +429,18 @@ $('#register-form').addEventListener('submit', async (e) => {
   }
 });
 
+// 从需要登录的页面被弹回来时（见 app.py 的 auth 中间件），?next= 记着原来要去哪
+function pendingNext() {
+  try {
+    const n = new URLSearchParams(location.search).get('next');
+    // 只接受本站的绝对路径，挡掉 //evil.com 这类开放重定向
+    return (n && n.startsWith('/') && !n.startsWith('//')) ? n : null;
+  } catch (e) { return null; }
+}
+
 function onLoggedIn() {
+  const next = pendingNext();
+  if (next) { location.replace(next); return; }
   setLoginError('');
   $('#login-username').value = '';
   $('#login-password').value = '';
@@ -617,7 +628,7 @@ function renderStats(stats, points) {
     name: p.name || '（未命名）',
     date: fmtDate(p.start_date),
     waypoint: !!p.is_waypoint,
-    distFromPrev: i > 0 ? fmtKm(segDistanceMeters(i - 1, points)) : '',
+    distFromPrev: i > 0 ? fmtKm(segDistanceMeters(i - 1, points), 0) : '',
   }));
   lastStatsDetail = { name: tripName, description: stats.description || '', rows, points: pointRows };
   box.textContent = parts.join(' · ');
@@ -868,10 +879,9 @@ function setMarkerElev(marker, elev) {
   const v = (elev === null || elev === undefined || isNaN(elev)) ? null : Math.round(Number(elev));
   marker._elevEl.textContent = v === null ? '' : v + ' m';
 }
-// 缩得太小时满屏都是海拔小标，反而糊住地名；低于这个级别整体隐藏（类名打在 #map 上）
+// 缩得太小时满屏都是海拔小标，反而糊住地名；低于这个级别只收海拔，地名照常显示
+// （类名打在 #map 上，见 style.css 的 .map.hide-elev）
 const ELEV_MIN_ZOOM = 7;
-// 地名比海拔更占地方：缩得太小时十几个点的名字会糊成一片，所以门槛设得更高一档。
-const NAME_MIN_ZOOM = 9;
 // 加载完行程后补一次海拔：纯锦上添花，失败就当没这回事，不弹错也不重试
 async function fillElevations(tripId) {
   if (!tripId) return;
@@ -1239,7 +1249,7 @@ function renderSegLabels() {
   if (n < 1) return;
   for (let i = 0; i < n; i++) {
     const pos = segMidPoint(i);
-    const km = fmtKm(segDistanceMeters(i));
+    const km = fmtKm(segDistanceMeters(i), 0);
     if (!pos || !km) continue;
     // 外层是个零尺寸锚点，里面的胶囊用 translate(-50%,-50%) 精确骑在线上；
     // 否则标签宽度一变（12 km / 1234 m）就会偏出去。

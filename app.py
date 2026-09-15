@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 import uvicorn
@@ -213,6 +213,17 @@ async def auth_middleware(request: Request, call_next):
     if user:
         request.state.user = user
         return await call_next(request)
+    # 页面请求跳登录页，别甩一个 401 的 JSON。首页上「开放平台」那个链接指向
+    # /console，未登录点进去看到的是一行 {"error":"unauthorized"}，谁也不知道
+    # 该干什么。带上 next，登录完自动回来。
+    # 判据卡得严一点：只认浏览器发起的 HTML 导航（GET + Accept 里有 text/html），
+    # 避免把 fetch 的 401 也变成 302 —— 前端靠 401 判断「没登录」，变成 302 会
+    # 拿到一整页 HTML 然后解析失败。
+    accept = request.headers.get("accept", "")
+    if (request.method == "GET" and "text/html" in accept
+            and not path.startswith("/api/")):
+        nxt = urllib.parse.quote(request.url.path, safe="/")
+        return RedirectResponse(f"/app?next={nxt}", status_code=302)
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
 

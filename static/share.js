@@ -294,7 +294,7 @@ function shareRenderStats() {
       name: p.name || '（未命名）',
       date: shareFmtDate(p.start_date),
       waypoint: !!p.is_waypoint,
-      distFromPrev: i > 0 ? fmtKm(shareSegDistanceMeters(i - 1, pts)) : '',
+      distFromPrev: i > 0 ? fmtKm(shareSegDistanceMeters(i - 1, pts), 0) : '',
     })),
   };
   // 微信分享卡片标题带上统计（微信抓取 document.title 作为分享卡片标题）
@@ -469,8 +469,6 @@ function shareRenderMap() {
 
 // 缩得太小时满屏海拔小标会糊住地名，低于这个级别整体收起（与主页面一致）
 const ELEV_MIN_ZOOM = 7;
-// 地名比海拔更占地方，门槛高一档（与主页面一致）
-const NAME_MIN_ZOOM = 9;
 function shareClearMap() {
   renderSeq++;
   markers.forEach(m => m.setMap(null));
@@ -622,7 +620,7 @@ function shareRenderSegLabels() {
   if (n < 1) return;
   for (let i = 0; i < n; i++) {
     const pos = shareSegMidPoint(i);
-    const km = fmtKm(shareSegDistanceMeters(i));
+    const km = fmtKm(shareSegDistanceMeters(i), 0);
     if (!pos || !km) continue;
     // 零尺寸锚点 + 内部 translate(-50%,-50%)：标签宽度随文字变，只有自己居中才骑得准
     const anchor = el('div', 'seg-label-anchor');

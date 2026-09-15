@@ -319,3 +319,26 @@ def test_osrm_steps_prefers_ref_and_keeps_unnamed():
     assert out[0]["path"][0] == [84.0, 43.0]             # 首尾必须保住
     assert out[0]["path"][-1] == [84.0 + 199 * 0.01, 43.0]
     assert len(out[1]["path"]) == 2                      # 够短的原样留着
+
+
+def test_page_request_without_login_redirects_to_login(client):
+    """未登录访问需要登录的页面 → 302 跳登录页并带 next，不是甩一个 401 JSON。
+
+    首页上「开放平台」指向 /console，未登录点进去原来看到的是一行
+    {"error":"unauthorized"}，谁也不知道该干什么。
+    """
+    r = client.get("/console", headers={"Accept": "text/html"},
+                   follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/app?next=/console"
+
+
+def test_api_request_without_login_still_401(client):
+    """fetch 发的 API 请求仍旧是 401 —— 前端靠它判断「没登录」。
+
+    要是也变成 302，前端会拿到一整页 HTML 然后解析失败。
+    """
+    r = client.get("/api/trips", headers={"Accept": "application/json"},
+                   follow_redirects=False)
+    assert r.status_code == 401
+    assert r.json() == {"error": "unauthorized"}
