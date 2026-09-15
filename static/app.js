@@ -1729,8 +1729,11 @@ function showSegmentPanel(i) {
   const choices = data.choices || [];
   const title = `${from.name || '起点'} 至 ${to.name || '终点'}`;
 
+  // 已经开着的先撤掉，重复触发只留最后一个
+  document.querySelectorAll('.seg-panel-modal').forEach(el => el.remove());
+
   const ov = document.createElement('div');
-  ov.className = 'modal';
+  ov.className = 'modal seg-panel-modal';
   ov.innerHTML = `
     <div class="modal-box">
       <h2>${esc(title)} 路径</h2>
@@ -1850,6 +1853,10 @@ function redrawSegment(i, path, choice) {
     segmentData[i].path = path;
     segmentData[i].picked = choice || null;
   }
+  // 地图上看得见的是自绘的 SVG 覆盖层（高德原线被压到 0.01 不透明度只留点击
+  // 热区，见 buildRouteOverlay）。只 setPath 高德那条的话，画面上什么都不会变，
+  // 非得刷新一次重画才看得到 —— 表现出来就是「选了路线地图没反应」。
+  buildRouteOverlay();
   // 换了路线，中点、里程、公路编号全变了，标签得重建
   renderSegLabels();
   // 顶栏那行统计里的总里程也是按各段加起来的，不刷一下就还是旧数
