@@ -1697,6 +1697,28 @@ function showMapRouteChooser(title, choices) {
   });
 }
 
+// 现场把这一段的备选重新规划一遍，并把当前定着的那条也并进去。
+// 用在「定过路线的段想换一条」：那种段加载时不规划，手里只有存下来的一条。
+async function replanSegmentChoices(i, from, to, current) {
+  let list = [];
+  if (distKm(from, to) > 1
+      && isInChina(from.lng, from.lat) && isInChina(to.lng, to.lat)) {
+    list = await planSegmentChoices(new AMap.LngLat(from.lng, from.lat),
+                                    new AMap.LngLat(to.lng, to.lat));
+    list = await withShorterAlternative(from, to, list);
+  }
+  if (!list.length) list = await routeViaOsm(from, to);
+  // 当前定着的那条要留在列表里：它可能已经规划不出来了（封路、路网更新），
+  // 不放进去的话用户一打开选择器就等于被迫换掉。里程撞车就算同一条，不重复列。
+  if (current && current.path && current.path.length >= 2) {
+    const dup = list.some(c => Math.abs((c.distance || 0) - (current.distance || 0)) < 500);
+    if (!dup) list = [current].concat(list);
+  }
+  list = relabelChoices(list);
+  if (segmentData[i]) segmentData[i].choices = list;
+  return list;
+}
+
 // 点击路径段（地图点线段 or 侧边栏分隔条）弹出的操作面板：切换驾车/直线、选择路线方案
 function showSegmentPanel(i) {
   const points = lastPoints;
@@ -1717,7 +1739,8 @@ function showSegmentPanel(i) {
         <button type="button" class="btn ${mode === 'drive' ? 'btn-primary' : ''}" data-mode="drive">🚗 驾车</button>
         <button type="button" class="btn ${mode === 'line' ? 'btn-primary' : ''}" data-mode="line">📏 直线</button>
       </div>
-      ${choices.length > 1 ? `<button type="button" class="btn" data-choose>选择路线方案（${choices.length} 条）</button>` : ''}
+      ${mode === 'drive' ? `<button type="button" class="btn" data-choose>${
+        choices.length > 1 ? `选择路线方案（${choices.length} 条）` : '重新规划路线'}</button>` : ''}
       <button type="button" class="btn" data-cancel style="opacity:.7">关闭</button>
     </div>`;
   document.body.appendChild(ov);
@@ -1733,7 +1756,15 @@ function showSegmentPanel(i) {
     const chooseBtn = e.target.closest('button[data-choose]');
     if (chooseBtn) {
       ov.remove();
-      const picked = await showMapRouteChooser(title, choices);
+      let list = choices;
+      // 定过路线的段，加载时直接用存下来的那条、不再规划，所以这里只有一条 ——
+      // 不现场补一次的话，用户定完就再也改不回去了（按钮压根不出现）。
+      if (list.length < 2) list = await replanSegmentChoices(i, from, to, data.picked);
+      if (list.length < 2) {
+        tmAlert('这一段只规划得出一条路线');
+        return;
+      }
+      const picked = await showMapRouteChooser(title, list);
       if (picked && picked.path) redrawSegment(i, picked.path, picked);
       return;
     }

@@ -960,11 +960,39 @@ def update_point(point_id, name, lat, lng, start_date, end_date, description="",
     conn.close()
 
 
+def clear_routes_around(point_id):
+    """把这个点牵连的两段定线作废：它自己那段，和前一个点到它的那段。
+
+    点一挪窝，存下来的路线两头就对不上了 —— 线还连在旧坐标上。清掉之后
+    下次加载会重新规划。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT trip_id, start_date, sort_order, id FROM points WHERE id=?",
+            (point_id,)).fetchone()
+        if not row:
+            return
+        # 前一个点按列表里的同一套排序取：start_date, sort_order, id
+        prev = conn.execute(
+            "SELECT id FROM points WHERE trip_id=? AND ("
+            "  COALESCE(start_date,'') < COALESCE(?,'')"
+            "  OR (COALESCE(start_date,'') = COALESCE(?,'') AND sort_order < ?)"
+            "  OR (COALESCE(start_date,'') = COALESCE(?,'') AND sort_order = ? AND id < ?)"
+            ") ORDER BY start_date DESC, sort_order DESC, id DESC LIMIT 1",
+            (row["trip_id"], row["start_date"], row["start_date"], row["sort_order"],
+             row["start_date"], row["sort_order"], row["id"])).fetchone()
+        ids = [point_id] + ([prev["id"]] if prev else [])
+        conn.execute("UPDATE points SET route_json=NULL WHERE id IN (%s)"
+                     % ",".join("?" * len(ids)), ids)
+        conn.commit()
+
+
 def set_point_route(point_id, route_json):
     """存/清这一点到下一点定下来的路线。传 None 表示清掉，回到每次现规划。"""
-    with get_conn() as conn:
-        conn.execute("UPDATE points SET route_json=? WHERE id=?",
-                     (route_json, point_id))
+    conn = get_conn()
+    conn.execute("UPDATE points SET route_json=? WHERE id=?", (route_json, point_id))
+    conn.commit()
+    conn.close()
 
 
 def set_point_route_mode(point_id, route_mode):

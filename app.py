@@ -1042,8 +1042,15 @@ def api_update_point(request: Request, point_id: int, name: str = Form(...),
     require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")
     mode = route_mode if route_mode in ("drive", "line") else "drive"
     wp = 1 if is_waypoint in ("1", "true", "on", "yes") else 0
+    before = db.get_point(point_id)
     db.update_point(point_id, name, lat, lng, start_date or None,
                     end_date or None, description, mode, wp)
+    # 挪了窝就把牵连的定线作废：线还连在旧坐标上，两头都对不上了
+    moved = (not before
+             or abs((before["lat"] or 0) - lat) > 1e-7
+             or abs((before["lng"] or 0) - lng) > 1e-7)
+    if moved:
+        db.clear_routes_around(point_id)
     return {"ok": True}
 
 
@@ -1110,6 +1117,9 @@ def api_delete_point(request: Request, point_id: int):
     require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")
     files = db.get_point_media_files(point_id)
     variants = db.get_point_variant_files(point_id)  # 必须在 delete 之前捞（行会级联消失）
+    # 删掉这个点之后，它前面那个点的定线就跨过它连到更后面去了 —— 作废重规划。
+    # 必须在 delete 之前算，删完就找不到前一个点是谁了。
+    db.clear_routes_around(point_id)
     db.delete_point(point_id)
     media_purge.purge_file_pairs(UPLOAD_DIR, media_mod.THUMB_DIR, files, variants)
     return {"ok": True}

@@ -161,3 +161,42 @@ def test_point_route_path_is_capped(auth_client, seeded_trip):
     saved = _json.loads([p for p in pts if p["id"] == pid][0]["route_json"])
     assert saved["path"][0] == [80.0, 40.0]
     assert saved["path"][-1] == [80 + 4999 * 0.001, 40.0]
+
+
+def test_moving_a_point_invalidates_its_routes(auth_client, seeded_trip):
+    """点一挪窝，存下来的路线两头就对不上了 —— 它自己那段和前一段都要作废。"""
+    import json as _json
+    trip_id, pids = seeded_trip["trip_id"], seeded_trip["point_ids"]
+    route = _json.dumps({"path": [[120.0, 30.0], [121.0, 31.0]], "distance": 1000.0})
+    for pid in pids[:2]:
+        assert auth_client.put(f"/api/points/{pid}/route",
+                               data={"route": route}).status_code == 200
+
+    # 改名不算挪窝，定线该留着
+    p1 = [p for p in auth_client.get(f"/api/trips/{trip_id}/points").json()
+          if p["id"] == pids[1]][0]
+    auth_client.put(f"/api/points/{pids[1]}", data={
+        "name": "灵隐寺（改名）", "lat": p1["lat"], "lng": p1["lng"],
+        "start_date": p1["start_date"] or "", "end_date": p1["end_date"] or ""})
+    pts = {p["id"]: p for p in auth_client.get(f"/api/trips/{trip_id}/points").json()}
+    assert pts[pids[1]]["route_json"] is not None
+
+    # 挪了窝：它自己那段 + 前一个点到它那段，两段都作废
+    auth_client.put(f"/api/points/{pids[1]}", data={
+        "name": "灵隐寺", "lat": 31.5, "lng": 119.9,
+        "start_date": p1["start_date"] or "", "end_date": p1["end_date"] or ""})
+    pts = {p["id"]: p for p in auth_client.get(f"/api/trips/{trip_id}/points").json()}
+    assert pts[pids[1]]["route_json"] is None
+    assert pts[pids[0]]["route_json"] is None
+
+
+def test_deleting_a_point_invalidates_previous_route(auth_client, seeded_trip):
+    """删掉中间那个点，前一个点的定线就跨过它连到更后面去了，得作废。"""
+    import json as _json
+    trip_id, pids = seeded_trip["trip_id"], seeded_trip["point_ids"]
+    route = _json.dumps({"path": [[120.0, 30.0], [121.0, 31.0]], "distance": 1000.0})
+    assert auth_client.put(f"/api/points/{pids[0]}/route",
+                           data={"route": route}).status_code == 200
+    assert auth_client.delete(f"/api/points/{pids[1]}").status_code == 200
+    pts = {p["id"]: p for p in auth_client.get(f"/api/trips/{trip_id}/points").json()}
+    assert pts[pids[0]]["route_json"] is None
