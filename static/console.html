@@ -152,6 +152,9 @@
     border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px; outline: none;
   }
 
+  /* 只在手机端出现的元素（宽屏保持原样，一点不动） */
+  .mobile-only { display: none; }
+
   /* ---------- 底部常驻 Tab（仅手机端） ---------- */
   .tabbar { display: none; }
 
@@ -162,6 +165,10 @@
     .tabs { display: none; }                  /* 顶部 tab 让位给底部常驻 tab */
     table { display: none; }
     .cards { display: block; }
+    .mobile-only { display: inline-flex; }
+    #create-host { display: none; }           /* 表单搬进弹窗，首屏只留一个按钮 */
+    #sec-prompt { display: none; }            /* 提示词改从每个 Key 卡片弹出 */
+    #btn-open-create { width: 100%; justify-content: center; padding: 11px; }
     section { margin-top: 20px; }
     .card.pad { padding: 14px; }
     .field input, .field select { font-size: 16px; }  /* < 16px 时 iOS 会自动放大整页 */
@@ -212,7 +219,11 @@
     <!-- Key 生成与管理放在接入方式之前：先有 Key，才能生成提示词 -->
     <section>
       <h2>创建 API Key</h2>
-      <div class="card pad">
+      <!-- 手机端首屏不摆这一整块表单，只留一个按钮；点了才把 #create-fields
+           搬进弹窗（DOM 只有一份，勾选联动和读值逻辑不用分两套） -->
+      <button class="btn primary mobile-only" id="btn-open-create" onclick="openCreateModal()">＋ 生成 API Key</button>
+      <div class="card pad" id="create-host">
+       <div id="create-fields">
         <div class="field">
           <label>Key 名称（备注用途，如「爱马仕总控」）</label>
           <input id="key-name" type="text" placeholder="例如：Cursor 接入 / 爱马仕总控">
@@ -230,6 +241,7 @@
           <input id="key-expire" type="number" min="1" placeholder="永久">
         </div>
         <button class="btn primary" id="btn-create" onclick="createKey()">生成 API Key</button>
+       </div>
       </div>
     </section>
 
@@ -244,8 +256,10 @@
       </div>
     </section>
 
-    <!-- 接入方式：只保留 Agent 接入一种，下面直接是发给 agent 的提示词（自动拼入所选 Key） -->
-    <section>
+    <!-- 接入方式：只保留 Agent 接入一种，下面直接是发给 agent 的提示词（自动拼入所选 Key）。
+         手机端整段不显示 —— 提示词改成从每个 Key 卡片上的「Agent 接入」按钮弹出，
+         省得在首屏摆一个跟下拉框绑定的大文本块。 -->
+    <section id="sec-prompt">
       <h2>Agent 接入</h2>
       <div class="card pad">
         <p class="muted" style="font-size:13px;margin-bottom:6px">
@@ -300,6 +314,30 @@
         <div class="cards" id="audit-cards"><div class="empty">加载中…</div></div>
       </div>
     </section>
+  </div>
+</div>
+
+<!-- 创建弹窗：手机端点「＋ 生成 API Key」后，#create-fields 会被搬进 #create-slot -->
+<div class="modal" id="create-modal">
+  <div class="box">
+    <h3>生成 API Key</h3>
+    <div id="create-slot"></div>
+    <div class="actions">
+      <button class="btn" onclick="closeCreateModal()">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 某个 Key 的 Agent 接入提示词 -->
+<div class="modal" id="prompt-modal">
+  <div class="box">
+    <h3>Agent 接入</h3>
+    <p class="muted" style="font-size:12.5px;margin-bottom:8px" id="prompt-modal-sub"></p>
+    <div class="prompt-box" id="prompt-modal-box"></div>
+    <div class="actions">
+      <button class="btn primary" onclick="copyPromptModalBox()">📋 复制提示词</button>
+      <button class="btn" onclick="closePromptModal()">关闭</button>
+    </div>
   </div>
 </div>
 
@@ -484,7 +522,10 @@ async function loadKeys() {
           <div class="tags">${scopeTags(k.scope, k.revoked)}</div>
           <div class="meta">有效期 ${expiryText(k)}</div>
           <div class="meta">创建 ${fmt(k.created_at)}　·　最后使用 ${k.last_used_at ? fmt(k.last_used_at) : '从未'}</div>
-          <div class="acts"><button class="btn small danger" onclick="deleteKey(${k.id})">删除</button></div>
+          <div class="acts">
+            <button class="btn small" onclick="openPromptModal(${k.id})">Agent 接入</button>
+            <button class="btn small danger" onclick="deleteKey(${k.id})">删除</button>
+          </div>
         </div>`).join('');
     }
     refreshPromptSelector();
@@ -531,6 +572,35 @@ function copyPrompt() {
   toast('该 Key 的完整值仅生成时可见，请重新创建 Key 后立即复制提示词', true);
 }
 
+/* ---------- 创建弹窗（手机端）----------
+   表单 DOM 只有一份，在 #create-host 和弹窗之间搬来搬去。复制一份 DOM 的话
+   就有两套同名 id，勾选联动和读值都得分叉，不值得。 */
+function openCreateModal() {
+  $('create-slot').appendChild($('create-fields'));
+  $('create-modal').classList.add('show');
+}
+function closeCreateModal() {
+  $('create-host').appendChild($('create-fields'));
+  $('create-modal').classList.remove('show');
+}
+function createModalOpen() { return $('create-modal').classList.contains('show'); }
+
+/* ---------- 某个 Key 的接入提示词弹窗 ---------- */
+function openPromptModal(id) {
+  const k = keysCache.find(x => String(x.id) === String(id));
+  if (!k) return;
+  $('prompt-modal-sub').textContent =
+    `${k.name}（${k.key_prefix}… · ${k.scope}）—— 整段复制发给你的 Agent`;
+  $('prompt-modal-box').textContent = buildPromptPreview(k);
+  $('prompt-modal').classList.add('show');
+}
+function closePromptModal() { $('prompt-modal').classList.remove('show'); }
+function copyPromptModalBox() {
+  copyText($('prompt-modal-box').textContent)
+    .then(() => toast('提示词已复制，可直接发给 Agent'))
+    .catch(() => toast('复制失败，请手动选择复制', true));
+}
+
 /* ---------- Key 操作 ---------- */
 async function createKey() {
   const scope = [];
@@ -553,8 +623,10 @@ async function createKey() {
     $('key-full').textContent = data.key;
     const keyObj = { raw: data.key, scope: data.scope, name: form.name || '未命名' };
     $('key-modal-prompt').textContent = buildPromptWithKey(keyObj);
+    if (createModalOpen()) closeCreateModal();
     $('key-modal').classList.add('show');
     $('key-name').value = '';
+    $('key-expire').value = '';
     await loadKeys();
   } catch (e) { toast(e.message, true); }
   $('btn-create').disabled = false;

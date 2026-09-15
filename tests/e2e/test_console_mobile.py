@@ -34,7 +34,10 @@ def mobile_page(browser, live_server, e2e_user):
 
 
 def _make_key(page, name, scope_ids, expire_days=""):
+    """手机端建 Key 要先点开弹窗 —— 首屏上只有一个按钮。"""
     before = page.count("#keys-cards .item")
+    page.click("#btn-open-create")
+    page.wait_for("#create-modal.show")
     page.fill("#key-name", name)
     page.fill("#key-expire", str(expire_days))
     for sid in scope_ids:
@@ -126,8 +129,70 @@ def test_expired_and_today_keys_read_correctly(mobile_page):
     assert "有效" in out["liveStatus"]
 
 
+def test_first_screen_has_no_create_form_or_prompt_block(mobile_page):
+    """手机首屏要清爽：创建表单和「Agent 接入」那一大块都不该占地方。"""
+    assert mobile_page.visible("#btn-open-create")
+    assert not mobile_page.visible("#create-host")
+    assert not mobile_page.visible("#sec-prompt")
+    assert not mobile_page.visible("#create-modal")
+
+
+def test_create_form_moves_into_modal_and_back(mobile_page):
+    """表单 DOM 只有一份，开弹窗搬进去、取消搬回来 —— 别复制出两套同名 id。"""
+    mobile_page.click("#btn-open-create")
+    mobile_page.wait_for("#create-modal.show")
+    for fid in ("key-name", "sc-read", "sc-write", "key-expire", "btn-create"):
+        assert mobile_page.eval(
+            f"document.getElementById('create-modal').contains("
+            f"document.getElementById('{fid}'))"), fid
+    assert mobile_page.eval(
+        "document.querySelectorAll('#key-name').length") == 1
+
+    mobile_page.eval("closeCreateModal()")
+    mobile_page.wait_until("!document.getElementById('create-modal').classList.contains('show')")
+    assert mobile_page.eval(
+        "document.getElementById('create-host').contains(document.getElementById('key-name'))")
+
+
+def test_create_from_modal_then_shows_key_modal(mobile_page):
+    """生成之后：创建弹窗收起，换成「已生成」弹窗（含完整 Key + 提示词 + 复制）。"""
+    _make_key(mobile_page, "弹窗建的 Key", ["sc-read"])
+    assert not mobile_page.visible("#create-modal")
+    assert mobile_page.count("#keys-cards .item") == 1
+    # 表单已经搬回去，且名称/有效期都清空了，下次开弹窗不会带着上次的残留
+    assert mobile_page.eval(
+        "document.getElementById('create-host').contains(document.getElementById('key-name'))")
+    assert mobile_page.eval("document.getElementById('key-name').value") == ""
+    assert mobile_page.eval("document.getElementById('key-expire').value") == ""
+
+
+def test_agent_prompt_opens_from_each_key_card(mobile_page):
+    """提示词改成每个 Key 卡片上的按钮 —— 弹出的那份必须是这个 Key 的。"""
+    _make_key(mobile_page, "只读 Key", ["sc-read"])
+    _make_key(mobile_page, "读写 Key", ["sc-write"])
+
+    cards = mobile_page.eval(
+        "Array.from(document.querySelectorAll('#keys-cards .item'))"
+        ".map(c => c.querySelector('.t').textContent)")
+    idx = cards.index("只读 Key")
+    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn:not(.danger)")
+    mobile_page.wait_for("#prompt-modal.show")
+    assert "只读 Key" in mobile_page.text("#prompt-modal-sub")
+    body = mobile_page.text("#prompt-modal-box")
+    assert "没有 write 权限" in body and "创建 / 修改 / 删除" not in body
+
+    mobile_page.eval("closePromptModal()")
+    idx = cards.index("读写 Key")
+    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn:not(.danger)")
+    mobile_page.wait_for("#prompt-modal.show")
+    assert "读写 Key" in mobile_page.text("#prompt-modal-sub")
+    assert "创建 / 修改 / 删除" in mobile_page.text("#prompt-modal-box")
+
+
 def test_write_checkbox_forces_and_locks_read(mobile_page):
     """write 勾上 → read 自动勾中且不可取消（否则建出个自己读不了的 Key）。"""
+    mobile_page.click("#btn-open-create")
+    mobile_page.wait_for("#create-modal.show")
     mobile_page.eval("document.getElementById('sc-write').click()")
     assert mobile_page.eval("document.getElementById('sc-read').checked") is True
     assert mobile_page.eval("document.getElementById('sc-read').disabled") is True
@@ -178,3 +243,47 @@ def test_console_has_no_page_errors_on_mobile(mobile_page):
     mobile_page.click(".tabbar button[data-page=audit]")
     mobile_page.wait_ms(300)
     mobile_page.assert_no_page_errors(allow=ALLOWED_CONSOLE)
+
+
+# ---------------- 宽屏：这些改动一点都不该影响桌面 ----------------
+@pytest.fixture
+def desktop_page(browser, live_server, e2e_user):
+    pg = browser.new_page(live_server, mobile=False)
+    pg.goto("/")
+    pg.eval("""async ([u, p]) => {
+      await fetch('/api/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({username: u, password: p}),
+      });
+    }""", [e2e_user["username"], e2e_user["password"]])
+    pg.goto("/console")
+    pg.wait_until("document.getElementById('who').textContent !== '…'")
+    yield pg
+    pg.close()
+
+
+def test_desktop_keeps_inline_form_table_and_prompt_section(desktop_page):
+    """宽屏仍然是：页面上直接摆表单、表格、底部一整块 Agent 接入。"""
+    assert desktop_page.visible("#create-host")
+    assert desktop_page.visible("#sec-prompt")
+    assert desktop_page.visible("nav.tabs")
+    assert not desktop_page.visible("#btn-open-create")
+    assert not desktop_page.visible(".tabbar")
+    assert desktop_page.eval(
+        "getComputedStyle(document.querySelector('#page-keys table')).display") != "none"
+    assert desktop_page.eval(
+        "getComputedStyle(document.getElementById('keys-cards')).display") == "none"
+
+
+def test_desktop_create_still_works_inline(desktop_page):
+    desktop_page.fill("#key-name", "桌面 Key")
+    desktop_page.click("#btn-create")
+    desktop_page.wait_for("#key-modal.show")
+    desktop_page.eval("closeModal()")
+    desktop_page.wait_until(
+        "document.getElementById('keys-body').innerText.includes('桌面 Key')")
+    # 创建弹窗从头到尾没被用上，表单也没被搬走
+    assert not desktop_page.visible("#create-modal")
+    assert desktop_page.eval(
+        "document.getElementById('create-host').contains(document.getElementById('key-name'))")
