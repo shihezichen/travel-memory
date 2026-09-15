@@ -949,13 +949,34 @@ def create_point(trip_id, name, lat, lng, start_date, end_date, description="", 
     return pid
 
 
-def update_point(point_id, name, lat, lng, start_date, end_date, description="", route_mode="drive", is_waypoint=0):
+# 字段级更新里「不改」和「改成 NULL」是两件事，但都想用 None 表达。
+# 拿一个哨兵把后者分出来：val is None → 跳过；val is CLEAR → 写 NULL。
+CLEAR = object()
+
+
+def update_point(point_id, name=None, lat=None, lng=None, start_date=None, end_date=None,
+                 description=None, route_mode=None, is_waypoint=None):
+    """字段级更新地点；None 字段跳过，CLEAR 字段写 NULL —— 跟 update_trip 一个语义。
+
+    原来是全量覆盖：没传的字段一律按默认值写进去。Web UI 每次都传全量，看不出
+    问题；但 agent 调 /api/ai/points/{id} 往往只想改一个字段（「把这个点改名叫
+    芒康」），结果日期被抹成 NULL、描述被抹成空串。线上「芒康」那个点丢日期就是
+    这么来的。想显式清空的传空串，不传就是不改。
+    """
+    sets, args = [], []
+    for col, val in (("name", name), ("lat", lat), ("lng", lng),
+                     ("start_date", start_date), ("end_date", end_date),
+                     ("description", description), ("route_mode", route_mode)):
+        if val is not None:
+            sets.append(f"{col}=?")
+            args.append(("" if col == "description" else None) if val is CLEAR else val)
+    if is_waypoint is not None:
+        sets.append("is_waypoint=?")
+        args.append(int(is_waypoint))
+    if not sets:
+        return
     conn = get_conn()
-    conn.execute(
-        "UPDATE points SET name=?, lat=?, lng=?, start_date=?, end_date=?, description=?, route_mode=?, is_waypoint=? "
-        "WHERE id=?",
-        (name, lat, lng, start_date, end_date, description, route_mode, int(is_waypoint), point_id),
-    )
+    conn.execute(f"UPDATE points SET {', '.join(sets)} WHERE id=?", (*args, point_id))
     conn.commit()
     conn.close()
 

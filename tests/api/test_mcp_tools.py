@@ -68,6 +68,29 @@ def test_every_tool_has_usable_schema():
         assert not missing, f"{t['name']} 的 inputSchema 少了参数 {sorted(missing)}"
 
 
+def test_every_tool_field_is_documented():
+    """每个参数都得有一句人话说明。
+
+    Agent 只能看见 schema —— 字段光有个 `{"type": "integer"}`，它就只能靠字段名
+    猜：id 从哪来？日期什么格式？不传会怎样？线上那次「芒康」建点，日期丢了正是
+    因为没人告诉它「不传 start_date 这个点就排不进时间线」。
+    """
+    undocumented = []
+    for t in mcp_http.to_mcp_tools():
+        for field, spec in ((t["inputSchema"].get("properties") or {})).items():
+            if not (spec.get("description") or "").strip():
+                undocumented.append(f"{t['name']}.{field}")
+    assert not undocumented, "这些参数没有说明，Agent 只能靠猜：" + ", ".join(undocumented)
+
+
+def test_update_tools_document_partial_semantics():
+    """局部更新的语义必须写在描述里，否则 agent 会以为没传的字段会被清掉
+    （或者反过来 —— 以为传了就是全量覆盖）。"""
+    by_name = {t["name"]: t for t in mcp_http.to_mcp_tools()}
+    desc = by_name["update_point"]["description"]
+    assert "只改你传了的字段" in desc and "null" in desc
+
+
 def test_every_tool_scope_is_known():
     for name, scope in mcp_http.TOOL_SCOPE.items():
         assert scope in ("read", "write", "share", "admin"), (name, scope)

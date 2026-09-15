@@ -39,6 +39,9 @@ def ai(auth_client):
             return auth_client.post(path, headers={**headers, **FORM_CT},
                                     content=body.encode("utf-8"))
 
+        def put_form(self, path, data):
+            return auth_client.put(path, headers=headers, data=data)
+
         def put_raw(self, path, body: str):
             return auth_client.put(path, headers={**headers, **FORM_CT},
                                    content=body.encode("utf-8"))
@@ -149,3 +152,55 @@ def test_trip_date_formats_are_normalized(ai, auth_client):
                                "end_date": "2026年10月8日"})
     t = db.get_trip(r.json()["id"])
     assert (t["start_date"], t["end_date"]) == ("2026-10-01", "2026-10-08")
+
+
+# ---------------- 3) 局部更新：没传的字段不许被抹掉 ----------------
+def test_update_point_keeps_untouched_fields(ai):
+    """回归：agent 只想改名字，结果日期被抹成 NULL、描述被抹成空串。
+
+    线上「芒康」那个点丢日期就是这么来的 —— 不是 agent 忘了传，是 update
+    把它清了。
+    """
+    pid = ai.post_form(f"/api/ai/trips/{ai.trip_id}/points", {
+        "name": "德钦", "lat": 28.49, "lng": 98.91,
+        "start_date": "2026-10-05", "end_date": "2026-10-05",
+        "description": "飞来寺看日照金山", "route_mode": "line", "is_waypoint": "1",
+    }).json()["id"]
+
+    # agent：「把这个点改名叫芒康」—— 只传名字和坐标
+    assert ai.put_form(f"/api/ai/points/{pid}",
+                       {"name": "芒康", "lat": 29.68, "lng": 98.59}).status_code == 200
+
+    p = db.get_point(pid)
+    assert p["name"] == "芒康"
+    assert p["start_date"] == "2026-10-05"
+    assert p["end_date"] == "2026-10-05"
+    assert p["description"] == "飞来寺看日照金山"
+    assert p["route_mode"] == "line"
+    assert p["is_waypoint"] == 1
+
+
+def test_update_point_can_still_clear_a_field_explicitly(ai):
+    """「不传 = 不改」不能把「清空」这条路堵死：传字面量 null 仍然要能清掉。
+
+    为什么不是空串：FastAPI 的 Form 里「传了空串」和「根本没传」拿到的都是
+    默认值，分不开 —— 所以清空得有个说得出口的写法。
+    """
+    pid = ai.post_form(f"/api/ai/trips/{ai.trip_id}/points", {
+        "name": "德钦", "lat": 28.49, "lng": 98.91,
+        "start_date": "2026-10-05", "description": "先写着",
+    }).json()["id"]
+    ai.put_form(f"/api/ai/points/{pid}",
+                {"name": "德钦", "lat": 28.49, "lng": 98.91,
+                 "start_date": "null", "description": "null"})
+    p = db.get_point(pid)
+    assert p["start_date"] is None and p["description"] == ""
+
+
+def test_update_point_changes_what_was_passed(ai):
+    pid = ai.post_form(f"/api/ai/trips/{ai.trip_id}/points", {
+        "name": "德钦", "lat": 28.49, "lng": 98.91, "start_date": "2026-10-05",
+    }).json()["id"]
+    ai.put_form(f"/api/ai/points/{pid}",
+                {"name": "德钦", "lat": 28.49, "lng": 98.91, "start_date": "2026/10/6"})
+    assert db.get_point(pid)["start_date"] == "2026-10-06"

@@ -987,10 +987,14 @@ def ai_create_point(request: Request, trip_id: int, name: str = Form(...),
 @router.put("/api/ai/points/{point_id}")
 def ai_update_point(request: Request, point_id: int, name: str = Form(...),
                     lat: str = Form(""), lng: str = Form(""),
-                    start_date: str = Form(""), end_date: str = Form(""),
-                    description: str = Form(""), route_mode: str = Form("drive"),
-                    is_waypoint: str = Form("0")):
-    """更新地点（write scope）。lat/lng 为 WGS-84（可选），缺失时按地名地理编码。"""
+                    start_date: str = Form(None), end_date: str = Form(None),
+                    description: str = Form(None), route_mode: str = Form(None),
+                    is_waypoint: str = Form(None)):
+    """更新地点（write scope）。**只改传了的字段**，没传的保持原值。
+
+    lat/lng 为 WGS-84（可选），两个都不传就按地名重新地理编码。
+    想把日期或描述清空，显式传空串。
+    """
     key = _api_key_auth(request, "write")
     if not db.get_point(point_id):
         raise HTTPException(404, "地点不存在")
@@ -999,12 +1003,13 @@ def ai_update_point(request: Request, point_id: int, name: str = Form(...),
     name = (name or "").strip()
     if not name:
         raise HTTPException(400, "地点名称不能为空")
-    mode = route_mode if route_mode in ("drive", "line") else "drive"
-    wp = 1 if is_waypoint in ("1", "true", "on", "yes") else 0
+    mode = None if route_mode is None else (route_mode if route_mode in ("drive", "line") else "drive")
+    wp = None if is_waypoint is None else (1 if is_waypoint in ("1", "true", "on", "yes") else 0)
     gcj_lng, gcj_lat, src, fmt = _resolve_point_coords(name, lat, lng)
     db.update_point(point_id, name, gcj_lat, gcj_lng,
-                    _normalize_date(start_date, "start_date"),
-                    _normalize_date(end_date, "end_date"), description, mode, wp)
+                    _optional_date(start_date, "start_date"),
+                    _optional_date(end_date, "end_date"),
+                    _optional_text(description), mode, wp)
     _audit(key, "points.update", "ok", detail=f"point={point_id} coord={src}")
     return {"ok": True, "coord_source": src, "formatted": fmt}
 
@@ -1287,6 +1292,28 @@ _DATE_PATTERNS = (
     re.compile(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})$"),
     re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日?$"),
 )
+
+
+# 想在局部更新里表达「把这个字段清空」得有个说法。空串是指望不上的 ——
+# FastAPI 的 Form 里「传了空串」和「根本没传」拿到的都是默认值，分不开。
+# 所以约定一个明确的字面量，工具描述里写清楚。
+_CLEAR_WORDS = ("null", "none", "空")
+
+
+def _optional_text(raw):
+    """局部更新用：没传 → 不改；传 "null" → 清空；其余原样。"""
+    if raw is None:
+        return None
+    return db.CLEAR if raw.strip().lower() in _CLEAR_WORDS else raw
+
+
+def _optional_date(raw, field: str):
+    """同 _optional_text，但值要过一遍日期格式校验。"""
+    if raw is None:
+        return None
+    if raw.strip().lower() in _CLEAR_WORDS:
+        return db.CLEAR
+    return _normalize_date(raw, field)
 
 
 def _normalize_date(raw: str, field: str) -> str | None:

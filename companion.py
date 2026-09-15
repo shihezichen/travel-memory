@@ -294,8 +294,8 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "trip_id": {"type": "integer"},
-                    "limit": {"type": "integer"},
+                    "trip_id": {"type": "integer", "description": "行程 id。不确定就先调 list_trips 拿"},
+                    "limit": {"type": "integer", "description": "最多返回几条，默认 5"},
                 },
                 "required": [],
             },
@@ -361,9 +361,10 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["trip_summary", "route_guide", "postcard", "diary"]},
-                    "trip_id": {"type": "integer"},
-                    "style": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["trip_summary", "route_guide", "postcard", "diary"],
+                             "description": "生成什么：trip_summary 行程总结 / route_guide 路书 / postcard 明信片文案 / diary 日记"},
+                    "trip_id": {"type": "integer", "description": "行程 id。不确定就先调 list_trips 拿"},
+                    "style": {"type": "string", "description": "叙述口吻，如「旅行者视角」「纪录片解说」。留空用默认"},
                     "language": {"type": "string", "enum": ["zh", "en"], "description": "输出语言"},
                 },
                 "required": ["kind", "trip_id"],
@@ -381,7 +382,7 @@ TOOLS = [
                     "name": {"type": "string", "description": "行程名称，如'川西环线'"},
                     "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
                     "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
-                    "description": {"type": "string"},
+                    "description": {"type": "string", "description": "行程简介，一两句话"},
                     "status": {"type": "string", "enum": ["planning", "traveling", "completed", "archived"],
                                "description": "行程状态（默认 planning）"},
                     "client_request_id": {"type": "string", "description": "幂等键（可选）：网络重试时传相同值避免重复建行程，建议用 UUID"},
@@ -398,8 +399,9 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "trip_id": {"type": "integer"},
-                    "status": {"type": "string", "enum": ["planning", "traveling", "completed", "archived"]},
+                    "trip_id": {"type": "integer", "description": "行程 id。不确定就先调 list_trips 拿"},
+                    "status": {"type": "string", "enum": ["planning", "traveling", "completed", "archived"],
+                               "description": "planning 计划中 / traveling 进行中 / completed 已完成 / archived 已归档"},
                 },
                 "required": ["trip_id", "status"],
             },
@@ -425,14 +427,15 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "trip_id": {"type": "integer"},
+                    "trip_id": {"type": "integer", "description": "行程 id。不确定就先调 list_trips 拿"},
                     "name": {"type": "string", "description": "地点名称，尽量带城市，如'杭州西湖'而非'西湖'"},
                     "lat": {"type": "number", "description": "纬度 WGS-84（可选，缺省自动地理编码）"},
                     "lng": {"type": "number", "description": "经度 WGS-84（可选，缺省自动地理编码）"},
                     "start_date": {"type": "string", "description": "到达日期 YYYY-MM-DD。用户提到日期就一定要填——不填这个点在时间线上排不进去"},
                     "end_date": {"type": "string", "description": "离开日期 YYYY-MM-DD（当天往返就跟 start_date 一样）"},
-                    "description": {"type": "string"},
-                    "route_mode": {"type": "string", "enum": ["drive", "line"]},
+                    "description": {"type": "string", "description": "这个点的备注，用户说了什么就记什么，支持 Markdown"},
+                    "route_mode": {"type": "string", "enum": ["drive", "line"],
+                                   "description": "到这个点怎么连线：drive 走真实路网（默认）/ line 直连（飞机、火车、无路可走的段）"},
                     "is_waypoint": {"type": "string", "enum": ["0", "1"], "description": "是否只是路过的辅助点（不进编号、地图上不可点）。默认 '0'"},
                     "client_request_id": {"type": "string", "description": "幂等键（可选）：网络重试时传相同值避免重复建点，建议用 UUID"},
                 },
@@ -444,19 +447,23 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "update_point",
-            "description": "修改行程中某个地点的信息（名称/坐标/日期/描述等）。当用户说'把XX改成YY'或'更新XX地点'时调用。",
+            "description": "修改行程中某个地点的信息。当用户说'把XX改成YY'或'更新XX地点'时调用。"
+                           "**只改你传了的字段**，没传的保持原值 —— 想改个名字就只传 point_id + name，"
+                           "不用把日期描述再抄一遍。要清空某个字段，把它显式传成字符串 'null'。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "point_id": {"type": "integer"},
-                    "name": {"type": "string", "description": "新的地点名称"},
-                    "lat": {"type": "number", "description": "纬度 WGS-84（可选，缺省自动地理编码）"},
-                    "lng": {"type": "number", "description": "经度 WGS-84（可选，缺省自动地理编码）"},
-                    "start_date": {"type": "string", "description": "到达日期 YYYY-MM-DD。用户提到日期就一定要填——不填这个点在时间线上排不进去"},
-                    "end_date": {"type": "string", "description": "离开日期 YYYY-MM-DD（当天往返就跟 start_date 一样）"},
-                    "description": {"type": "string"},
-                    "route_mode": {"type": "string", "enum": ["drive", "line"]},
-                    "is_waypoint": {"type": "string", "enum": ["0", "1"], "description": "是否只是路过的辅助点（不进编号、地图上不可点）。默认 '0'"},
+                    "point_id": {"type": "integer", "description": "地点 id。不确定就先调 get_memory 看这趟的时间线"},
+                    "name": {"type": "string", "description": "地点名称。必填 —— 不改名就把原来的名字原样传回来"},
+                    "lat": {"type": "number", "description": "纬度 WGS-84。lat/lng 都不传就按 name 重新地理编码"},
+                    "lng": {"type": "number", "description": "经度 WGS-84。lat/lng 都不传就按 name 重新地理编码"},
+                    "start_date": {"type": "string", "description": "到达日期 YYYY-MM-DD。不传 = 保持原值，传 'null' = 清空"},
+                    "end_date": {"type": "string", "description": "离开日期 YYYY-MM-DD。不传 = 保持原值，传 'null' = 清空"},
+                    "description": {"type": "string", "description": "地点备注。不传 = 保持原值，传 'null' = 清空"},
+                    "route_mode": {"type": "string", "enum": ["drive", "line"],
+                                   "description": "连线方式：drive 走真实路网 / line 直连。不传 = 保持原值"},
+                    "is_waypoint": {"type": "string", "enum": ["0", "1"],
+                                    "description": "是否只是路过的辅助点。不传 = 保持原值"},
                 },
                 "required": ["point_id", "name"],
             },
@@ -469,7 +476,7 @@ TOOLS = [
             "description": "从行程中删除一个地点。当用户明确说'删掉XX地点'时调用。",
             "parameters": {
                 "type": "object",
-                "properties": {"point_id": {"type": "integer"}},
+                "properties": {"point_id": {"type": "integer", "description": "地点 id。不确定就先调 get_memory 看这趟的时间线"}},
                 "required": ["point_id"],
             },
         },
@@ -481,7 +488,8 @@ TOOLS = [
             "description": "删除整个行程（含所有地点和媒体）。当用户明确说'删掉XX行程'时调用。",
             "parameters": {
                 "type": "object",
-                "properties": {"trip_id": {"type": "integer"}},
+                "properties": {"trip_id": {"type": "integer",
+                                           "description": "行程 id。不确定就先调 list_trips 拿"}},
                 "required": ["trip_id"],
             },
         },
@@ -493,7 +501,8 @@ TOOLS = [
             "description": "导出某次行程为 JSON（坐标 WGS-84），供备份/迁移/二次加工。当用户说'导出/备份XX行程'时调用。",
             "parameters": {
                 "type": "object",
-                "properties": {"trip_id": {"type": "integer"}},
+                "properties": {"trip_id": {"type": "integer",
+                                           "description": "行程 id。不确定就先调 list_trips 拿"}},
                 "required": ["trip_id"],
             },
         },
@@ -627,7 +636,8 @@ TOOLS = [
             "description": "获取某次行程的统计（地点数/照片数/视频数/起止日期）。当用户问'XX行程去了几个地方'时调用。",
             "parameters": {
                 "type": "object",
-                "properties": {"trip_id": {"type": "integer"}},
+                "properties": {"trip_id": {"type": "integer",
+                                           "description": "行程 id。不确定就先调 list_trips 拿"}},
                 "required": ["trip_id"],
             },
         },
@@ -640,7 +650,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "trip_id": {"type": "integer"},
+                    "trip_id": {"type": "integer", "description": "行程 id。不确定就先调 list_trips 拿"},
                     "expire_days": {"type": "integer", "description": "有效天数，留空为永久"},
                     "password": {"type": "string", "description": "访问密码（可选）"},
                 },
@@ -655,7 +665,8 @@ TOOLS = [
             "description": "撤销某次行程的全部分享链接。当用户说'取消分享'时调用。",
             "parameters": {
                 "type": "object",
-                "properties": {"trip_id": {"type": "integer"}},
+                "properties": {"trip_id": {"type": "integer",
+                                           "description": "行程 id。不确定就先调 list_trips 拿"}},
                 "required": ["trip_id"],
             },
         },
@@ -667,7 +678,8 @@ TOOLS = [
             "description": "查询某次行程当前有效分享链接数量。",
             "parameters": {
                 "type": "object",
-                "properties": {"trip_id": {"type": "integer"}},
+                "properties": {"trip_id": {"type": "integer",
+                                           "description": "行程 id。不确定就先调 list_trips 拿"}},
                 "required": ["trip_id"],
             },
         },
@@ -679,7 +691,7 @@ TOOLS = [
             "description": "列出某地点已上传的照片/视频媒体（含缩略图、EXIF 时间/坐标）。当用户问'XX地点有什么照片'时调用。",
             "parameters": {
                 "type": "object",
-                "properties": {"point_id": {"type": "integer"}},
+                "properties": {"point_id": {"type": "integer", "description": "地点 id。不确定就先调 get_memory 看这趟的时间线"}},
                 "required": ["point_id"],
             },
         },
@@ -692,7 +704,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "point_id": {"type": "integer"},
+                    "point_id": {"type": "integer", "description": "地点 id。不确定就先调 get_memory 看这趟的时间线"},
                     "data_base64": {"type": "string", "description": "文件内容 base64 编码字符串"},
                     "filename": {"type": "string", "description": "文件名，用于推断类型，如 photo.jpg"},
                     "content_type": {"type": "string", "description": "MIME 类型，如 image/jpeg（filename 无扩展名时用）"},
@@ -708,7 +720,7 @@ TOOLS = [
             "description": "删除某条媒体（照片/视频）。当用户明确说'删掉这张照片'时调用。",
             "parameters": {
                 "type": "object",
-                "properties": {"media_id": {"type": "integer"}},
+                "properties": {"media_id": {"type": "integer", "description": "媒体 id。先调 list_media 拿"}},
                 "required": ["media_id"],
             },
         },
