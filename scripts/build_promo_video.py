@@ -118,7 +118,7 @@ def main():
     print("[1/5] 片头卡")
     card("旅行记忆", "把一趟旅行，变成能重新走一遍的记忆", TITLE_SEC, OUT / "c_title.mp4")
     print("[2/5] 片尾卡")
-    card("top001.xin", "一键体验，无需注册  ·  自托管  ·  MIT 开源", END_SEC, OUT / "c_end.mp4")
+    card("top001.xin", "一键体验，无需注册  ·  代码公开  ·  数据随时带走", END_SEC, OUT / "c_end.mp4")
 
     print("[3/5] 正片（掐头 + 调速 + 首尾淡入淡出）")
     body = OUT / "body.mp4"
