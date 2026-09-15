@@ -1,0 +1,512 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>promo synth</title>
+<!--
+  宣传片里那些「界面上录不到」的镜头都在这儿：照片墙、GPS 折线、logo、
+  MCP 问答、片头片尾卡。
+
+  为什么不用 CSS animation：录屏的帧率不受控，同一个镜头两次录出来长短不一样，
+  卡不住解说。这里所有画面都由 render(p) 纯函数画出来（p 是 0~1 的进度），
+  synth.py 逐帧调用它再截图，帧数=时长×30，一帧不多一帧不少。
+-->
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1280px; height:720px; overflow:hidden; background:#07070B;
+              font-family:"Noto Sans CJK SC","Source Han Sans SC",sans-serif; }
+  .scene { position:absolute; inset:0; display:none; }
+  .scene.on { display:block; }
+
+  /* ---- 照片墙 ---- */
+  #wallMap { position:absolute; inset:0; width:1280px; height:720px;
+             object-fit:fill; opacity:0; }
+  #wallPins { position:absolute; inset:0; }
+  #wallPins .pin { position:absolute; width:34px; height:34px; opacity:0;
+     border-radius:99px; border:2px solid rgba(47,107,255,.75);
+     box-shadow:0 0 22px rgba(47,107,255,.55); transform-origin:50% 50%; }
+  #wall { position:absolute; inset:0; }
+  #wall .ph { position:absolute; border-radius:3px; overflow:hidden;
+              box-shadow:0 6px 18px rgba(0,0,0,.55); background:#222; }
+  #wall .ph img { width:100%; height:100%; object-fit:cover; display:block; }
+
+  /* ---- 热力图 ---- */
+  #heatMap { position:absolute; inset:0; width:1280px; height:720px; }
+  #heatBlobs { position:absolute; inset:0; mix-blend-mode:multiply; }
+  #heatBlobs i { position:absolute; border-radius:50%; opacity:0;
+                 transform:translate(-50%,-50%); }
+  .heat-legend { position:absolute; left:28px; bottom:26px; opacity:0;
+                 background:rgba(12,12,18,.78); color:#FFD9C2; font-size:17px;
+                 padding:9px 18px; border-radius:99px; letter-spacing:.08em; }
+
+  /* ---- GPS 折线 ---- */
+  #gps svg { position:absolute; left:0; top:0; }
+  #gps .stamps { position:absolute; left:132px; top:120px; text-align:left;
+                 font:16px/32px "JetBrains Mono",Consolas,monospace; color:#5C5C6C;
+                 letter-spacing:.06em; }
+  #gps .hint { position:absolute; left:132px; top:76px; font-size:15px;
+               color:#43434F; letter-spacing:.22em; opacity:0; }
+  #gps .stamps div { opacity:0; }
+
+  /* ---- logo ---- */
+  .logo-wrap { position:absolute; inset:0; display:flex; align-items:center;
+               justify-content:center; flex-direction:column; gap:22px; }
+  .logo-mark { width:96px; height:96px; border-radius:26px;
+               background:linear-gradient(135deg,#FF8A3D,#FF3D71);
+               display:flex; align-items:center; justify-content:center;
+               box-shadow:0 18px 60px rgba(255,80,90,.35); }
+  .logo-mark svg { width:52px; height:52px; }
+  .logo-txt { font-size:46px; font-weight:800; color:#fff; letter-spacing:.14em; }
+
+  /* ---- 手机框 ---- */
+  #phone .frame { position:absolute; left:50%; top:50%; width:300px; height:620px;
+                  margin-left:-150px; margin-top:-310px; border-radius:38px;
+                  border:9px solid #16161D; background:#fff; overflow:hidden;
+                  box-shadow:0 30px 90px rgba(0,0,0,.6); }
+  #phone .frame img { width:100%; height:100%; object-fit:cover; object-position:top; }
+  #phone .notch { position:absolute; left:50%; top:9px; width:106px; height:22px;
+                  margin-left:-53px; background:#16161D; border-radius:0 0 14px 14px; }
+  #phone .ro { position:absolute; left:50%; bottom:26px; transform:translateX(-50%);
+               background:rgba(10,10,14,.82); color:#A8FFC8; font-size:12px;
+               padding:6px 14px; border-radius:99px; white-space:nowrap; }
+  #phone .cap { position:absolute; left:0; right:0; bottom:54px; text-align:center;
+                color:#8A8A98; font-size:18px; }
+
+  /* ---- MCP 终端 ---- */
+  .term { position:absolute; left:64px; top:70px; width:700px; height:580px;
+          background:#101017; border:1px solid #232333; border-radius:14px;
+          padding:22px 26px; font:15px/30px "JetBrains Mono",Consolas,monospace;
+          color:#C9C9D6; overflow:hidden; }
+  .term .bar { position:absolute; left:0; right:0; top:0; height:34px;
+               background:#16161F; border-radius:14px 14px 0 0;
+               border-bottom:1px solid #232333; }
+  .term .bar i { position:absolute; top:12px; width:10px; height:10px;
+                 border-radius:99px; }
+  .term .body { margin-top:30px; }
+  .term .q { color:#fff; font-size:19px; line-height:34px; }
+  .term .tool { color:#7BE3A4; opacity:0; }
+  .term .tool b { color:#5E9BFF; font-weight:400; }
+  .term .ans { color:#D8D8E4; opacity:0; font-size:15px; line-height:30px; }
+  .side { position:absolute; right:48px; top:70px; width:420px; height:580px;
+          border-radius:14px; overflow:hidden; border:1px solid #232333;
+          background:#0D0D14; }
+  .side img { width:100%; height:100%; object-fit:cover; }
+  .side .glow { position:absolute; inset:0; opacity:0;
+                box-shadow:inset 0 0 0 3px #FF6B35, inset 0 0 70px rgba(255,107,53,.4); }
+
+  /* ---- 片头/片尾卡 ---- */
+  .card { position:absolute; inset:0;
+          background:radial-gradient(1100px 620px at 50% 42%,#15141C 0%,#07070B 72%); }
+  .card .grid { position:absolute; inset:0; opacity:.5;
+     background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),
+                      linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);
+     background-size:64px 64px; }
+  .card .mid { position:absolute; inset:0; display:flex; flex-direction:column;
+               align-items:center; justify-content:center; }
+  .card h1 { font-size:74px; font-weight:900; color:#fff; letter-spacing:.06em; }
+  .card h1 em { font-style:normal;
+     background:linear-gradient(90deg,#FF8A3D,#FF3D71); -webkit-background-clip:text;
+     background-clip:text; color:transparent; }
+  .card p { margin-top:26px; font-size:24px; color:#9AA0B4; letter-spacing:.04em; }
+  .card .dom { font-size:66px; font-weight:800; color:#fff; letter-spacing:.02em; }
+  .card .tags { margin-top:30px; display:flex; gap:14px; }
+  .card .tags span { opacity:0; font-size:17px; color:#C6CBDA; padding:9px 20px;
+                     border:1px solid #2C2C3A; border-radius:99px; background:#101017; }
+
+  /* ---- github ---- */
+  #gh .sheet { position:absolute; left:190px; top:0; width:900px; background:#0D1117;
+               border-left:1px solid #21262D; border-right:1px solid #21262D;
+               padding:26px 30px; color:#C9D1D9; font-size:15px;
+               font-family:-apple-system,"Segoe UI",sans-serif; }
+  #gh .repo { font-size:21px; color:#58A6FF; margin-bottom:6px; }
+  #gh .repo b { font-weight:600; }
+  #gh .desc { color:#8B949E; font-size:14px; margin-bottom:18px; }
+  #gh .stats { display:flex; gap:22px; color:#8B949E; font-size:13px;
+               margin-bottom:20px; }
+  #gh .row { display:flex; justify-content:space-between; padding:9px 12px;
+             border-top:1px solid #21262D; font-size:14px; }
+  #gh .row span:last-child { color:#8B949E; font-size:12px; }
+  #gh .lic { margin-top:20px; padding:12px 14px; border:1px solid #21262D;
+             border-radius:8px; color:#8B949E; font-size:13px; }
+</style>
+
+<div class="scene" id="sc-wall">
+  <img id="wallMap" src="shot_duku.png">
+  <div id="wallPins"></div>
+  <div id="wall"></div>
+</div>
+
+<div class="scene" id="sc-heat">
+  <img id="heatMap" src="shot_duku.png">
+  <div id="heatBlobs"></div>
+  <div class="heat-legend" id="heatLegend">足迹热力图</div>
+</div>
+
+<div class="scene" id="sc-gps"><div id="gps">
+  <svg width="1280" height="720">
+    <path id="gpspath" fill="none" stroke="#6E6E80" stroke-width="4"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div class="hint" id="gpsHint">导航记录</div>
+  <div class="stamps" id="stamps"></div>
+</div></div>
+
+<div class="scene" id="sc-logo"><div class="logo-wrap" id="logoWrap">
+  <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"/>
+      <circle cx="12" cy="10" r="3"/></svg></div>
+  <div class="logo-txt">旅行记忆</div>
+</div></div>
+
+<div class="scene" id="sc-phone"><div id="phone">
+  <div class="frame"><img id="phoneImg"><div class="notch"></div>
+    <div class="ro">只读分享 · 无需注册</div></div>
+  <div class="cap" id="phoneCap">对方打开就能看</div>
+</div></div>
+
+<div class="scene" id="sc-mcp">
+  <div class="term">
+    <div class="bar"><i style="left:16px;background:#FF5F57"></i>
+      <i style="left:34px;background:#FEBC2E"></i>
+      <i style="left:52px;background:#28C840"></i></div>
+    <div class="body">
+      <div class="q"><span style="color:#5E9BFF">›</span> <span id="mcpQ"></span><span id="mcpCur">▋</span></div>
+      <div style="height:22px"></div>
+      <div id="mcpTools"></div>
+      <div style="height:16px"></div>
+      <div class="ans" id="mcpAns"></div>
+    </div>
+  </div>
+  <div class="side"><img id="mcpMap"><div class="glow" id="mcpGlow"></div></div>
+</div>
+
+<div class="scene" id="sc-card"><div class="card">
+  <div class="grid"></div>
+  <svg id="cardSvg" width="1280" height="720" style="position:absolute;inset:0">
+    <path id="cardPath" fill="none" stroke="url(#cg)" stroke-width="4"
+          stroke-linecap="round" opacity=".5"/>
+    <defs><linearGradient id="cg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF8A3D"/><stop offset="1" stop-color="#FF3D71"/>
+    </linearGradient></defs>
+  </svg>
+  <div class="mid" id="cardMid"></div>
+</div></div>
+
+<div class="scene" id="sc-gh"><div id="gh"><div class="sheet" id="ghSheet">
+  <div class="repo">shihezichen / <b>travel-memory</b></div>
+  <div class="desc">把一趟旅行变成能重新走一遍的记忆 · 自托管 · MCP 就绪</div>
+  <div class="stats"><span>★ Star</span><span>⑂ Fork</span><span>● Python</span>
+    <span>MIT License</span></div>
+  <div id="ghRows"></div>
+  <div class="lic">MIT License —— 代码公开可查，可自行部署，数据在你自己手里</div>
+</div></div></div>
+
+<script>
+const R = (s => () => (s = s * 16807 % 2147483647) / 2147483647)(42);  // 定死种子，每次跑出来一样
+
+function hideMapLayer(){
+  document.getElementById('wallMap').style.opacity=0;
+  document.querySelectorAll('#wallPins .pin').forEach(d=>d.style.opacity=0);
+}
+function el(h){ const d=document.createElement('div'); d.innerHTML=h.trim(); return d.firstChild; }
+function show(id){ document.querySelectorAll('.scene').forEach(s=>s.classList.remove('on'));
+                   document.getElementById(id).classList.add('on'); }
+const lerp=(a,b,p)=>a+(b-a)*p;
+const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+// 每个元素错开一点出场，p 是总进度，i/n 决定它排第几个
+function stagger(p,i,n,span=0.5){ const st=(i/n)*(1-span); return clamp((p-st)/span); }
+const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+
+// ---- 照片墙：6 列 5 行铺满，位置和角度固定（种子随机）----
+const WALL=[];
+const PINS=[[858,264],[610,202],[543,329],[435,527]];
+// 落脚点热得最厉害，沿途轨迹淡一些 —— 跟真实热力图一个意思
+const HEAT=[[858,264,150],[610,202,140],[543,329,130],[435,527,140],
+            [735,232,84],[576,258,76],[492,420,80],[380,455,70],
+            [672,214,70],[560,300,66],[470,480,64],[900,280,80]];
+function buildWall(){
+  const pc=document.getElementById('wallPins'); pc.innerHTML='';
+  PINS.forEach((t,i)=>{ const d=el('<div class="pin"></div>');
+    d.style.left=(t[0]-17)+'px'; d.style.top=(t[1]-17)+'px'; pc.appendChild(d); });
+  const w=document.getElementById('wall'); w.innerHTML='';
+  const COLS=7, ROWS=5, cw=1280/COLS, ch=720/ROWS;
+  let k=0;
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const P=window.PHOTOS||[]; const src=P[k%P.length]; k++;
+    const jx=(R()-.5)*26, jy=(R()-.5)*22, rot=(R()-.5)*7;
+    const d=el(`<div class="ph"><img src="${src}"></div>`);
+    const bw=cw*1.04, bh=ch*1.04;
+    Object.assign(d.style,{left:(c*cw+jx)+'px',top:(r*ch+jy)+'px',
+                           width:bw+'px',height:bh+'px'});
+    w.appendChild(d);
+    // 爆开方向：从画面中心往外推
+    const dx=(c*cw+cw/2-640)/640, dy=(r*ch+ch/2-360)/360;
+    WALL.push({d,rot,dx,dy,i:WALL.length});
+  }
+}
+
+// ---- GPS 折线：一条随手画的轨迹，看着像导航记录 ----
+const GPSD='M 150 560 L 232 508 L 291 520 L 372 450 L 455 470 L 512 398 L 604 372 '+
+           'L 668 300 L 742 318 L 806 252 L 884 240 L 946 186 L 1030 168';
+const STAMPS=['08:12  31.2306, 121.4737','09:47  31.1841, 121.5015',
+              '11:03  30.9902, 121.6620','13:26  30.7412, 121.7788',
+              '15:51  30.5120, 121.8231','18:04  30.2874, 121.9006'];
+
+function buildHeat(){
+  const c=document.getElementById('heatBlobs'); c.innerHTML='';
+  HEAT.forEach(([x,y,r])=>{
+    const d=el('<i></i>');
+    Object.assign(d.style,{left:x+'px',top:y+'px',width:r*2+'px',height:r*2+'px',
+      background:'radial-gradient(circle,rgba(255,70,40,.92) 0%,'+
+                 'rgba(255,140,30,.72) 34%,rgba(255,215,60,.40) 62%,'+
+                 'rgba(255,240,140,0) 78%)'});
+    c.appendChild(d);
+  });
+}
+
+function buildGps(){
+  document.getElementById('gpspath').setAttribute('d',GPSD);
+  const s=document.getElementById('stamps'); s.innerHTML='';
+  STAMPS.forEach(t=>s.appendChild(el(`<div>${t}</div>`)));
+}
+
+const MCP_Q='我去年七月去了哪儿？';
+const MCP_TOOLS=[['list_trips','{ "year": 2025 }','2 个行程'],
+                 ['get_trip_points','{ "trip": "2025-独库公路" }','4 个落脚点'],
+                 ['get_point_media','{ "point": "那拉提" }','5 张照片']];
+const MCP_ANS='2025 年 7 月 12 日到 19 日，你走了独库公路：乌鲁木齐出发，'+
+              '经独山子、那拉提，最后到库车，全程 801.3 公里。';
+
+function buildMcp(){
+  const t=document.getElementById('mcpTools'); t.innerHTML='';
+  MCP_TOOLS.forEach(([n,a,r])=>t.appendChild(
+    el(`<div class="tool">✓ <b>${n}</b>(${a}) <span style="color:#6B6B7B">→ ${r}</span></div>`)));
+  document.getElementById('mcpMap').src = window.MAPSHOT||'';
+  document.getElementById('phoneImg').src = window.PHONESHOT||'';
+}
+
+function buildGh(){
+  const rows=[['app.py','主服务'],['db.py','数据层'],['mcp_http.py','MCP 接口'],
+              ['oss.py','对象存储'],['transcode.py','转码'],['static/','前端'],
+              ['tests/','测试'],['README.md','说明'],['LICENSE','MIT']];
+  const c=document.getElementById('ghRows'); c.innerHTML='';
+  rows.forEach(([a,b])=>c.appendChild(
+    el(`<div class="row"><span>📄 ${a}</span><span>${b}</span></div>`)));
+}
+
+// 片头卡背景那条生长的路线
+const CARDD='M -40 600 C 180 560 260 430 420 420 C 600 408 640 300 800 286 '+
+            'C 960 272 1080 200 1340 150';
+
+function buildCard(kind){
+  const m=document.getElementById('cardMid');
+  if(kind==='title'){
+    m.innerHTML='<h1>把一趟旅行，</h1><h1>变成<em>能重新走一遍</em>的记忆</h1>'+
+                '<p>真实路线 · 落脚点的照片与心情 · 一键回放那一天</p>';
+  }else{
+    m.innerHTML='<div class="dom">top001.xin</div><div class="tags">'+
+      '<span>一键体验，无需注册</span><span>代码公开</span><span>数据随时带走</span></div>';
+  }
+  const p=document.getElementById('cardPath');
+  p.setAttribute('d',CARDD);
+  p.style.strokeDasharray=p.getTotalLength();
+}
+
+// ============ 每个镜头怎么画 ============
+const SCENES = {
+  // 杂乱的照片墙，去饱和，整体极慢下移
+  wall_mess(p){
+    show('sc-wall'); hideMapLayer();
+    document.getElementById('wall').style.filter='grayscale(.72) brightness(.62) contrast(1.05)';
+    WALL.forEach(o=>{
+      o.d.style.transform=`translateY(${lerp(0,-34,p)}px) rotate(${o.rot}deg) scale(1)`;
+      o.d.style.opacity=1;
+    });
+  },
+  // 同一面墙从中心炸开，露出黑底
+  wall_burst(p){
+    show('sc-wall'); hideMapLayer();
+    const e=ease(p);
+    document.getElementById('wall').style.filter=
+      `grayscale(${lerp(.72,.9,e)}) brightness(${lerp(.62,.4,e)}) blur(${lerp(0,2.6,e)}px)`;
+    WALL.forEach(o=>{
+      const k=lerp(0,240,e);
+      o.d.style.transform=`translate(${o.dx*k}px,${o.dy*k-34}px) `+
+                          `rotate(${o.rot*(1+e*3)}deg) scale(${lerp(1,.86,e)})`;
+      o.d.style.opacity=lerp(1,.5,e);
+    });
+  },
+  // 去过的地方一块块亮起来
+  heat_on(p){
+    show('sc-heat');
+    const bs=document.querySelectorAll('#heatBlobs i');
+    bs.forEach((d,i)=>{
+      const k=ease(stagger(p,i,bs.length,.55));
+      d.style.opacity=k*.9;
+      d.style.transform=`translate(-50%,-50%) scale(${lerp(.35,1,k)})`;
+    });
+    document.getElementById('heatLegend').style.opacity=ease(clamp(p/.3));
+  },
+  // 全亮，热区连成一片
+  heat_out(p){
+    show('sc-heat');
+    const e=ease(p);
+    document.querySelectorAll('#heatBlobs i').forEach(d=>{
+      d.style.opacity=.9;
+      d.style.transform=`translate(-50%,-50%) scale(${lerp(1,1.22,e)})`;
+    });
+    document.getElementById('heatLegend').style.opacity=1;
+  },
+  // 黑底上孤零零一条灰折线，右边滚时间戳
+  gps_line(p){
+    show('sc-gps');
+    const path=document.getElementById('gpspath'), L=path.getTotalLength();
+    path.style.strokeDasharray=L;
+    path.style.strokeDashoffset=L*(1-ease(clamp(p/.8)));
+    const ds=document.querySelectorAll('#stamps div');
+    ds.forEach((d,i)=>{ d.style.opacity=stagger(p,i,ds.length,.42)*.85; });
+    document.getElementById('gpsHint').style.opacity=ease(clamp(p/.3))*.9;
+  },
+  // 照片和折线各在一边，越离越远
+  drift_apart(p){
+    show('sc-wall'); hideMapLayer();
+    const e=ease(p);
+    document.getElementById('wall').style.filter=
+      `grayscale(.92) brightness(${lerp(.4,.3,e)}) blur(${lerp(2.6,4,e)}px)`;
+    WALL.forEach(o=>{
+      const k=lerp(240,330,e);
+      o.d.style.transform=`translate(${o.dx*k}px,${o.dy*k-34}px) `+
+                          `rotate(${o.rot*4}deg) scale(${lerp(.86,.8,e)})`;
+      o.d.style.opacity=lerp(.5,.32,e);
+    });
+  },
+  // 全部沉下去，只剩几点微光
+  fade_dark(p){
+    show('sc-wall'); hideMapLayer();
+    const e=ease(p);
+    document.getElementById('wall').style.filter=
+      `grayscale(1) brightness(${lerp(.3,.03,e)}) blur(${lerp(4,11,e)}px)`;
+    WALL.forEach(o=>{
+      o.d.style.transform=`translate(${o.dx*330}px,${o.dy*330-34}px) `+
+                          `rotate(${o.rot*4}deg) scale(.8)`;
+      o.d.style.opacity=lerp(.32,0.04,e);
+    });
+  },
+  // 黑里浮出 logo，颜色回来
+  logo_in(p){
+    show('sc-logo');
+    const e=ease(clamp(p/.75));
+    const w=document.getElementById('logoWrap');
+    w.style.opacity=e;
+    w.style.transform=`scale(${lerp(.9,1,e)})`;
+  },
+  // 照片各自飞回地图，落成标记点
+  fly_to_map(p){
+    show('sc-wall');
+    const e=ease(p);
+    // 地图先浮上来，照片再往上落
+    document.getElementById('wallMap').style.opacity=clamp(e*2.2)*.96;
+    const w=document.getElementById('wall');
+    w.style.filter=`grayscale(${lerp(.9,0,clamp(e*1.6))}) brightness(${lerp(.55,1,e)})`;
+    WALL.forEach((o,i)=>{
+      const t=PINS[i%PINS.length];
+      const sx=o.dx*240, sy=o.dy*240-34;
+      const cx=parseFloat(o.d.style.left), cy=parseFloat(o.d.style.top);
+      const bw=parseFloat(o.d.style.width), bh=parseFloat(o.d.style.height);
+      const tx=t[0]-cx-bw/2, ty=t[1]-cy-bh/2;
+      const k=ease(stagger(e,o.i%16,16,.66));
+      o.d.style.transform=`translate(${lerp(sx,tx,k)}px,${lerp(sy,ty,k)}px) `+
+                          `rotate(${lerp(o.rot*3,0,k)}deg) scale(${lerp(.86,.06,k)})`;
+      o.d.style.opacity=lerp(.75,0,clamp((k-.68)/.32));
+    });
+    // 地图上本来就有编号标记，不再另画一套，只做一圈落点光晕
+    document.querySelectorAll('#wallPins .pin').forEach((d,i)=>{
+      const k=ease(clamp((e-.66-i*.06)/.26));
+      d.style.opacity=k*.9;
+      d.style.transform=`scale(${lerp(.4,2.1,k)})`;
+    });
+  },
+
+  // 手机里打开只读链接
+  phone_view(p){
+    show('sc-phone');
+    const e=ease(clamp(p/.5));
+    document.getElementById('phone').style.transform=
+      `translateY(${lerp(120,0,e)}px)`;
+    document.getElementById('phone').style.opacity=e;
+    document.querySelector('#phone .ro').style.opacity=stagger(p,1,2,.4);
+  },
+  // 提问逐字打出来
+  mcp_ask(p){
+    show('sc-mcp');
+    const n=Math.round(MCP_Q.length*clamp(p/.72));
+    document.getElementById('mcpQ').textContent=MCP_Q.slice(0,n);
+    document.getElementById('mcpCur').style.opacity=(Math.floor(p*9)%2)?.25:1;
+    document.querySelectorAll('.tool').forEach(t=>t.style.opacity=0);
+    document.getElementById('mcpAns').style.opacity=0;
+    document.getElementById('mcpGlow').style.opacity=0;
+  },
+  // 工具调用一条条出来
+  mcp_tools(p){
+    show('sc-mcp');
+    document.getElementById('mcpQ').textContent=MCP_Q;
+    document.getElementById('mcpCur').style.opacity=0;
+    const ts=document.querySelectorAll('.tool');
+    ts.forEach((t,i)=>{
+      const k=stagger(p,i,ts.length,.46);
+      t.style.opacity=k;
+      t.style.transform=`translateX(${lerp(-14,0,k)}px)`;
+    });
+    document.getElementById('mcpAns').style.opacity=0;
+    document.getElementById('mcpGlow').style.opacity=0;
+  },
+  // 回答出来，同时地图高亮
+  mcp_answer(p){
+    show('sc-mcp');
+    document.getElementById('mcpQ').textContent=MCP_Q;
+    document.getElementById('mcpCur').style.opacity=0;
+    document.querySelectorAll('.tool').forEach(t=>{t.style.opacity=1;t.style.transform='none';});
+    const a=document.getElementById('mcpAns');
+    const n=Math.round(MCP_ANS.length*clamp(p/.66));
+    a.textContent=MCP_ANS.slice(0,n);
+    a.style.opacity=1;
+    document.getElementById('mcpGlow').style.opacity=clamp((p-.25)/.4)*.95;
+  },
+  logo_out(p){
+    show('sc-logo');
+    const w=document.getElementById('logoWrap');
+    w.style.opacity=ease(clamp(p/.5));
+    w.style.transform='scale(1)';
+  },
+  // GitHub 仓库页，缓慢下移
+  github(p){
+    show('sc-gh');
+    document.getElementById('ghSheet').style.transform=`translateY(${lerp(0,-46,p)}px)`;
+  },
+  card_title(p){
+    show('sc-card'); buildCard('title');
+    const path=document.getElementById('cardPath'), L=path.getTotalLength();
+    path.style.strokeDashoffset=L*(1-ease(clamp(p/.9)));
+    const m=document.getElementById('cardMid');
+    m.style.opacity=ease(clamp((p-.12)/.5));
+    m.style.transform=`translateY(${lerp(16,0,ease(clamp((p-.12)/.5)))}px)`;
+  },
+  card_end(p){
+    show('sc-card'); buildCard('end');
+    const path=document.getElementById('cardPath'), L=path.getTotalLength();
+    path.style.strokeDashoffset=L*(1-ease(clamp(p/.7)));
+    const m=document.getElementById('cardMid');
+    m.style.opacity=ease(clamp(p/.3));
+    const tg=document.querySelectorAll('.card .tags span');
+    tg.forEach((s,i)=>{ const k=stagger(clamp((p-.18)/.7),i,tg.length,.5);
+                        s.style.opacity=k;
+                        s.style.transform=`translateY(${lerp(10,0,k)}px)`; });
+  },
+};
+
+window.PROMO_READY=false;
+window.initSynth=function(){
+  buildWall(); buildGps(); buildMcp(); buildGh(); buildHeat();
+  window.PROMO_READY=true;
+};
+window.renderShot=function(name,p){ SCENES[name](p); };
+</script>

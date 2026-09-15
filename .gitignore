@@ -76,3 +76,7 @@ TRAVEL-MEMORY-HANDOFF.md
 
 # ossutil（媒体同步到对象存储）的运行日志，机器本地产物
 ossutil_output/
+
+# 宣传片的预览副本：挂在 static/ 下只是为了能用浏览器点开看，成片发布走 OSS。
+# 里面有 8MB 的 mp4，不该进库；文本那几份在 scripts/ 下有入库的正本。
+static/promo/
