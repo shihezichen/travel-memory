@@ -309,6 +309,15 @@ def init_db():
     if "elevation" not in point_cols:
         # 海拔（米）。外部高程服务按需回填一次后就缓存在这里，NULL = 还没查过
         conn.execute("ALTER TABLE points ADD COLUMN elevation REAL")
+    if "route_json" not in point_cols:
+        # 这一点「到下一点」定下来的那条路线，JSON：{path, distance, time, label, roadRuns}。
+        # NULL = 没定过，每次加载现去规划。
+        #
+        # 为什么要存：高德是按「此刻能不能走」规划的，同一段路今天给 328 公里、
+        # 明天给 1361 公里（独库公路十月到五月封山），刷新一次线就换个样子。
+        # 而这里记的是已经走过的路，不该随规划结果漂移。用户在「选择路线方案」里
+        # 挑定哪条，就把哪条存下来。
+        conn.execute("ALTER TABLE points ADD COLUMN route_json TEXT")
     # 兼容旧库：media 若无 caption 列则补上（每张照片/视频的一段文字描述）
     media_cols = [r["name"] for r in conn.execute("PRAGMA table_info(media)")]
     if "caption" not in media_cols:
@@ -949,6 +958,13 @@ def update_point(point_id, name, lat, lng, start_date, end_date, description="",
     )
     conn.commit()
     conn.close()
+
+
+def set_point_route(point_id, route_json):
+    """存/清这一点到下一点定下来的路线。传 None 表示清掉，回到每次现规划。"""
+    with get_conn() as conn:
+        conn.execute("UPDATE points SET route_json=? WHERE id=?",
+                     (route_json, point_id))
 
 
 def set_point_route_mode(point_id, route_mode):

@@ -741,10 +741,25 @@ function shareDriveOnce(policy, from, to) {
 
 // 串行规划相邻点最快驾车路线（只读页不弹选择，直接取最快）
 // 规划单段：驾车（国内高德 / 海外 OSRM 兜底）或直线；返回 { path, distance }
+// 这一点上定下来的路线（主页面「选择路线方案」挑过的）。没定过返回 null。
+// 只读页必须认这个，否则同一条行程，作者看到的和访客看到的是两条不同的线。
+function shareSavedRouteOf(p) {
+  if (!p || !p.route_json) return null;
+  try {
+    const r = typeof p.route_json === 'string' ? JSON.parse(p.route_json) : p.route_json;
+    return (r && r.path && r.path.length >= 2) ? r : null;
+  } catch (e) { return null; }
+}
+
 async function planSegment(a, b) {
   const mode = a.route_mode || 'drive';
   if (mode !== 'drive' || distKm(a, b) <= 1) {
     return { path: [[a.lng, a.lat], [b.lng, b.lat]], roadRuns: [], distance: distKm(a, b) * 1000 };
+  }
+  const saved = shareSavedRouteOf(a);
+  if (saved) {
+    return { path: saved.path, roadRuns: saved.roadRuns || [],
+             distance: saved.distance || 0 };
   }
   let seg = null;
   if (isInChina(a.lng, a.lat) && isInChina(b.lng, b.lat)) {

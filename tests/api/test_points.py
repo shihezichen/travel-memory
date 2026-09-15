@@ -116,3 +116,48 @@ def test_elevation_on_trip_without_points(auth_client):
     tid = auth_client.post("/api/trips", data={"name": "空行程"}).json()["id"]
     assert auth_client.post(f"/api/trips/{tid}/elevation").json() == \
         {"filled": 0, "elevations": {}}
+
+
+def test_point_route_persists_and_clears(auth_client, seeded_trip):
+    """挑定的路线要存得住 —— 原来只改内存，选完看着生效，刷新就回到默认那条。"""
+    import json as _json
+    trip_id, pid = seeded_trip["trip_id"], seeded_trip["point_ids"][0]
+    route = {"path": [[84.15, 43.31], [83.5, 42.5], [82.96, 41.71]],
+             "distance": 330699.0, "time": 9780.0, "label": "最短",
+             "roadRuns": [{"code": "G217", "meters": 293049, "lng": 83.5, "lat": 42.5}]}
+    r = auth_client.put(f"/api/points/{pid}/route", data={"route": _json.dumps(route)})
+    assert r.status_code == 200 and r.json()["points"] == 3
+
+    pts = auth_client.get(f"/api/trips/{trip_id}/points").json()
+    saved = _json.loads([p for p in pts if p["id"] == pid][0]["route_json"])
+    assert saved["distance"] == 330699.0
+    assert saved["roadRuns"][0]["code"] == "G217"
+
+    # 传空串 = 恢复成每次现规划
+    assert auth_client.put(f"/api/points/{pid}/route", data={"route": ""}).status_code == 200
+    pts = auth_client.get(f"/api/trips/{trip_id}/points").json()
+    assert [p for p in pts if p["id"] == pid][0]["route_json"] is None
+
+
+def test_point_route_rejects_junk(auth_client, seeded_trip):
+    """坏数据挡在门外，别把没法画的东西存进库。"""
+    trip_id, pid = seeded_trip["trip_id"], seeded_trip["point_ids"][0]
+    assert auth_client.put(f"/api/points/{pid}/route", data={"route": "不是 JSON"}).status_code == 400
+    assert auth_client.put(f"/api/points/{pid}/route",
+                      data={"route": '{"path": [[1,2]]}'}).status_code == 400
+
+
+def test_point_route_path_is_capped(auth_client, seeded_trip):
+    """几千个点的路线要抽稀 —— 原样存一段几百公里的路要几百 KB，
+    而画在地图上跟抽稀到两千点看不出区别。首尾必须保住。"""
+    import json as _json
+    from app import ROUTE_PATH_MAX_PTS
+    trip_id, pid = seeded_trip["trip_id"], seeded_trip["point_ids"][0]
+    path = [[80 + i * 0.001, 40.0] for i in range(5000)]
+    r = auth_client.put(f"/api/points/{pid}/route",
+                   data={"route": _json.dumps({"path": path, "distance": 1.0})})
+    assert r.json()["points"] == ROUTE_PATH_MAX_PTS
+    pts = auth_client.get(f"/api/trips/{trip_id}/points").json()
+    saved = _json.loads([p for p in pts if p["id"] == pid][0]["route_json"])
+    assert saved["path"][0] == [80.0, 40.0]
+    assert saved["path"][-1] == [80 + 4999 * 0.001, 40.0]

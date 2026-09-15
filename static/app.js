@@ -1464,6 +1464,25 @@ async function betterRoadRuns(a, b, amap) {
   return theirs > mine ? alt.runs : amap.roadRuns;
 }
 
+// 按实际结果贴标签，而不是沿用请求时用的策略名。
+// 高德的「最快」是 LEAST_TIME 这个**请求参数**，不是结果 —— 独山子→那拉提
+// 那一段，标着「最快」的方案要 395 分钟，而另一条 163 分钟就到，看着像在胡说。
+function relabelChoices(choices) {
+  if (!choices || choices.length < 2) return choices || [];
+  let fast = 0, short = 0;
+  choices.forEach((c, i) => {
+    if ((c.time || Infinity) < (choices[fast].time || Infinity)) fast = i;
+    if ((c.distance || Infinity) < (choices[short].distance || Infinity)) short = i;
+  });
+  choices.forEach((c, i) => {
+    const tags = [];
+    if (i === fast) tags.push('最快');
+    if (i === short) tags.push('最短');
+    c.label = tags.join(' · ');      // 两头都不占的那条不贴标签，只报里程和时间
+  });
+  return choices;
+}
+
 // 高德那几条都绕远了的话，补一条 OSRM 的进备选，并把它排到最前当默认。
 // 不是无条件补：绝大多数段高德规划得挺好，白白多发一次请求不值当。
 async function withShorterAlternative(a, b, choices) {
@@ -1479,10 +1498,29 @@ async function withShorterAlternative(a, b, choices) {
 }
 
 // 规划单段（第 i 段：points[i] → points[i+1]）的驾车/直线路线，返回段信息
+// 这一点上定下来的路线（用户在「选择路线方案」里挑过的）。没定过返回 null。
+function savedRouteOf(p) {
+  if (!p || !p.route_json) return null;
+  try {
+    const r = typeof p.route_json === 'string' ? JSON.parse(p.route_json) : p.route_json;
+    return (r && r.path && r.path.length >= 2) ? r : null;
+  } catch (e) { return null; }
+}
+
 async function planOneSegment(i, a, b) {
   const mode = a.route_mode || 'drive';
   let choices = [];
   let seg = null;
+  // 定过就直接用，不再去规划。高德按「此刻能不能走」给结果，同一段路今天 328
+  // 公里明天 1361 公里（独库公路十月到五月封山），每次加载都重算的话，用户挑定
+  // 的那条线一刷新就没了。
+  const saved = mode === 'drive' ? savedRouteOf(a) : null;
+  if (saved) {
+    const pick = { label: saved.label || '已选定', path: saved.path,
+                   time: saved.time || 0, distance: saved.distance || 0,
+                   roadRuns: saved.roadRuns || [] };
+    return { i, from: a, to: b, mode, choices: [pick], path: saved.path, picked: pick };
+  }
   if (mode === 'drive' && distKm(a, b) > 1) { // 直线段或短于 1km 直接直线，省请求
     const inCN = isInChina(a.lng, a.lat) && isInChina(b.lng, b.lat);
     if (inCN) {
@@ -1494,7 +1532,7 @@ async function planOneSegment(i, a, b) {
       // 高德只按「此刻能不能走」规划，碰上季节性封闭的路（独库公路十月到五月封山）
       // 就给一条绕大半个新疆的方案：那拉提→库车直线 203 公里，它规划 1361 公里，
       // 三种策略给的全是绕行，连个能换的都没有。
-      choices = await withShorterAlternative(a, b, choices);
+      choices = relabelChoices(await withShorterAlternative(a, b, choices));
       // seg 要在补完备选之后再取：补进来的那条排在最前，它才是默认展示的
       if (choices.length) seg = choices[0].path;
       // 高德对编号的识别不全时换成 OSRM 的。只处理默认展示的那条 ——
@@ -1776,6 +1814,35 @@ function redrawSegment(i, path, choice) {
   }
   // 换了路线，中点、里程、公路编号全变了，标签得重建
   renderSegLabels();
+  // 挑定的方案要存下来，否则一刷新就被重新规划的结果顶掉 —— 这个功能原来
+  // 只改内存，选完看着是生效的，切个行程回来又变回默认那条。
+  saveSegmentRoute(i, choice);
+}
+
+// 把第 i 段挑定的路线存到这一段的起点上。choice 为空表示恢复成每次现规划。
+async function saveSegmentRoute(i, choice) {
+  const from = lastPoints && lastPoints[i];
+  if (!from || !from.id) return;
+  const body = new FormData();
+  if (choice && choice.path && choice.path.length >= 2) {
+    body.append('route', JSON.stringify({
+      path: choice.path, distance: choice.distance || 0, time: choice.time || 0,
+      label: choice.label || '', roadRuns: choice.roadRuns || [],
+    }));
+    from.route_json = JSON.stringify({
+      path: choice.path, distance: choice.distance || 0, time: choice.time || 0,
+      label: choice.label || '', roadRuns: choice.roadRuns || [],
+    });
+  } else {
+    body.append('route', '');
+    from.route_json = null;
+  }
+  try {
+    await api(`/api/points/${from.id}/route`, { method: 'PUT', body });
+  } catch (e) {
+    // 存不上不该打断操作：这一次的选择在内存里是生效的，只是刷新后会回到默认
+    tmAlert('路线没能保存：' + e.message);
+  }
 }
 
 // ---------- 详情 ----------

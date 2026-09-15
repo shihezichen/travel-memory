@@ -136,6 +136,10 @@ PUBLIC_PATHS = ("/", "/app", "/welcome",
 
 # 上传大小上限。原来一个上限都没有：raw = file.read() 是把整个文件读进内存，
 # 一个 200MB 的视频就是 200MB RSS 峰值，并发几个就能把进程打到 OOM。
+# 定下来的路线最多存这么多点。一段几百公里的高德路线有几千个点、原样存要几百 KB，
+# 而画在地图上跟抽稀到两千点看不出区别。
+ROUTE_PATH_MAX_PTS = 2000
+
 MAX_UPLOAD_PHOTO = int(os.environ.get("TRAVEL_MAX_UPLOAD_PHOTO_MB", "30")) * 1024 * 1024
 MAX_UPLOAD_VIDEO = int(os.environ.get("TRAVEL_MAX_UPLOAD_VIDEO_MB", "200")) * 1024 * 1024
 # 浏览器自己抽的那张缩略图的上限。512px 的 JPEG 撑死一两百 KB，2MB 已经很宽松了。
@@ -1050,6 +1054,44 @@ def api_set_point_route_mode(request: Request, point_id: int, route_mode: str = 
     mode = route_mode if route_mode in ("drive", "line") else "drive"
     db.set_point_route_mode(point_id, mode)
     return {"ok": True, "route_mode": mode}
+
+
+@app.put("/api/points/{point_id}/route")
+def api_set_point_route(request: Request, point_id: int, route: str = Form("")):
+    """定下这一点「到下一点」走哪条路线；传空串表示清掉、回到每次现规划。
+
+    存的是 {path, distance, time, label, roadRuns} 的 JSON。为什么要存见 db.py 里
+    route_json 那段注释 —— 一句话：高德按「此刻能不能走」规划，同一段路今天给
+    328 公里明天给 1361 公里，而这里记的是已经走过的路。
+
+    路线点数在这里封顶。一段几百公里的路原样存能到几百 KB，而画在地图上根本
+    看不出区别；超了就等距抽稀。
+    """
+    require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")
+    raw = (route or "").strip()
+    if not raw:
+        db.set_point_route(point_id, None)
+        return {"ok": True, "route": None}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        raise HTTPException(400, "route 不是合法 JSON")
+    path = data.get("path") or []
+    if not isinstance(path, list) or len(path) < 2:
+        raise HTTPException(400, "route.path 至少要有两个点")
+    if len(path) > ROUTE_PATH_MAX_PTS:
+        k = (len(path) - 1) / (ROUTE_PATH_MAX_PTS - 1)
+        path = [path[min(len(path) - 1, int(round(i * k)))]
+                for i in range(ROUTE_PATH_MAX_PTS)]
+    kept = {
+        "path": [[float(c[0]), float(c[1])] for c in path if len(c) >= 2],
+        "distance": float(data.get("distance") or 0),
+        "time": float(data.get("time") or 0),
+        "label": str(data.get("label") or "")[:20],
+        "roadRuns": (data.get("roadRuns") or [])[:8],
+    }
+    db.set_point_route(point_id, json.dumps(kept, ensure_ascii=False))
+    return {"ok": True, "points": len(kept["path"])}
 
 
 @app.post("/api/trips/{trip_id}/points/reorder")
