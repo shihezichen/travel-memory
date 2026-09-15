@@ -10,9 +10,14 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 
+from .memory import mask_theme_noise
+
 # 地点类型关键词（规则档，粗略判断主题倾向；命中点数越多越可信）
+# 「海边」只收复合词：单字「海」会被海拔/海子/洱海带偏，单字「滨」会命中哈尔滨。
+# 详见 memory.py 的 _THEME_NOISE。
 THEME_KEYWORDS = {
-    "海边": ["海", "滩", "滨", "岛", "港", "渔", "湾", "沙滩", "码头", "海风"],
+    "海边": ["海边", "海滩", "海岸", "海湾", "海岛", "大海", "看海", "滨海", "海景",
+            "沙滩", "岛", "港", "渔", "码头", "海风"],
     "山地": ["山", "峰", "岭", "谷", "峡", "高原", "雪山", "徒步", "登"],
     "古城古镇": ["古城", "古镇", "老城", "旧城", "胡同", "老街", "遗址", "城墙", "古"],
     "人文博物": ["博物馆", "美术馆", "教堂", "寺", "庙", "宫", "殿", "塔", "剧院", "图书馆", "城堡"],
@@ -51,7 +56,7 @@ def _year_of(date_str) -> int | None:
 
 
 def _theme_of(name: str, description: str = "") -> str | None:
-    text = f"{name or ''} {description or ''}"
+    text = mask_theme_noise(f"{name or ''} {description or ''}")
     for theme, kws in THEME_KEYWORDS.items():
         for kw in kws:
             if kw in text:

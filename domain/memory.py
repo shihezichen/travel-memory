@@ -8,9 +8,29 @@ from __future__ import annotations
 import db
 from .schemas import gcj02_to_wgs84, TripMemory, MemorySummary, TimelineItem
 
+# 「海 / 湾 / 滨」这几个字在内陆地名里太常见了，直接拿单字当关键词会把高原
+# 行程打成「海边」——滇西北那趟就是这么中招的：丽江的描述里写了「先适应海拔」，
+# 一个「海」字就够了。同类的还有海子（高原湖）、洱海、青海、金沙江第一湾。
+# 这些词里没有海，匹配前先抹掉；真正的海只认「海边/海滩/海岸…」这类复合词。
+_THEME_NOISE = (
+    "海拔", "海子", "洱海", "青海", "中南海", "云海", "花海", "人海", "脑海",
+    "林海", "火海", "苦海", "海鲜", "海关", "第一湾", "江湾", "河湾", "港澳",
+)
+
+
+def mask_theme_noise(text: str) -> str:
+    """抹掉「含海字但跟海无关」的词，供所有规则档主题匹配复用。"""
+    t = text or ""
+    for w in _THEME_NOISE:
+        t = t.replace(w, "")
+    return t
+
+
 # 浅层主题词表（规则抽取，非 LLM）：按关键词命中点名称/描述
+# 注意：别往「海边」里塞单字。见上面 _THEME_NOISE 的说明。
 _THEME_KEYWORDS = {
-    "海边": ["海", "滩", "湾", "岛", "码头", "港", "beach", "bay", "coast", "island"],
+    "海边": ["海边", "海滩", "海岸", "海湾", "海岛", "大海", "看海", "滨海", "海景",
+            "沙滩", "湾", "岛", "码头", "港", "beach", "bay", "coast", "island"],
     "古城": ["古城", "老城", "城堡", "宫", "教堂", "寺", "庙", "castle", "palace", "cathedral"],
     "美食": ["餐厅", "美食", "小吃", "夜市", "咖啡", "酒", "restaurant", "food", "cafe"],
     "日落": ["日落", "夕阳", "黄昏", "sunset"],
@@ -67,8 +87,8 @@ def build_memory(trip_id: int) -> dict:
             route_mode=p.get("route_mode", "drive"),
         ).model_dump())
 
-        # 主题抽取：点名称 + 描述
-        text = f"{p['name']} {p['description'] or ''}".lower()
+        # 主题抽取：点名称 + 描述（先过噪声掩码，否则「海拔」会命中「海边」）
+        text = mask_theme_noise(f"{p['name']} {p['description'] or ''}").lower()
         for theme, kws in _THEME_KEYWORDS.items():
             if any(k.lower() in text for k in kws):
                 themes_hit.add(theme)

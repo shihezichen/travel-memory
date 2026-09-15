@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 
 import db
-from .memory import _THEME_KEYWORDS, _CITY_THEMES
+from .memory import _THEME_KEYWORDS, _CITY_THEMES, mask_theme_noise
 from .schemas import gcj02_to_wgs84
 from .labels import LANDMARK_CITY, label_point_city, _CITY_TO_THEME
 
@@ -30,7 +30,7 @@ _STOPWORDS = {
 
 def _themes_for_text(text: str) -> set[str]:
     """给一段文本打主题标签（复用 memory.py 的词典，规则抽取）。"""
-    t = (text or "").lower()
+    t = mask_theme_noise(text).lower()
     themes = set()
     for theme, kws in _THEME_KEYWORDS.items():
         if any(k.lower() in t for k in kws):
@@ -43,7 +43,7 @@ def _themes_for_text(text: str) -> set[str]:
 
 def _query_signals(query: str):
     """从自然语言 query 提取召回信号：命中的主题词 + 城市地标 + 有效子串。"""
-    q = (query or "").lower()
+    q = mask_theme_noise(query).lower()
     hit_themes = {t for t, kws in _THEME_KEYWORDS.items()
                   if any(k.lower() in q for k in kws)}
     hit_cities = set()
