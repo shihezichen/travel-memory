@@ -73,6 +73,12 @@ PLAN = [
                       "Unsplash highland lake"]),
     ("deqin", 3, ["Unsplash snow mountain", "Unsplash himalaya", "Unsplash mountain sunrise",
                   "Unsplash glacier peak"]),
+    ("yubeng", 3, ["Unsplash mountain village", "Unsplash himalaya village",
+                   "Unsplash alpine hiking trail", "Unsplash mountain hut"]),
+    ("benzilan", 3, ["Unsplash river bend", "Unsplash river canyon", "Unsplash mountain river",
+                     "Unsplash valley river"]),
+    ("hutiaoxia", 3, ["Unsplash gorge river", "Unsplash river rapids", "Unsplash deep canyon",
+                      "Unsplash cliff river"]),
 ]
 
 # 视频：Commons 上自由授权的片段基本是 webm/ogv，浏览器兼容性参差，
@@ -82,6 +88,8 @@ VIDEO_PLAN = [
                     "waterfall nature"]),
     ("nalati_clip", ["grassland wind", "meadow nature", "clouds timelapse",
                      "mountain landscape video"]),
+    ("hutiaoxia_clip", ["river rapids", "mountain river", "river flowing",
+                        "waterfall nature"]),
 ]
 
 # 标题里出现这些词的基本不是照片：航图、线路图、书封面、徽章、扫描件……
