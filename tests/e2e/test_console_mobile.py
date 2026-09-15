@@ -280,25 +280,78 @@ def test_duplicate_name_keeps_the_dialog_open(mobile_page):
     mobile_page.wait_until("document.querySelectorAll('#keys-cards .item').length === 2")
 
 
-def test_agent_prompt_opens_from_each_key_card(mobile_page):
+def _open_prompt(page, name, password=None):
+    """点开某个 Key 的「Agent 接入」；给了密码就一并验过去。"""
+    cards = page.eval(
+        "Array.from(document.querySelectorAll('#keys-cards .item'))"
+        ".map(c => c.querySelector('.t').textContent)")
+    idx = cards.index(name)
+    page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn")
+    page.wait_for("#prompt-modal.show")
+    if password is not None:
+        page.fill("#prompt-pw", password)
+        page.click("#btn-reveal")
+        page.wait_until("document.getElementById('prompt-reveal').style.display !== 'none'")
+
+
+def test_prompt_needs_password_before_showing_the_key(mobile_page, e2e_user):
+    """提示词里带的是能直接读写旅行数据的完整 Key，不能谁打开页面就抄走。"""
+    _make_key(mobile_page, "要密码的 Key", ["sc-read"])
+    _open_prompt(mobile_page, "要密码的 Key")
+
+    # 第一步只有密码框，提示词还没出来
+    assert mobile_page.visible("#prompt-gate")
+    assert not mobile_page.visible("#prompt-reveal")
+    assert mobile_page.text("#prompt-modal-box").strip() == ""
+
+    # 密码错了：不放行，也不泄露任何东西
+    mobile_page.fill("#prompt-pw", "错的密码")
+    mobile_page.click("#btn-reveal")
+    mobile_page.wait_for("#toast.show")
+    assert not mobile_page.visible("#prompt-reveal")
+    assert mobile_page.text("#prompt-modal-box").strip() == ""
+
+    # 密码对了：拿到能直接用的完整 Key
+    mobile_page.fill("#prompt-pw", e2e_user["password"])
+    mobile_page.click("#btn-reveal")
+    mobile_page.wait_until(
+        "document.getElementById('prompt-reveal').style.display !== 'none'")
+    assert "仅生成时可见" not in mobile_page.text("#prompt-modal-box")   # 占位符不能再出现
+    # 里面是一把完整的 Key，不是截断的前缀
+    assert mobile_page.eval(
+        "/tm_[A-Za-z0-9_-]{40,}/.test("
+        "document.getElementById('prompt-modal-box').textContent)")
+
+
+def test_prompt_is_wiped_when_the_dialog_closes(mobile_page, e2e_user):
+    """关掉就把明文从 DOM 里抹掉，下次打开重新验密码。"""
+    _make_key(mobile_page, "抹掉 Key", ["sc-read"])
+    _open_prompt(mobile_page, "抹掉 Key", e2e_user["password"])
+    assert mobile_page.eval(
+        "/tm_[A-Za-z0-9_-]{40,}/.test("
+        "document.getElementById('prompt-modal-box').textContent)")
+
+    mobile_page.eval("closePromptModal()")
+    assert mobile_page.eval(
+        "document.getElementById('prompt-modal-box').textContent") == ""
+
+    _open_prompt(mobile_page, "抹掉 Key")       # 不给密码
+    assert mobile_page.visible("#prompt-gate")
+    assert not mobile_page.visible("#prompt-reveal")
+
+
+def test_agent_prompt_opens_from_each_key_card(mobile_page, e2e_user):
     """提示词改成每个 Key 卡片上的按钮 —— 弹出的那份必须是这个 Key 的。"""
     _make_key(mobile_page, "只读 Key", ["sc-read"])
     _make_key(mobile_page, "读写 Key", ["sc-write"])
 
-    cards = mobile_page.eval(
-        "Array.from(document.querySelectorAll('#keys-cards .item'))"
-        ".map(c => c.querySelector('.t').textContent)")
-    idx = cards.index("只读 Key")
-    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn")
-    mobile_page.wait_for("#prompt-modal.show")
+    _open_prompt(mobile_page, "只读 Key", e2e_user["password"])
     assert "只读 Key" in mobile_page.text("#prompt-modal-sub")
     body = mobile_page.text("#prompt-modal-box")
     assert "没有 write 权限" in body and "创建 / 修改 / 删除" not in body
 
     mobile_page.eval("closePromptModal()")
-    idx = cards.index("读写 Key")
-    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn")
-    mobile_page.wait_for("#prompt-modal.show")
+    _open_prompt(mobile_page, "读写 Key", e2e_user["password"])
     assert "读写 Key" in mobile_page.text("#prompt-modal-sub")
     assert "创建 / 修改 / 删除" in mobile_page.text("#prompt-modal-box")
 
@@ -392,6 +445,28 @@ def desktop_page(browser, live_server, e2e_user):
     pg.wait_until("document.getElementById('who').textContent !== '…'")
     yield pg
     pg.close()
+
+
+def test_desktop_prompt_also_goes_through_the_password_gate(desktop_page, e2e_user):
+    """宽屏不再在页面上常驻一份提示词（里面含完整 Key），走同一个弹窗。"""
+    desktop_page.fill("#key-name", "宽屏 Key")
+    desktop_page.click("#btn-create")
+    desktop_page.wait_for("#key-modal.show")
+    desktop_page.eval("closeModal()")
+    desktop_page.wait_until("document.querySelectorAll('#prompt-key option').length > 0")
+
+    assert desktop_page.count("#prompt-box") == 0          # 常驻的提示词块没了
+    desktop_page.click("#btn-copy-prompt")
+    desktop_page.wait_for("#prompt-modal.show")
+    assert desktop_page.visible("#prompt-gate")
+
+    desktop_page.fill("#prompt-pw", e2e_user["password"])
+    desktop_page.click("#btn-reveal")
+    desktop_page.wait_until(
+        "document.getElementById('prompt-reveal').style.display !== 'none'")
+    assert desktop_page.eval(
+        "/tm_[A-Za-z0-9_-]{40,}/.test("
+        "document.getElementById('prompt-modal-box').textContent)")
 
 
 def test_desktop_keeps_inline_form_table_and_prompt_section(desktop_page):

@@ -250,8 +250,8 @@
       <div class="card pad" id="create-host">
        <div id="create-fields">
         <div class="field">
-          <label>Key 名称（备注用途，如「爱马仕总控」）</label>
-          <input id="key-name" type="text" placeholder="例如：Cursor 接入 / 爱马仕总控">
+          <label>Key 名称（备注用途，如「OpenClaw」）</label>
+          <input id="key-name" type="text" placeholder="例如：Cursor 接入 / OpenClaw">
         </div>
         <label style="font-size:12px;color:var(--muted)">权限范围（scope）</label>
         <div class="scope-row">
@@ -287,19 +287,19 @@
       <h2>Agent 接入</h2>
       <div class="card pad">
         <p class="muted" style="font-size:13px;margin-bottom:6px">
-          把下面的提示词整段复制发给你的 Agent（爱马仕总控 / Claude / Cursor / 自研 Agent 等），
+          提示词整段复制发给你的 Agent（OpenClaw / Claude / Cursor / 自研 Agent 等），
           它会自动通过 MCP 协议接入你的旅行记忆。选择要授权的 Key：
         </p>
         <div class="prompt-head">
           <div class="sel">
             <span>使用 Key：</span>
-            <select id="prompt-key" onchange="updatePrompt()">
+            <select id="prompt-key">
               <option value="">（暂无 Key，请先在上方创建）</option>
             </select>
           </div>
-          <button class="btn primary" id="btn-copy-prompt" onclick="copyPrompt()">📋 复制提示词</button>
+          <!-- 不在页面上常驻一份提示词：里面含完整 Key，走跟手机端同一个「先验密码」的弹窗 -->
+          <button class="btn primary" id="btn-copy-prompt" onclick="openPromptForSelected()">获取接入提示词</button>
         </div>
-        <div class="prompt-box" id="prompt-box">创建 API Key 后，这里会自动生成可直接发给 Agent 的接入提示词。</div>
       </div>
     </section>
   </div>
@@ -357,10 +357,31 @@
   <div class="box">
     <h3>Agent 接入</h3>
     <p class="muted" style="font-size:12.5px;margin-bottom:8px" id="prompt-modal-sub"></p>
-    <div class="prompt-box" id="prompt-modal-box"></div>
-    <div class="actions">
-      <button class="btn primary" onclick="copyPromptModalBox()">📋 复制提示词</button>
-      <button class="btn" onclick="closePromptModal()">关闭</button>
+
+    <!-- 第一步：验密码。提示词里带的是能直接读写你旅行数据的完整 Key，
+         不该谁打开这个页面就能抄走。 -->
+    <div id="prompt-gate">
+      <p class="muted" style="font-size:12.5px;margin-bottom:10px">
+        提示词里含完整 API Key，输入你的登录密码后显示。
+      </p>
+      <div class="field">
+        <label>登录密码</label>
+        <input id="prompt-pw" type="password" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')revealPrompt()">
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="btn-reveal" onclick="revealPrompt()">显示提示词</button>
+        <button class="btn" onclick="closePromptModal()">取消</button>
+      </div>
+    </div>
+
+    <!-- 第二步：真提示词 -->
+    <div id="prompt-reveal" style="display:none">
+      <div class="prompt-box" id="prompt-modal-box"></div>
+      <div class="actions">
+        <button class="btn primary" onclick="copyPromptModalBox()">📋 复制提示词</button>
+        <button class="btn" onclick="closePromptModal()">关闭</button>
+      </div>
     </div>
   </div>
 </div>
@@ -396,8 +417,6 @@
 const $ = id => document.getElementById(id);
 let isAdmin = false;
 let keysCache = [];
-/* 刚创建的 key 的 raw 值（仅本次会话内存暂存，用于自动生成完整提示词，刷新即失） */
-let pendingRaw = null;
 
 function toast(msg, err) {
   const t = $('toast');
@@ -474,19 +493,10 @@ ${caps || '- （该 Key 未授予任何可用能力）'}${limitBlock}
 3. 回答我的问题时基于真实数据，不要编造`;
 };
 
-/* 真实提示词（含完整 key）。key 只在生成弹窗 / 创建后暂存期可见。 */
+/* 刚创建那一刻的提示词 —— 这时 raw key 就在手上，不用再验一次密码。
+   之后想再看，走 /reveal（见 revealPrompt）。 */
 function buildPromptWithKey(keyObj) {
-  if (!keyObj || !keyObj.raw) return '该 Key 的完整值已不可见（仅生成时显示一次）。请重新创建 Key。';
   return PROMPT_TEMPLATE(keyObj.raw, keyObj.scope || 'read', keyObj.name);
-}
-/* 预览版：有暂存 raw 就显示完整 key，否则显示前缀占位 */
-function buildPromptPreview(keyObj) {
-  if (!keyObj) return '创建 API Key 后，这里会自动生成可直接发给 Agent 的接入提示词。';
-  if (pendingRaw && String(pendingRaw.id) === String(keyObj.id)) {
-    return buildPromptWithKey({ ...keyObj, raw: pendingRaw.raw });
-  }
-  return PROMPT_TEMPLATE(keyObj.key_prefix + '…（完整 Key 仅生成时可见）',
-                         keyObj.scope || 'read', keyObj.name);
 }
 
 /* ---------- 权限勾选联动 ----------
@@ -572,12 +582,9 @@ function refreshPromptSelector() {
   ).join('');
   if (!valid.length) {
     sel.innerHTML = '<option value="">（暂无 Key，请先在上方创建）</option>';
-  } else if (pendingRaw && valid.some(k => String(k.id) === String(pendingRaw.id))) {
-    sel.value = String(pendingRaw.id);           // 刚创建的 key 优先选中
   } else if (valid.some(k => String(k.id) === prev)) {
     sel.value = prev;
   }
-  updatePrompt();
 }
 
 function selectedKey() {
@@ -585,20 +592,11 @@ function selectedKey() {
   return keysCache.find(k => String(k.id) === String(id)) || null;
 }
 
-function updatePrompt() {
-  $('prompt-box').textContent = buildPromptPreview(selectedKey());
-}
-
-function copyPrompt() {
+/* 宽屏的「获取接入提示词」：跟手机端 Key 卡片上那个按钮走同一个弹窗 */
+function openPromptForSelected() {
   const k = selectedKey();
   if (!k) { toast('请先创建并选择 API Key', true); return; }
-  if (pendingRaw && String(pendingRaw.id) === String(k.id)) {
-    copyText(buildPromptWithKey({ ...k, raw: pendingRaw.raw }))
-      .then(() => toast('提示词已复制，可直接发给 Agent'))
-      .catch(() => toast('复制失败，请手动选择复制', true));
-    return;
-  }
-  toast('该 Key 的完整值仅生成时可见，请重新创建 Key 后立即复制提示词', true);
+  openPromptModal(k.id);
 }
 
 /* ---------- 左滑删除 ----------
@@ -678,15 +676,50 @@ function closeCreateModal() {
 function createModalOpen() { return $('create-modal').classList.contains('show'); }
 
 /* ---------- 某个 Key 的接入提示词弹窗 ---------- */
+let promptKeyId = null;
+
 function openPromptModal(id) {
   const k = keysCache.find(x => String(x.id) === String(id));
   if (!k) return;
+  promptKeyId = k.id;
   // 不显示 key 值：窄屏上本来就截得只剩前几位，认不出是哪把，纯占地方。
   $('prompt-modal-sub').textContent = `${k.name} · ${k.scope} —— 整段复制发给你的 Agent`;
-  $('prompt-modal-box').textContent = buildPromptPreview(k);
+  // 每次都从密码这一步重新开始，别让上一次显示过的 Key 留在 DOM 里
+  $('prompt-modal-box').textContent = '';
+  $('prompt-pw').value = '';
+  $('prompt-gate').style.display = '';
+  $('prompt-reveal').style.display = 'none';
   $('prompt-modal').classList.add('show');
+  setTimeout(() => $('prompt-pw').focus(), 50);
 }
-function closePromptModal() { $('prompt-modal').classList.remove('show'); }
+
+function closePromptModal() {
+  $('prompt-modal').classList.remove('show');
+  $('prompt-modal-box').textContent = '';   // 关掉就把明文从页面上抹掉
+  $('prompt-pw').value = '';
+  promptKeyId = null;
+}
+
+/* 验密码 → 拿回完整 Key → 拼出真正能用的提示词。
+   走 POST：密码和 Key 都不该出现在 URL 里（浏览器历史、反代日志、Referer）。 */
+async function revealPrompt() {
+  const k = keysCache.find(x => String(x.id) === String(promptKeyId));
+  if (!k) return;
+  const pw = $('prompt-pw').value;
+  if (!pw) { toast('请输入登录密码', true); $('prompt-pw').focus(); return; }
+  $('btn-reveal').disabled = true;
+  try {
+    const { key } = await api('POST', `/api/console/keys/${k.id}/reveal`, { password: pw });
+    $('prompt-modal-box').textContent = PROMPT_TEMPLATE(key, k.scope || 'read', k.name);
+    $('prompt-gate').style.display = 'none';
+    $('prompt-reveal').style.display = '';
+    $('prompt-pw').value = '';
+  } catch (e) {
+    toast(e.message, true);
+    $('prompt-pw').select();
+  }
+  $('btn-reveal').disabled = false;
+}
 function copyPromptModalBox() {
   copyText($('prompt-modal-box').textContent)
     .then(() => toast('提示词已复制，可直接发给 Agent'))
@@ -709,8 +742,6 @@ async function createKey() {
   $('btn-create').disabled = true;
   try {
     const data = await api('POST', '/api/console/keys', form);
-    // 暂存 raw：关闭弹窗后页面底部提示词仍可带完整 key 复制
-    pendingRaw = { id: data.id, raw: data.key };
     // 弹窗：raw key + 自动拼好的提示词
     $('key-full').textContent = data.key;
     const keyObj = { raw: data.key, scope: data.scope, name: form.name || '未命名' };
@@ -734,7 +765,6 @@ async function deleteKey(id) {
   if (!confirm(`确认删除 Key「${k ? k.name : id}」？\n删除后立即失效且无法恢复，历史审计记录会保留。`)) return;
   try {
     await api('DELETE', '/api/console/keys/' + id);
-    if (pendingRaw && String(pendingRaw.id) === String(id)) pendingRaw = null;
     toast('已删除');
     await loadKeys();
   } catch (e) { toast(e.message, true); }
