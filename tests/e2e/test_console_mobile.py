@@ -256,6 +256,30 @@ def test_key_value_not_shown_in_prompt_modal_or_audit(mobile_page):
     assert prefix not in mobile_page.text("#audit-key")
 
 
+def test_duplicate_name_keeps_the_dialog_open(mobile_page):
+    """重名要挡下来，而且弹窗别关 —— 关了的话用户得从头再点一遍。"""
+    _make_key(mobile_page, "重名 Key", ["sc-read"])
+
+    mobile_page.click("#btn-open-create")
+    mobile_page.wait_for("#create-modal.show")
+    mobile_page.fill("#key-name", "重名 Key")
+    mobile_page.click("#btn-create")
+    mobile_page.wait_for("#toast.show")
+
+    assert "换个名字" in mobile_page.text("#toast")
+    assert mobile_page.visible("#create-modal")            # 弹窗还开着
+    assert not mobile_page.visible("#key-modal")           # 没有真的建出来
+    assert mobile_page.count("#keys-cards .item") == 1
+    # 光标回到名称框，直接改就行
+    assert mobile_page.eval("document.activeElement.id") == "key-name"
+
+    mobile_page.fill("#key-name", "换个名字的 Key")
+    mobile_page.click("#btn-create")
+    mobile_page.wait_for("#key-modal.show")
+    mobile_page.eval("closeModal()")
+    mobile_page.wait_until("document.querySelectorAll('#keys-cards .item').length === 2")
+
+
 def test_agent_prompt_opens_from_each_key_card(mobile_page):
     """提示词改成每个 Key 卡片上的按钮 —— 弹出的那份必须是这个 Key 的。"""
     _make_key(mobile_page, "只读 Key", ["sc-read"])

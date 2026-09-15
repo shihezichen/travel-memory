@@ -1808,6 +1808,25 @@ def revoke_api_key(key_id, user_id):
     conn.close()
 
 
+def api_key_name_taken(user_id, name) -> bool:
+    """这个名字有没有被一把**还有效**的 Key 占着。
+
+    只挡有效的：已吊销、已过期的 Key 还留在列表里（历史要能查），但它们的名字
+    该让出来 —— 不然「Cursor 接入」这种名字用一次就废一个。
+    比较时去空格 + 忽略大小写，「Cursor」和「cursor 」算同一个。
+    """
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM api_keys WHERE user_id=? AND revoked=0 "
+        "  AND LOWER(TRIM(name)) = LOWER(TRIM(?)) "
+        "  AND (expires_at IS NULL OR expires_at > datetime('now','localtime')) "
+        "LIMIT 1",
+        (user_id, name),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def api_key_belongs_to(key_id, user_id) -> bool:
     """这个 Key 是不是这个用户的 —— 控制台按 Key 筛日志前先验一道归属。"""
     conn = get_conn()

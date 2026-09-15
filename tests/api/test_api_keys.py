@@ -1,4 +1,6 @@
 """开发者控制台 + /api/ai/* 领域 API：Key 生命周期、scope 分级、限流、幂等、审计。"""
+import itertools
+
 import pytest
 
 import db
@@ -9,11 +11,17 @@ pytestmark = pytest.mark.api
 
 @pytest.fixture
 def key_factory(auth_client):
-    """用登录态自助创建 API Key，返回 raw key。"""
-    def _make(scope="read", name="test-key", expire_days=0):
+    """用登录态自助创建 API Key，返回 raw key。
+
+    默认名字带自增后缀：同名的有效 Key 现在会被接口挡掉（见 test_duplicate_*），
+    夹具再用一个固定名字，一个用例里建第二把就炸了。
+    """
+    seq = itertools.count(1)
+
+    def _make(scope="read", name=None, expire_days=0):
         r = auth_client.post("/api/console/keys",
-                             data={"name": name, "scope": scope,
-                                   "expire_days": expire_days})
+                             data={"name": name or f"test-key-{next(seq)}",
+                                   "scope": scope, "expire_days": expire_days})
         assert r.status_code == 200, r.text
         return r.json()
     return _make
@@ -307,3 +315,61 @@ def test_mcp_call_forwards_caller_ip_not_localhost(client, auth_client, monkeypa
                       "params": {"name": "list_trips", "arguments": {}}})
     row = auth_client.get(f"/api/console/audit?key_id={made['id']}").json()["audit"][0]
     assert row["client_ip"] == "203.0.113.55"
+
+
+# ---------------- Key 重名 ----------------
+def test_duplicate_active_key_name_is_rejected(auth_client, key_factory):
+    key_factory(name="Cursor 接入")
+    r = auth_client.post("/api/console/keys",
+                         data={"name": "Cursor 接入", "scope": "read"})
+    assert r.status_code == 400
+    assert "换个名字" in r.json()["detail"]
+    assert len(auth_client.get("/api/console/keys").json()["keys"]) == 1
+
+
+@pytest.mark.parametrize("dupe", ["cursor 接入", "  Cursor 接入  ", "CURSOR 接入"])
+def test_duplicate_check_ignores_case_and_padding(auth_client, key_factory, dupe):
+    """「Cursor」和「cursor 」看着一样，就该算一个。"""
+    key_factory(name="Cursor 接入")
+    assert auth_client.post("/api/console/keys",
+                            data={"name": dupe, "scope": "read"}).status_code == 400
+
+
+def test_name_is_free_again_after_the_key_is_deleted(auth_client, key_factory):
+    made = key_factory(name="临时调试")
+    auth_client.delete(f"/api/console/keys/{made['id']}")
+    assert auth_client.post("/api/console/keys",
+                            data={"name": "临时调试", "scope": "read"}).status_code == 200
+
+
+def test_expired_key_does_not_hold_its_name(auth_client, key_factory):
+    """过期的 Key 还留在列表里（历史要能查），但名字该让出来。"""
+    made = key_factory(name="过期了的")
+    conn = db.get_conn()
+    conn.execute("UPDATE api_keys SET expires_at=datetime('now','localtime','-1 day') WHERE id=?",
+                 (made["id"],))
+    conn.commit()
+    conn.close()
+    assert auth_client.post("/api/console/keys",
+                            data={"name": "过期了的", "scope": "read"}).status_code == 200
+
+
+def test_revoked_key_does_not_hold_its_name(auth_client, key_factory):
+    made = key_factory(name="吊销了的")
+    db.revoke_api_key(made["id"], auth_client.user["id"])
+    assert auth_client.post("/api/console/keys",
+                            data={"name": "吊销了的", "scope": "read"}).status_code == 200
+
+
+def test_duplicate_name_is_scoped_per_user(auth_client, other_client):
+    """重名只在自己名下算数 —— 别人叫什么跟我没关系。"""
+    auth_client.post("/api/console/keys", data={"name": "同名", "scope": "read"})
+    assert other_client.post("/api/console/keys",
+                             data={"name": "同名", "scope": "read"}).status_code == 200
+
+
+def test_unnamed_keys_also_collide(auth_client):
+    """不填名字会落成「未命名」，第二把同样会被挡下来 —— 正好逼着起个名。"""
+    assert auth_client.post("/api/console/keys", data={"scope": "read"}).status_code == 200
+    r = auth_client.post("/api/console/keys", data={"scope": "read"})
+    assert r.status_code == 400 and "未命名" in r.json()["detail"]

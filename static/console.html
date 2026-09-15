@@ -720,7 +720,12 @@ async function createKey() {
     $('key-name').value = '';
     $('key-expire').value = '';
     await loadKeys();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    // 重名之类的失败：弹窗不关，光标回到名称框并选中，直接改就行
+    toast(e.message, true);
+    $('key-name').focus();
+    $('key-name').select();
+  }
   $('btn-create').disabled = false;
 }
 

@@ -67,6 +67,8 @@ def console_create_key(request: Request, name: str = Form(""), scope: str = Form
     if "admin" in scope and not user["is_admin"]:
         raise HTTPException(403, "仅管理员可授予 admin 权限")
     name = (name or "").strip() or "未命名"
+    if db.api_key_name_taken(user["id"], name):
+        raise HTTPException(400, f"已经有一把叫「{name}」的 Key 了，换个名字")
     raw_key, prefix, key_id = db.create_api_key(user["id"], name, scope,
                                                 expire_days=expire_days or None)
     db.add_audit(None, user["id"], "key.create", "CONSOLE", "/api/console/keys",
