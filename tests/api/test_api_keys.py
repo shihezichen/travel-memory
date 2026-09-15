@@ -1,4 +1,5 @@
 """开发者控制台 + /api/ai/* 领域 API：Key 生命周期、scope 分级、限流、幂等、审计。"""
+import hashlib
 import itertools
 
 import pytest
@@ -375,99 +376,26 @@ def test_unnamed_keys_also_collide(auth_client):
     assert r.status_code == 400 and "未命名" in r.json()["detail"]
 
 
-# ---------------- 验密码取回完整 Key ----------------
-def _reveal(client, key_id, password):
-    return client.post(f"/api/console/keys/{key_id}/reveal", data={"password": password})
-
-
-def test_reveal_returns_the_real_key_after_password(auth_client, key_factory):
-    """建 Key 时返回的那一份，和事后验密码取回的，必须是同一把 —— 否则拷出去的
-    提示词还是跑不通。"""
-    made = key_factory(name="取回")
-    r = _reveal(auth_client, made["id"], auth_client.user["_password"])
-    assert r.status_code == 200
-    assert r.json()["key"] == made["key"]
-    # 取回来的确实能用
-    assert auth_client.get("/api/ai/trips", headers=_bearer(r.json()["key"])).status_code == 200
-
-
-def test_reveal_rejects_wrong_or_missing_password(auth_client, key_factory):
-    made = key_factory()
-    assert _reveal(auth_client, made["id"], "").status_code == 403
-    assert _reveal(auth_client, made["id"], "不是这个密码").status_code == 403
-
-
-def test_reveal_requires_login(auth_client, key_factory):
-    """client 和 auth_client 是同一个实例（auth_client 就是登录过的 client），
-    所以匿名这一路得另起一个。"""
-    from fastapi.testclient import TestClient
-    import app as app_mod
-    made = key_factory()
-    with TestClient(app_mod.app) as anon:
-        assert anon.post(f"/api/console/keys/{made['id']}/reveal",
-                         data={"password": "pw123456"}).status_code == 401
-
-
-def test_reveal_cannot_read_another_users_key(auth_client, other_client, key_factory):
-    mine = key_factory()
-    r = _reveal(other_client, mine["id"], other_client.user["_password"])
-    assert r.status_code == 404          # 密码是对的，但这把 Key 不是他的
-
-
-def test_reveal_is_rate_limited_after_repeated_wrong_passwords(auth_client, key_factory):
-    """Key 明文是唯一能被密码换走的东西，不能让人慢慢猜。"""
-    from routers import console as console_mod
-    console_mod._reveal_fails.clear()
-    made = key_factory()
-    for _ in range(5):
-        assert _reveal(auth_client, made["id"], "错的").status_code == 403
-    # 锁上之后连正确密码也先挡住
-    r = _reveal(auth_client, made["id"], auth_client.user["_password"])
-    assert r.status_code == 429
-    console_mod._reveal_fails.clear()
-
-
-def test_reveal_success_clears_the_failure_counter(auth_client, key_factory):
-    from routers import console as console_mod
-    console_mod._reveal_fails.clear()
-    made = key_factory()
-    _reveal(auth_client, made["id"], "错的")
-    assert _reveal(auth_client, made["id"], auth_client.user["_password"]).status_code == 200
-    assert not console_mod._reveal_fails.get(auth_client.user["id"])
-
-
-def test_reveal_of_legacy_key_without_archive_says_so(auth_client, key_factory):
-    """启用找回之前建的 Key 只有 hash，取不回来 —— 要说人话，别丢个 500。"""
+# ---------------- Key 明文不留在服务器上 ----------------
+def test_server_keeps_no_recoverable_copy_of_the_key(auth_client, key_factory):
+    """只存 sha256。2026-09-16 一度加过一列加密存档（为了「验密码后取回」），
+    已经撤掉 —— 服务器上不该有任何能还原出 Key 明文的东西。"""
     made = key_factory()
     conn = db.get_conn()
-    conn.execute("UPDATE api_keys SET key_enc=NULL WHERE id=?", (made["id"],))
-    conn.commit()
+    row = dict(conn.execute("SELECT * FROM api_keys WHERE id=?", (made["id"],)).fetchone())
     conn.close()
-    r = _reveal(auth_client, made["id"], auth_client.user["_password"])
-    assert r.status_code == 404 and "重新生成" in r.json()["detail"]
-
-
-def test_reveal_is_audited_both_ways(auth_client, key_factory):
-    from routers import console as console_mod
-    console_mod._reveal_fails.clear()
-    made = key_factory()
-    _reveal(auth_client, made["id"], "错的")
-    _reveal(auth_client, made["id"], auth_client.user["_password"])
-    rows = [r for r in auth_client.get("/api/console/audit").json()["audit"]
-            if r["action"] == "key.reveal"]
-    assert {r["status"] for r in rows} == {"ok", "error"}
-    console_mod._reveal_fails.clear()
-
-
-def test_key_plaintext_is_not_stored_in_the_clear(auth_client, key_factory):
-    """存档必须是加密的：直接翻库不能看见 Key。"""
-    made = key_factory()
-    conn = db.get_conn()
-    row = conn.execute("SELECT * FROM api_keys WHERE id=?", (made["id"],)).fetchone()
-    conn.close()
-    blob = " ".join(str(v) for v in dict(row).values())
+    blob = " ".join(str(v) for v in row.values())
     assert made["key"] not in blob
-    assert row["key_enc"] and row["key_enc"] != made["key"]
+    assert row["key_hash"] == hashlib.sha256(made["key"].encode()).hexdigest()
+    assert not row.get("key_enc")          # 列可能还在（sqlite 不好删），但必须是空的
+
+
+def test_reveal_endpoint_is_gone(auth_client, key_factory):
+    """取回接口已经撤掉：留着它就等于承认服务器手里有明文。"""
+    made = key_factory()
+    r = auth_client.post(f"/api/console/keys/{made['id']}/reveal",
+                         data={"password": auth_client.user["_password"]})
+    assert r.status_code == 404
 
 
 def test_console_page_carries_a_version_stamp(auth_client):

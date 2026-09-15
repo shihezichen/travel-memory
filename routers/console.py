@@ -98,58 +98,6 @@ def console_delete_key(request: Request, key_id: int):
     return {"ok": True}
 
 
-# ---------- 取回完整 Key ----------
-# 这是整个控制台唯一一个会把 Key 明文吐出来的接口，所以在密码之外再加一道限流：
-# 密码是人记的，能猜；Key 一旦被猜出密码捞走，agent 的读写权限就一起没了。
-# 进程内计数够用 —— 单进程部署，而且重启一次就放行本来也不是什么大问题
-# （真正的门槛是密码本身，这里只是把在线爆破的速率压到没意义）。
-_REVEAL_MAX_FAILS = 5
-_REVEAL_LOCK_SEC = 300
-_reveal_fails: dict[int, list[float]] = {}
-
-
-def _reveal_guard(user_id: int):
-    now = time.monotonic()
-    fails = [t for t in _reveal_fails.get(user_id, []) if now - t < _REVEAL_LOCK_SEC]
-    _reveal_fails[user_id] = fails
-    if len(fails) >= _REVEAL_MAX_FAILS:
-        wait = int(_REVEAL_LOCK_SEC - (now - fails[0]))
-        raise HTTPException(429, f"密码错误次数过多，请 {wait} 秒后再试")
-
-
-def _reveal_fail(user_id: int):
-    _reveal_fails.setdefault(user_id, []).append(time.monotonic())
-
-
-@router.post("/api/console/keys/{key_id}/reveal")
-def console_reveal_key(request: Request, key_id: int, password: str = Form("")):
-    """验登录密码后取回完整 Key（用来拼 Agent 接入提示词）。
-
-    用 POST 而不是 GET：密码和 Key 都不该出现在 URL 里 —— 那会进浏览器历史、
-    反代访问日志和 Referer。
-    """
-    user = current_user(request)
-    _reveal_guard(user["id"])
-
-    full = db.get_user_by_id(user["id"])
-    if not password or not db.verify_password(password, full["salt"], full["password_hash"]):
-        _reveal_fail(user["id"])
-        db.add_audit(None, user["id"], "key.reveal", "CONSOLE",
-                     f"/api/console/keys/{key_id}/reveal", "", "error",
-                     detail=f"key_id={key_id} 密码错误", client_ip=client_ip(request))
-        raise HTTPException(403, "密码不对")
-
-    raw = db.reveal_api_key(key_id, user["id"])
-    if raw is None:
-        raise HTTPException(404, "这把 Key 没有可取回的存档（启用找回之前建的），"
-                                 "删掉重新生成一把即可")
-    _reveal_fails.pop(user["id"], None)
-    db.add_audit(None, user["id"], "key.reveal", "CONSOLE",
-                 f"/api/console/keys/{key_id}/reveal", "", "ok",
-                 detail=f"key_id={key_id}", client_ip=client_ip(request))
-    return {"key": raw}
-
-
 @router.get("/api/console/usage")
 def console_usage(request: Request):
     """按 Key 聚合的用量统计（调用次数 / 成功 / token 消耗）。"""

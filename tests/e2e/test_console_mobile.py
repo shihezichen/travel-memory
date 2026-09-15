@@ -280,78 +280,63 @@ def test_duplicate_name_keeps_the_dialog_open(mobile_page):
     mobile_page.wait_until("document.querySelectorAll('#keys-cards .item').length === 2")
 
 
-def _open_prompt(page, name, password=None):
-    """点开某个 Key 的「Agent 接入」；给了密码就一并验过去。"""
+def _open_prompt(page, name):
+    """点开某个 Key 的「Agent 接入」。"""
     cards = page.eval(
         "Array.from(document.querySelectorAll('#keys-cards .item'))"
         ".map(c => c.querySelector('.t').textContent)")
     idx = cards.index(name)
     page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn")
     page.wait_for("#prompt-modal.show")
-    if password is not None:
-        page.fill("#prompt-pw", password)
-        page.click("#btn-reveal")
-        page.wait_until("document.getElementById('prompt-reveal').style.display !== 'none'")
 
 
-def test_prompt_needs_password_before_showing_the_key(mobile_page, e2e_user):
-    """提示词里带的是能直接读写旅行数据的完整 Key，不能谁打开页面就抄走。"""
-    _make_key(mobile_page, "要密码的 Key", ["sc-read"])
-    _open_prompt(mobile_page, "要密码的 Key")
+def test_prompt_is_a_template_and_says_so(mobile_page):
+    """Key 只存 sha256，事后给不出明文 —— 那就别装作给得出。
+    模板里留 <api key> 占位，并且把「这是模板、要替换」说在最前面。"""
+    _make_key(mobile_page, "模板 Key", ["sc-read"])
+    _open_prompt(mobile_page, "模板 Key")
 
-    # 第一步只有密码框，提示词还没出来
-    assert mobile_page.visible("#prompt-gate")
-    assert not mobile_page.visible("#prompt-reveal")
-    assert mobile_page.text("#prompt-modal-box").strip() == ""
-
-    # 密码错了：不放行，也不泄露任何东西
-    mobile_page.fill("#prompt-pw", "错的密码")
-    mobile_page.click("#btn-reveal")
-    mobile_page.wait_for("#toast.show")
-    assert not mobile_page.visible("#prompt-reveal")
-    assert mobile_page.text("#prompt-modal-box").strip() == ""
-
-    # 密码对了：拿到能直接用的完整 Key
-    mobile_page.fill("#prompt-pw", e2e_user["password"])
-    mobile_page.click("#btn-reveal")
-    mobile_page.wait_until(
-        "document.getElementById('prompt-reveal').style.display !== 'none'")
-    assert "仅生成时可见" not in mobile_page.text("#prompt-modal-box")   # 占位符不能再出现
-    # 里面是一把完整的 Key，不是截断的前缀
-    assert mobile_page.eval(
-        "/tm_[A-Za-z0-9_-]{40,}/.test("
+    body = mobile_page.text("#prompt-modal-box")
+    assert body.count("<api key>") == 3          # API Key 行 + Bearer + ?api_key=
+    assert not mobile_page.eval(                 # 里面绝不能出现真 Key
+        "/tm_[A-Za-z0-9_-]{20,}/.test("
         "document.getElementById('prompt-modal-box').textContent)")
 
+    warn = mobile_page.text("#prompt-modal-warn")
+    assert "模板" in warn and "<api key>" in warn and "生成那一次" in warn
+    assert mobile_page.visible("#prompt-modal-warn")
 
-def test_prompt_is_wiped_when_the_dialog_closes(mobile_page, e2e_user):
-    """关掉就把明文从 DOM 里抹掉，下次打开重新验密码。"""
-    _make_key(mobile_page, "抹掉 Key", ["sc-read"])
-    _open_prompt(mobile_page, "抹掉 Key", e2e_user["password"])
+    # 按钮也别叫「复制提示词」，免得让人以为拷了就能用
+    assert "复制模板" in mobile_page.text("#prompt-modal .actions")
+
+
+def test_freshly_created_key_prompt_is_ready_to_use(mobile_page):
+    """刚生成那一刻 raw key 还在手上，这一份必须是填好的、能直接用的。"""
+    mobile_page.click("#btn-open-create")
+    mobile_page.wait_for("#create-modal.show")
+    mobile_page.fill("#key-name", "刚建的 Key")
+    mobile_page.click("#btn-create")
+    mobile_page.wait_for("#key-modal.show")
+
+    body = mobile_page.text("#key-modal-prompt")
+    assert "<api key>" not in body
     assert mobile_page.eval(
         "/tm_[A-Za-z0-9_-]{40,}/.test("
-        "document.getElementById('prompt-modal-box').textContent)")
-
-    mobile_page.eval("closePromptModal()")
-    assert mobile_page.eval(
-        "document.getElementById('prompt-modal-box').textContent") == ""
-
-    _open_prompt(mobile_page, "抹掉 Key")       # 不给密码
-    assert mobile_page.visible("#prompt-gate")
-    assert not mobile_page.visible("#prompt-reveal")
+        "document.getElementById('key-modal-prompt').textContent)")
 
 
-def test_agent_prompt_opens_from_each_key_card(mobile_page, e2e_user):
+def test_agent_prompt_opens_from_each_key_card(mobile_page):
     """提示词改成每个 Key 卡片上的按钮 —— 弹出的那份必须是这个 Key 的。"""
     _make_key(mobile_page, "只读 Key", ["sc-read"])
     _make_key(mobile_page, "读写 Key", ["sc-write"])
 
-    _open_prompt(mobile_page, "只读 Key", e2e_user["password"])
+    _open_prompt(mobile_page, "只读 Key")
     assert "只读 Key" in mobile_page.text("#prompt-modal-sub")
     body = mobile_page.text("#prompt-modal-box")
     assert "没有 write 权限" in body and "创建 / 修改 / 删除" not in body
 
     mobile_page.eval("closePromptModal()")
-    _open_prompt(mobile_page, "读写 Key", e2e_user["password"])
+    _open_prompt(mobile_page, "读写 Key")
     assert "读写 Key" in mobile_page.text("#prompt-modal-sub")
     assert "创建 / 修改 / 删除" in mobile_page.text("#prompt-modal-box")
 
@@ -447,8 +432,8 @@ def desktop_page(browser, live_server, e2e_user):
     pg.close()
 
 
-def test_desktop_prompt_also_goes_through_the_password_gate(desktop_page, e2e_user):
-    """宽屏不再在页面上常驻一份提示词（里面含完整 Key），走同一个弹窗。"""
+def test_desktop_prompt_goes_through_the_same_modal(desktop_page):
+    """宽屏也不在页面上常驻提示词，走跟手机端同一个弹窗、同一份模板。"""
     desktop_page.fill("#key-name", "宽屏 Key")
     desktop_page.click("#btn-create")
     desktop_page.wait_for("#key-modal.show")
@@ -458,15 +443,8 @@ def test_desktop_prompt_also_goes_through_the_password_gate(desktop_page, e2e_us
     assert desktop_page.count("#prompt-box") == 0          # 常驻的提示词块没了
     desktop_page.click("#btn-copy-prompt")
     desktop_page.wait_for("#prompt-modal.show")
-    assert desktop_page.visible("#prompt-gate")
-
-    desktop_page.fill("#prompt-pw", e2e_user["password"])
-    desktop_page.click("#btn-reveal")
-    desktop_page.wait_until(
-        "document.getElementById('prompt-reveal').style.display !== 'none'")
-    assert desktop_page.eval(
-        "/tm_[A-Za-z0-9_-]{40,}/.test("
-        "document.getElementById('prompt-modal-box').textContent)")
+    assert desktop_page.text("#prompt-modal-box").count("<api key>") == 3
+    assert desktop_page.visible("#prompt-modal-warn")
 
 
 def test_desktop_keeps_inline_form_table_and_prompt_section(desktop_page):

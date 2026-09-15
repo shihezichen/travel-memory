@@ -7,8 +7,6 @@ import secrets
 import sqlite3
 from pathlib import Path
 
-import keyvault
-
 DB_PATH = Path(__file__).parent / "data.db"
 
 SCHEMA = """
@@ -125,7 +123,6 @@ CREATE INDEX IF NOT EXISTS idx_generations_trip ON generations(trip_id, kind);
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key_hash TEXT NOT NULL UNIQUE,
-    key_enc TEXT,                             -- 加密存档，验密码后可取回（见 keyvault.py）
     key_prefix TEXT NOT NULL,
     name TEXT NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -291,11 +288,12 @@ def init_db():
     if "status" not in cols:
         conn.execute("ALTER TABLE trips ADD COLUMN status TEXT DEFAULT 'planning'")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_user ON trips(user_id)")
-    # 兼容旧库：api_keys 若无 key_enc 列则补上。
-    # 启用之前建的 Key 只有 hash，取不回来 —— 接口会明说，让人删掉重建一把。
+    # 2026-09-16 短暂存在过一列 key_enc（Key 的加密存档，用来「验密码后取回」）。
+    # 撤掉了 —— Key 只存 sha256 才是对的，服务器上不该有能还原出明文的东西。
+    # 列本身 sqlite 不好删，就地清空，别让残留的密文躺在库里。
     apikey_cols = [r["name"] for r in conn.execute("PRAGMA table_info(api_keys)")]
-    if "key_enc" not in apikey_cols:
-        conn.execute("ALTER TABLE api_keys ADD COLUMN key_enc TEXT")
+    if "key_enc" in apikey_cols:
+        conn.execute("UPDATE api_keys SET key_enc=NULL WHERE key_enc IS NOT NULL")
     # 兼容旧库：audit_log 若无 client_ip 列则补上（历史记录留空 —— 当时没采）
     audit_cols = [r["name"] for r in conn.execute("PRAGMA table_info(audit_log)")]
     if "client_ip" not in audit_cols:
@@ -1762,20 +1760,18 @@ def create_api_key(user_id, name, scope, expire_days=None, raw_key=None):
         raw_key = "tm_" + secrets.token_urlsafe(32)
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     key_prefix = raw_key[:12]
-    # 鉴权永远只比 hash；这份密文单纯是给人「验完密码再看一眼」用的
-    key_enc = keyvault.seal(raw_key)
     conn = get_conn()
     if expire_days:
         cur = conn.execute(
-            "INSERT INTO api_keys(key_hash, key_enc, key_prefix, name, user_id, scope, expires_at) "
-            "VALUES(?,?,?,?,?,?,datetime('now','localtime', ?))",
-            (key_hash, key_enc, key_prefix, name, user_id, scope, f"+{int(expire_days)} days"),
+            "INSERT INTO api_keys(key_hash, key_prefix, name, user_id, scope, expires_at) "
+            "VALUES(?,?,?,?,?,datetime('now','localtime', ?))",
+            (key_hash, key_prefix, name, user_id, scope, f"+{int(expire_days)} days"),
         )
     else:
         cur = conn.execute(
-            "INSERT INTO api_keys(key_hash, key_enc, key_prefix, name, user_id, scope) "
-            "VALUES(?,?,?,?,?,?)",
-            (key_hash, key_enc, key_prefix, name, user_id, scope),
+            "INSERT INTO api_keys(key_hash, key_prefix, name, user_id, scope) "
+            "VALUES(?,?,?,?,?)",
+            (key_hash, key_prefix, name, user_id, scope),
         )
     conn.commit()
     key_id = cur.lastrowid
@@ -1816,23 +1812,6 @@ def revoke_api_key(key_id, user_id):
     conn.execute("UPDATE api_keys SET revoked=1 WHERE id=? AND user_id=?", (key_id, user_id))
     conn.commit()
     conn.close()
-
-
-def reveal_api_key(key_id, user_id) -> str | None:
-    """取回完整 Key 明文。不属于这个用户、或没有存档 → None。
-
-    **调用方必须先验过登录密码**（见 routers/console.py 的 /reveal）。
-    这个函数本身不做身份校验，只管解密。
-    """
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT key_enc FROM api_keys WHERE id=? AND user_id=? AND revoked=0",
-        (key_id, user_id),
-    ).fetchone()
-    conn.close()
-    if not row or not row["key_enc"]:
-        return None
-    return keyvault.open_sealed(row["key_enc"])
 
 
 def api_key_name_taken(user_id, name) -> bool:

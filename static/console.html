@@ -127,6 +127,17 @@
   .toast.err { border-color: var(--red); color: var(--red); }
   .empty { color: var(--muted); text-align: center; padding: 28px; font-size: 13px; }
   .console-ver { text-align: center; color: var(--muted); font-size: 11px; padding: 18px 0 8px; }
+  /* 「这是模板，要替换」的提醒。做得比正文显眼，不然整段拷走的人不会看见 */
+  .prompt-warn {
+    background: rgba(251,191,36,.1); border: 1px solid rgba(251,191,36,.35);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
+    font-size: 12.5px; line-height: 1.6; color: var(--amber);
+  }
+  .prompt-warn b { color: var(--amber); }
+  .prompt-warn code {
+    font-family: var(--mono); background: rgba(251,191,36,.16);
+    padding: 1px 5px; border-radius: 4px;
+  }
 
   /* ---------- 卡片式列表（手机端替代表格） ----------
      表格在 375px 宽的屏幕上是没法看的：7 列挤在一起，要么横向滚动要么字小到看不清。
@@ -363,30 +374,17 @@
     <h3>Agent 接入</h3>
     <p class="muted" style="font-size:12.5px;margin-bottom:8px" id="prompt-modal-sub"></p>
 
-    <!-- 第一步：验密码。提示词里带的是能直接读写你旅行数据的完整 Key，
-         不该谁打开这个页面就能抄走。 -->
-    <div id="prompt-gate">
-      <p class="muted" style="font-size:12.5px;margin-bottom:10px">
-        提示词里含完整 API Key，输入你的登录密码后显示。
-      </p>
-      <div class="field">
-        <label>登录密码</label>
-        <input id="prompt-pw" type="password" autocomplete="current-password"
-               onkeydown="if(event.key==='Enter')revealPrompt()">
-      </div>
-      <div class="actions">
-        <button class="btn primary" id="btn-reveal" onclick="revealPrompt()">显示提示词</button>
-        <button class="btn" onclick="closePromptModal()">取消</button>
-      </div>
-    </div>
-
-    <!-- 第二步：真提示词 -->
-    <div id="prompt-reveal" style="display:none">
-      <div class="prompt-box" id="prompt-modal-box"></div>
-      <div class="actions">
-        <button class="btn primary" onclick="copyPromptModalBox()">📋 复制提示词</button>
-        <button class="btn" onclick="closePromptModal()">关闭</button>
-      </div>
+    <!-- Key 只存 sha256，服务端还原不出明文，所以这里只能给模板。
+         把「这是模板、要替换」说在最前面，别让人整段拷走再去纳闷为什么不通。 -->
+    <p class="prompt-warn" id="prompt-modal-warn">
+      ⚠️ 这是<b>模板</b>，不能直接用：里面的 <code>&lt;api key&gt;</code>（共 3 处）
+      要换成你的完整 API Key，Agent 才连得上。
+      完整 Key 只在<b>生成那一次</b>显示，没留底就删掉这把重新生成一个。
+    </p>
+    <div class="prompt-box" id="prompt-modal-box"></div>
+    <div class="actions">
+      <button class="btn primary" onclick="copyPromptModalBox()">📋 复制模板</button>
+      <button class="btn" onclick="closePromptModal()">关闭</button>
     </div>
   </div>
 </div>
@@ -472,6 +470,10 @@ function scopeSet(scope) {
   return new Set(String(scope || 'read').split(',').map(x => x.trim()).filter(Boolean));
 }
 
+// 事后查看时填在 Key 位置上的占位符。Key 只存 sha256，服务端还原不出明文，
+// 所以这里给的是模板 —— 用户自己把这三处换成完整 Key 才能用。
+const KEY_PLACEHOLDER = '<api key>';
+
 const PROMPT_TEMPLATE = (key, scope, name) => {
   const has = scopeSet(scope);
   const caps = CAPS.filter(([need]) => has.has(need)).map(([, text]) => '- ' + text).join('\n');
@@ -498,8 +500,9 @@ ${caps || '- （该 Key 未授予任何可用能力）'}${limitBlock}
 3. 回答我的问题时基于真实数据，不要编造`;
 };
 
-/* 刚创建那一刻的提示词 —— 这时 raw key 就在手上，不用再验一次密码。
-   之后想再看，走 /reveal（见 revealPrompt）。 */
+/* 刚创建那一刻的提示词 —— 这时 raw key 还在手上，直接填进去，整段就能用。
+   之后就填不回来了：库里只存 sha256，服务端自己也还原不出明文。
+   所以「我的 API Keys」里那个 Agent 接入按钮给的是带 <api key> 占位的模板。 */
 function buildPromptWithKey(keyObj) {
   return PROMPT_TEMPLATE(keyObj.raw, keyObj.scope || 'read', keyObj.name);
 }
@@ -681,50 +684,17 @@ function closeCreateModal() {
 function createModalOpen() { return $('create-modal').classList.contains('show'); }
 
 /* ---------- 某个 Key 的接入提示词弹窗 ---------- */
-let promptKeyId = null;
-
 function openPromptModal(id) {
   const k = keysCache.find(x => String(x.id) === String(id));
   if (!k) return;
-  promptKeyId = k.id;
   // 不显示 key 值：窄屏上本来就截得只剩前几位，认不出是哪把，纯占地方。
-  $('prompt-modal-sub').textContent = `${k.name} · ${k.scope} —— 整段复制发给你的 Agent`;
-  // 每次都从密码这一步重新开始，别让上一次显示过的 Key 留在 DOM 里
-  $('prompt-modal-box').textContent = '';
-  $('prompt-pw').value = '';
-  $('prompt-gate').style.display = '';
-  $('prompt-reveal').style.display = 'none';
+  $('prompt-modal-sub').textContent = `${k.name} · ${k.scope}`;
+  $('prompt-modal-box').textContent =
+    PROMPT_TEMPLATE(KEY_PLACEHOLDER, k.scope || 'read', k.name);
   $('prompt-modal').classList.add('show');
-  setTimeout(() => $('prompt-pw').focus(), 50);
 }
 
-function closePromptModal() {
-  $('prompt-modal').classList.remove('show');
-  $('prompt-modal-box').textContent = '';   // 关掉就把明文从页面上抹掉
-  $('prompt-pw').value = '';
-  promptKeyId = null;
-}
-
-/* 验密码 → 拿回完整 Key → 拼出真正能用的提示词。
-   走 POST：密码和 Key 都不该出现在 URL 里（浏览器历史、反代日志、Referer）。 */
-async function revealPrompt() {
-  const k = keysCache.find(x => String(x.id) === String(promptKeyId));
-  if (!k) return;
-  const pw = $('prompt-pw').value;
-  if (!pw) { toast('请输入登录密码', true); $('prompt-pw').focus(); return; }
-  $('btn-reveal').disabled = true;
-  try {
-    const { key } = await api('POST', `/api/console/keys/${k.id}/reveal`, { password: pw });
-    $('prompt-modal-box').textContent = PROMPT_TEMPLATE(key, k.scope || 'read', k.name);
-    $('prompt-gate').style.display = 'none';
-    $('prompt-reveal').style.display = '';
-    $('prompt-pw').value = '';
-  } catch (e) {
-    toast(e.message, true);
-    $('prompt-pw').select();
-  }
-  $('btn-reveal').disabled = false;
-}
+function closePromptModal() { $('prompt-modal').classList.remove('show'); }
 function copyPromptModalBox() {
   copyText($('prompt-modal-box').textContent)
     .then(() => toast('提示词已复制，可直接发给 Agent'))
