@@ -18,6 +18,7 @@
     --red: #f87171;
     --amber: #fbbf24;
     --mono: "SFMono-Regular", "JetBrains Mono", "Consolas", monospace;
+    --swipe-w: 84px;          /* 左滑露出的删除区宽度，JS 里的 SWIPE_W 要跟它一致 */
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -143,6 +144,30 @@
   .item .kv > div { font-size: 11.5px; color: var(--muted); }
   .item .kv b { display: block; font-size: 18px; color: var(--text); font-weight: 600;
                 font-variant-numeric: tabular-nums; line-height: 1.3; }
+
+  /* ---------- 左滑删除（iOS 列表那套手势） ----------
+     结构：.swipe 定位容器（overflow 裁掉）→ 底层 .swipe-del 常驻在右边 →
+     上层 .swipe-body 盖住它，跟手往左移，露出下面的删除按钮。
+     只用 transform 位移，不改 width/left —— 那些会触发重排，手指跟不住。 */
+  .item.swipe { position: relative; overflow: hidden; padding: 0; }
+  .item.swipe .swipe-body {
+    position: relative; z-index: 1; background: var(--panel);
+    padding: 13px 14px;
+    transition: transform .22s cubic-bezier(.2, .8, .2, 1);
+    will-change: transform;
+  }
+  .item.swipe.dragging .swipe-body { transition: none; }   /* 跟手时不要动画插值 */
+  .item.swipe.open .swipe-body { transform: translateX(calc(-1 * var(--swipe-w))); }
+  .swipe-del {
+    position: absolute; top: 0; right: 0; bottom: 0; width: var(--swipe-w);
+    display: flex;
+  }
+  .swipe-del button {
+    flex: 1; border: none; background: var(--red); color: #fff;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  }
+  .swipe-del button em { font-style: normal; font-size: 17px; line-height: 1; }
 
   /* 日志/统计的 Key 筛选条 */
   .filterbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -399,6 +424,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab, .tabbar button')
     .forEach(t => t.classList.toggle('active', t.dataset.page === name));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
+  closeSwipes();
   window.scrollTo(0, 0);
   if (name === 'usage') loadUsage();
   if (name === 'audit') loadAudit();
@@ -509,20 +535,27 @@ async function loadKeys() {
           <td>${keyStatus(k)}</td>
           <td style="white-space:nowrap"><button class="btn small danger" onclick="deleteKey(${k.id})">删除</button></td>
         </tr>`).join('');
-      cards.innerHTML = keys.map(k => `<div class="item">
-          <div class="r1">
-            <div class="t">${esc(k.name)}</div>
-            ${keyStatus(k)}
+      // 删除挪到左滑手势里（iOS 列表那套），卡片上就不再摆一个常驻的红按钮 ——
+      // 两个删除入口在 375px 宽的屏幕上纯属挤地方。
+      cards.innerHTML = keys.map(k => `<div class="item swipe" data-id="${k.id}">
+          <div class="swipe-del">
+            <button type="button" aria-label="删除" onclick="deleteKey(${k.id})"><em>🗑</em>删除</button>
           </div>
-          <div class="meta mono">${esc(k.key_prefix)}…</div>
-          <div class="tags">${scopeTags(k.scope, k.revoked)}</div>
-          <div class="meta">有效期 ${expiryText(k)}</div>
-          <div class="meta">创建 ${fmt(k.created_at)}　·　最后使用 ${k.last_used_at ? fmt(k.last_used_at) : '从未'}</div>
-          <div class="acts">
-            <button class="btn small" onclick="openPromptModal(${k.id})">Agent 接入</button>
-            <button class="btn small danger" onclick="deleteKey(${k.id})">删除</button>
+          <div class="swipe-body">
+            <div class="r1">
+              <div class="t">${esc(k.name)}</div>
+              ${keyStatus(k)}
+            </div>
+            <div class="meta mono">${esc(k.key_prefix)}…</div>
+            <div class="tags">${scopeTags(k.scope, k.revoked)}</div>
+            <div class="meta">有效期 ${expiryText(k)}</div>
+            <div class="meta">创建 ${fmt(k.created_at)}　·　最后使用 ${k.last_used_at ? fmt(k.last_used_at) : '从未'}</div>
+            <div class="acts">
+              <button class="btn small" onclick="openPromptModal(${k.id})">Agent 接入</button>
+            </div>
           </div>
         </div>`).join('');
+      bindSwipe(cards);
     }
     refreshPromptSelector();
     refreshAuditSelector();
@@ -568,6 +601,69 @@ function copyPrompt() {
   toast('该 Key 的完整值仅生成时可见，请重新创建 Key 后立即复制提示词', true);
 }
 
+/* ---------- 左滑删除 ----------
+   手势规则，照着 iOS 列表的手感来：
+   - 只认横向：第一次移动超过 6px 时判一次方向，判成竖向就整条手势交还给页面滚动，
+     否则列表在小屏上根本滑不动
+   - 跟手时直接写 transform，松手按阈值（走过一半）吸附到全开或全关
+   - 同一时间只开一项；点别处、切 Tab、重新渲染都收起来
+*/
+const SWIPE_W = 84;          // 跟 CSS 的 --swipe-w 对齐
+const SWIPE_SNAP = SWIPE_W / 2;
+const SWIPE_DIR_LOCK = 6;    // 判方向前的死区，太小会误判成横滑
+
+function closeSwipes(except) {
+  document.querySelectorAll('.item.swipe.open').forEach(el => {
+    if (el !== except) el.classList.remove('open');
+  });
+}
+
+function bindSwipe(root) {
+  root.querySelectorAll('.item.swipe').forEach(el => {
+    const body = el.querySelector('.swipe-body');
+    let x0 = 0, y0 = 0, dx = 0, base = 0, dir = null;
+
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      closeSwipes(el);
+      x0 = e.touches[0].clientX;
+      y0 = e.touches[0].clientY;
+      base = el.classList.contains('open') ? -SWIPE_W : 0;
+      dx = base;
+      dir = null;
+      el.classList.add('dragging');
+    }, { passive: true });
+
+    el.addEventListener('touchmove', (e) => {
+      if (!el.classList.contains('dragging')) return;
+      const mx = e.touches[0].clientX - x0;
+      const my = e.touches[0].clientY - y0;
+      if (dir === null) {
+        if (Math.abs(mx) < SWIPE_DIR_LOCK && Math.abs(my) < SWIPE_DIR_LOCK) return;
+        dir = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+        if (dir === 'y') { el.classList.remove('dragging'); return; }
+      }
+      dx = Math.max(-SWIPE_W, Math.min(0, base + mx));
+      body.style.transform = `translateX(${dx}px)`;
+      e.preventDefault();          // 认了横滑就别让页面跟着晃
+    }, { passive: false });
+
+    const settle = () => {
+      if (!el.classList.contains('dragging')) return;
+      el.classList.remove('dragging');
+      el.classList.toggle('open', dx <= -SWIPE_SNAP);
+      body.style.transform = '';   // 位置交回 CSS，动画才有
+    };
+    el.addEventListener('touchend', settle);
+    el.addEventListener('touchcancel', settle);
+  });
+}
+
+/* 点到别处就收起来（点在已展开那项自己身上不算，否则点不到删除按钮） */
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.item.swipe.open')) closeSwipes();
+}, true);
+
 /* ---------- 创建弹窗（手机端）----------
    表单 DOM 只有一份，在 #create-host 和弹窗之间搬来搬去。复制一份 DOM 的话
    就有两套同名 id，勾选联动和读值都得分叉，不值得。 */
@@ -585,8 +681,8 @@ function createModalOpen() { return $('create-modal').classList.contains('show')
 function openPromptModal(id) {
   const k = keysCache.find(x => String(x.id) === String(id));
   if (!k) return;
-  $('prompt-modal-sub').textContent =
-    `${k.name}（${k.key_prefix}… · ${k.scope}）—— 整段复制发给你的 Agent`;
+  // 不显示 key 值：窄屏上本来就截得只剩前几位，认不出是哪把，纯占地方。
+  $('prompt-modal-sub').textContent = `${k.name} · ${k.scope} —— 整段复制发给你的 Agent`;
   $('prompt-modal-box').textContent = buildPromptPreview(k);
   $('prompt-modal').classList.add('show');
 }
@@ -679,7 +775,7 @@ function refreshAuditSelector() {
   if (!sel) return;
   const prev = sel.value;
   sel.innerHTML = '<option value="0">全部</option>' + keysCache.map(k =>
-    `<option value="${k.id}">${esc(k.name)}（${esc(k.key_prefix)}…）</option>`).join('');
+    `<option value="${k.id}">${esc(k.name)}</option>`).join('');
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
@@ -693,7 +789,9 @@ function auditIp(a) {
 }
 
 function auditKeyLabel(a) {
-  if (a.key_name) return `${esc(a.key_name)} · ${esc(a.key_prefix || '')}…`;
+  // 只显示名字。前缀在「我的 API Keys」里有，日志这一栏塞 key 值既截得不全、
+  // 又跟旁边的名字重复。
+  if (a.key_name) return esc(a.key_name);
   return a.method === 'CONSOLE' ? '控制台' : '—';
 }
 

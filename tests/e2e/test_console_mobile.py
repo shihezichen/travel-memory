@@ -166,6 +166,96 @@ def test_create_from_modal_then_shows_key_modal(mobile_page):
     assert mobile_page.eval("document.getElementById('key-expire').value") == ""
 
 
+def _swipe_card_left(page, idx=0, dx=-110):
+    """在第 idx 张 Key 卡片上从右往左划一把（真 touch 事件，不是改 class）。"""
+    box = page.eval(
+        f"(() => {{ const r = document.querySelectorAll('#keys-cards .item')[{idx}]"
+        f"  .getBoundingClientRect(); return {{x: r.x, y: r.y, w: r.width, h: r.height}}; }})()")
+    y = box["y"] + box["h"] / 2
+    x1 = box["x"] + box["w"] - 20
+    page.swipe(x1, y, x1 + dx, y, steps=12)
+    page.wait_ms(350)            # 等吸附动画走完
+
+
+def test_swipe_left_reveals_delete(mobile_page):
+    """iOS 那套：手指往左划，卡片跟着走，右边露出删除。"""
+    _make_key(mobile_page, "左滑删除 Key", ["sc-read"])
+    assert not mobile_page.eval(
+        "document.querySelector('#keys-cards .item').classList.contains('open')")
+
+    _swipe_card_left(mobile_page)
+    assert mobile_page.eval(
+        "document.querySelector('#keys-cards .item').classList.contains('open')")
+    # 删除按钮真的露出来了（不是只加了个 class）
+    assert mobile_page.eval("""(() => {
+      const el = document.querySelector('#keys-cards .item');
+      const btn = el.querySelector('.swipe-del button').getBoundingClientRect();
+      const card = el.getBoundingClientRect();
+      return btn.width > 40 && btn.right <= card.right + 1 && btn.left >= card.left;
+    })()""")
+
+
+def test_small_swipe_snaps_back(mobile_page):
+    """没划过一半就回弹 —— 否则列表会被误触得东倒西歪。"""
+    _make_key(mobile_page, "回弹 Key", ["sc-read"])
+    _swipe_card_left(mobile_page, dx=-20)
+    assert not mobile_page.eval(
+        "document.querySelector('#keys-cards .item').classList.contains('open')")
+
+
+def test_only_one_card_opens_at_a_time(mobile_page):
+    _make_key(mobile_page, "A Key", ["sc-read"])
+    _make_key(mobile_page, "B Key", ["sc-read"])
+    _swipe_card_left(mobile_page, idx=0)
+    _swipe_card_left(mobile_page, idx=1)
+    assert mobile_page.eval(
+        "document.querySelectorAll('#keys-cards .item.open').length") == 1
+
+
+def test_swipe_delete_button_removes_the_key(mobile_page):
+    _make_key(mobile_page, "待删 Key", ["sc-read"])
+    _make_key(mobile_page, "留着 Key", ["sc-read"])
+    names = mobile_page.eval(
+        "Array.from(document.querySelectorAll('#keys-cards .t')).map(e => e.textContent)")
+    idx = names.index("待删 Key")
+
+    mobile_page.p.once("dialog", lambda d: d.accept())      # deleteKey 里有 confirm
+    _swipe_card_left(mobile_page, idx=idx)
+    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .swipe-del button")
+    mobile_page.wait_until(
+        "document.querySelectorAll('#keys-cards .item').length === 1")
+    left = mobile_page.text("#keys-cards")
+    assert "待删 Key" not in left and "留着 Key" in left
+
+
+def test_card_has_no_standing_delete_button(mobile_page):
+    """删除只走左滑，卡片上不再摆一个常驻红按钮。"""
+    _make_key(mobile_page, "无按钮 Key", ["sc-read"])
+    assert mobile_page.eval(
+        "document.querySelectorAll('#keys-cards .acts .btn.danger').length") == 0
+    assert mobile_page.eval(
+        "document.querySelectorAll('#keys-cards .acts .btn').length") == 1
+
+
+def test_key_value_not_shown_in_prompt_modal_or_audit(mobile_page):
+    """key 值在窄屏上截得只剩前几位，认不出是哪把 —— 这两处不显示它。"""
+    _make_key(mobile_page, "隐藏 Key 值", ["sc-read"])
+    prefix = mobile_page.eval(
+        "keysCache[0].key_prefix")
+
+    mobile_page.click("#keys-cards .item .acts .btn")
+    mobile_page.wait_for("#prompt-modal.show")
+    sub = mobile_page.text("#prompt-modal-sub")
+    assert "隐藏 Key 值" in sub and "read" in sub
+    assert prefix not in sub
+    mobile_page.eval("closePromptModal()")
+
+    mobile_page.click(".tabbar button[data-page=audit]")
+    mobile_page.wait_until("document.querySelectorAll('#audit-cards .item').length > 0")
+    assert prefix not in mobile_page.text("#audit-cards")
+    assert prefix not in mobile_page.text("#audit-key")
+
+
 def test_agent_prompt_opens_from_each_key_card(mobile_page):
     """提示词改成每个 Key 卡片上的按钮 —— 弹出的那份必须是这个 Key 的。"""
     _make_key(mobile_page, "只读 Key", ["sc-read"])
@@ -175,7 +265,7 @@ def test_agent_prompt_opens_from_each_key_card(mobile_page):
         "Array.from(document.querySelectorAll('#keys-cards .item'))"
         ".map(c => c.querySelector('.t').textContent)")
     idx = cards.index("只读 Key")
-    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn:not(.danger)")
+    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn")
     mobile_page.wait_for("#prompt-modal.show")
     assert "只读 Key" in mobile_page.text("#prompt-modal-sub")
     body = mobile_page.text("#prompt-modal-box")
@@ -183,7 +273,7 @@ def test_agent_prompt_opens_from_each_key_card(mobile_page):
 
     mobile_page.eval("closePromptModal()")
     idx = cards.index("读写 Key")
-    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn:not(.danger)")
+    mobile_page.click(f"#keys-cards .item:nth-of-type({idx + 1}) .acts .btn")
     mobile_page.wait_for("#prompt-modal.show")
     assert "读写 Key" in mobile_page.text("#prompt-modal-sub")
     assert "创建 / 修改 / 删除" in mobile_page.text("#prompt-modal-box")
