@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""首页轮播的图片加工：一张原图 -> PC / 手机 两个尺寸的 WebP。
+"""首页轮播的图片加工：一张原图 -> PC(16:9) + 手机(4:3) 两个版本。
 
-原则：**只缩放，绝不裁切。**
+原则：**铺满容器，不留边；纵向从顶端对齐。**
 --------------------
-轮播容器的比例是跟着断点变的（桌面 16/9、手机 4/3），原图的比例跟它俩都对不上。
-以前用 object-fit:cover 填容器，多出来的部分就被裁掉了 —— 原图比例和容器差得越远
-切得越狠，P3（比例 1.91）在手机 4:3 上左右各切 15%，照片墙两头整列直接没了。
+轮播容器的比例是跟着断点变的（桌面 16/9、手机 4/3），原图的比例跟它俩都对不上，
+所以必然要裁掉一些。裁在哪边是有讲究的：
 
-现在页面上改成 object-fit:contain：图完整放进去，比例不符的地方留边，
-留边用容器同色，看起来是画面自带留白。既然不裁了，这边就只需要把像素缩到位。
+  · 原图比容器**高** -> 裁下边，顶端对齐。截图类的图顶上是工具栏/导航，
+    照片墙顶上是最完整的那一排，都是最不该丢的；丢下缘观感上像"镜头往上看了一点"。
+  · 原图比容器**宽** -> 只能居中裁左右。横向没有"上对齐"这回事，
+    而主体通常居中，居中切最公平。
 
-各屏原图比例和留边量（留边是比例的差，不是这张图的毛病）：
-    P2 1.610 -> PC 左右各留 4.7% / 手机 上下各留 8.6%
-    P3 1.907 -> PC 上下各留 3.4% / 手机 上下各留 15.1%
-    P4 1.461 -> PC 左右各留 8.9% / 手机 上下各留 4.3%
+页面上是 object-fit:cover + object-position:center top，同一套规则，
+改一边就要改另一边。
 
-两档尺寸是给不同屏幕的像素密度用的，不是为了适配比例 ——
-比例现在由 contain 自己处理，两张图内容完全一样。
+各图被裁掉多少（顶端对齐，纵向损失全在下边）：
+    P2 1.610 -> 桌面切下 9.4% / 手机切左右各 8.6%
+    P3 1.907 -> 桌面切左右各 3.4% / 手机切左右各 15.0%
+    P4 1.461 -> 桌面切下 17.8% / 手机切左右各 4.4%
 
 用法
 ----
@@ -43,28 +44,34 @@ JOBS = [
 ]
 
 # (后缀, 宽, 高)。跟 landing.html 里 .stage 的断点严格对应，改一边要改两边。
-# (后缀, 缩放后长边像素)。不是容器尺寸 —— 比例交给页面上的 contain 处理，
-# 这里只管给不同像素密度的屏幕备好够用的分辨率。
+# (后缀, 宽, 高)。必须跟 landing.html 里 .stage 的断点严格对应：
+# 桌面 16/9、手机 4/3。改一边就要改两边，否则又会出现"图被裁掉一部分"。
 VARIANTS = [
-    ("pc", 1920),   # 桌面宽屏
-    ("m", 1000),    # 手机（2x/3x 屏也够）
+    ("pc", 1920, 1080),   # 16:9，桌面
+    ("m", 1000, 750),     # 4:3，手机
 ]
 
 QUALITY = 82
 
 
-def fit(im, long_edge):
-    """等比缩放到长边 = long_edge，**不裁切**。
+def cover(im, tw, th):
+    """裁成目标比例再缩放：铺满容器、不留边，**纵向从顶端对齐**。
 
-    这里刻意不裁：原图的比例和轮播容器的比例对不上，裁一刀必然丢内容
-    （P3 在手机上左右各切 15%，照片墙两头整列没了）。页面上用 object-fit:contain
-    完整显示，留边交给容器底色 —— 所以这边只需要把像素缩到位。
+    横向裁剪（原图比目标宽）只能居中 —— 左右没有"上对齐"这回事，
+    而图片的主体通常在中间，居中切最公平。
+    纵向裁剪（原图比目标高）按顶端对齐，只从底部切：截图类的图顶上是
+    工具栏/导航，照片墙顶上是最完整的那一排，都是最不该丢的。
+    这跟页面上 object-position:center top 是同一套规则，两边要一起改。
     """
     w, h = im.size
-    scale = long_edge / max(w, h)
-    if scale >= 1:                        # 本来就比目标小，别放大
-        return im
-    return im.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
+    target = tw / th
+    if w / h > target:                    # 比目标更宽 -> 裁左右，居中
+        nw, nh = int(round(h * target)), h
+        box = (int(round((w - nw) * 0.5)), 0, int(round((w - nw) * 0.5)) + nw, nh)
+    else:                                 # 比目标更高 -> 裁下边，顶端对齐
+        nw, nh = w, int(round(w / target))
+        box = (0, 0, nw, nh)
+    return im.crop(box).resize((tw, th), Image.LANCZOS)
 
 
 def main():
@@ -78,13 +85,13 @@ def main():
             continue
         with Image.open(path) as raw:
             im = raw.convert("RGB")
-        for tag, long_edge in VARIANTS:
-            out = fit(im, long_edge)
+        for tag, tw, th in VARIANTS:
+            out = cover(im, tw, th)
             dst = os.path.join(OUT, f"{base}-{tag}.webp")
             out.save(dst, "WEBP", quality=QUALITY, method=6)
             print(f"{dst}  {os.path.getsize(dst) // 1024} KB  "
                   f"({im.size[0]}x{im.size[1]} -> {out.size[0]}x{out.size[1]})"
-                  f"  比例 {out.size[0] / out.size[1]:.3f}（不裁切）")
+                  f"  比例 {out.size[0] / out.size[1]:.3f}")
     return 1 if missing else 0
 
 
