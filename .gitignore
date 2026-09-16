@@ -80,3 +80,9 @@ ossutil_output/
 # 宣传片的预览副本：挂在 static/ 下只是为了能用浏览器点开看，成片发布走 OSS。
 # 里面有 8MB 的 mp4，不该进库；文本那几份在 scripts/ 下有入库的正本。
 static/promo/
+
+# 宣传策划文档里的成片：只留文档和分镜图，mp4 不进库。
+# 4 个片子共 109MB（50s 脚本版 37M / 50s 42M / 45s 23M / 15s 竖版 7.2M），
+# 收进来会让 .git 从 10MB 涨到 120MB 且永久留在历史里；线上 OSS 已有同一份。
+# 跟上面 static/promo/ 一个道理。
+docs/advertising/assets/*.mp4
