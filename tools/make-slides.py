@@ -28,8 +28,10 @@
 ----
     .venv/bin/python tools/make-slides.py
 
-改图：把原图放回 static/，改下面 JOBS 里的文件名，重跑即可。
-原图进仓库会很大（P3.png 有 8 MB），加工完的两份 WebP 加起来才几百 KB。
+改图：把原图放进 assets/landing-src/，改下面 JOBS 里的文件名，重跑即可。
+原图在**仓库里**（7 张共 17 MB）：没有它们，clone 下来的人只能拿到加工好的
+WebP，任何一屏要重裁都得回头找原始截图。它们**不放在 static/** —— static 是
+直接对外托管目录，原图放那儿等于把 8 MB 的 P3.png 公开挂到网上，白耗带宽。
 """
 
 import os
@@ -39,6 +41,9 @@ from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC = os.path.join(ROOT, "static")
+# 原图在 assets/landing-src/，加工产物才落 static/promo/。两者的区别是
+# **会不会被 web 服务器公开托管**：产物要给人下载所以放 static，原图只是源材料。
+SRC = os.path.join(ROOT, "assets", "landing-src")
 OUT = os.path.join(STATIC, "promo")
 
 # (原图, 输出的基准名, 每个变体的裁剪对齐方式)
@@ -109,7 +114,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     missing = False
     for tag, src, base, align in JOBS:
-        path = os.path.join(STATIC, src)
+        path = os.path.join(SRC, src)
         if not os.path.exists(path):
             print(f"缺图：{path}", file=sys.stderr)
             missing = True
