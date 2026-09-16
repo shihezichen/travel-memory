@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>旅行记忆 — 把一趟旅行，变成能重新走一遍的记忆</title>
-<meta name="description" content="地图轨迹、照片视频、路线回放、只读分享，还有一个对 AI 开放的记忆接口。照片不经第三方，数据随时整份导出。">
+<meta name="description" content="地图轨迹、照片视频、路线回放、只读分享，还有一个对 AI 开放的记忆接口。行程随时整份导出，不做广告推荐。">
 <meta property="og:title" content="旅行记忆 · Travel Memory">
 <meta property="og:description" content="把一趟旅行，变成能重新走一遍的记忆。">
 <meta property="og:type" content="website">
@@ -258,7 +258,116 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
 
 /* 相册墙示意 */
 .album{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
-.album i{aspect-ratio:1;border-radius:6px;background-size:cover}
+/* 照片墙的舞台：给 #wall-fill 提供定位参照，大小就是墙本身 */
+.wall-stage{position:relative}
+/* --- 铺满层：被选中的那张照片 -----------------------------------------------
+   平时不可见（opacity:0、scale 缩到 0）。播放时由 JS 设定：
+     --fx/--fy  —— 起点格子相对墙左上角的偏移
+     --fw/--fh  —— 起点格子的宽高
+     background-image —— 那一格的底图
+   然后加上 data-on，用 transform 从「起点格子」长到「铺满整墙」。
+
+   为什么用 transform 而不是动 width/height：
+   width/height 每一帧都要重新布局，一张铺满卡片的大图重排代价很高，
+   手机上会掉帧；transform 只走合成层，不改布局。
+   起点靠 translate + scale 表达：先平移到格子中心，再按比例放大，
+   transform-origin 固定在中心，缩放的倍率就是「格子边长 → 墙边长」的比。
+
+   图片本身是 520×520 的方图，铺到 6.18:1 的墙上必然要裁 ——
+   用 cover 让它按短边撑满、长边裁掉，照片不变形。
+   （桌面墙 1000×665、格 161.7，倍率 6.18；手机墙 274×413、格 65.5，倍率 4.18。） */
+/* .76s 对齐 JS 里的 GROW_FULL，.52s 对齐 REHIDE —— 大图从格子「长开」的
+   和收回「落回格子」用的时长故意不同：长开慢一点更抓眼，收回快一点更干净。
+   改这两个数就要同步改脚本顶部那两个常量，否则 JS 会在动画跑完之前
+   就把下一拍挂上（时序对不上，表现为下一张抽得太早）。 */
+.wall-fill{position:absolute;inset:0;pointer-events:none;z-index:4;
+  border-radius:8px;background-size:cover;background-position:center;
+  opacity:0;transform-origin:50% 50%;
+  will-change:transform,opacity;
+  transition:transform .76s cubic-bezier(.22,.61,.36,1),
+             opacity .28s ease}
+/* 只挂 [data-on] 是铺满态；[data-on][data-out] 是"缩回格子、但还没消失"的中间态。
+   两态都必须显式写 transform:none，原因见下面脚本阶段 3 那条注释：
+   内联 transform 一旦存在，光靠 `[data-on]` 是压不住它的。
+   data-out 的作用是把 opacity 从 1 往下按（否则缩回的过程全程不透明）。 */
+.wall-fill[data-on]{opacity:1;transform:none}
+.wall-fill[data-on][data-out]{opacity:0;transform:none}
+.wall-fill::after{content:'';position:absolute;inset:0;border-radius:8px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+/* --- 相册墙：每格一张独立小图 -----------------------------------------------
+   曾经试过「24 格共切一张大拼图」：把 background-size 放大到 400%、再用
+   background-position 的百分比挑出自己那一块。**那条路是错的**，别回头走 ——
+   背景定位的百分比基准是「(图片尺寸 − 容器尺寸)」，而图片尺寸又随
+   background-size 变，两个百分比互相耦合；再加上 grid 均分出来的格子宽是浮点，
+   缩放比、基准、落点三者只要有一处对不上，整墙就沿对角线错开、或者只取到
+   比一块更小的区域再被拉大。实测在 1440 宽下反复调了 5 轮都没稳定对齐。
+
+   现在每格自己一张 520×520 的 webp（static/wall/p01..p12），
+   background-size:cover + center —— 没有任何坐标要算，也就不可能算错。
+   12 张图给 24 格用，每张出现两次（错开位置，不至于挨着）。
+
+   放大播放靠 transform:scale 而不是换图：图片本来就是 cover 铺满的，
+   放大只是把整个格子连同背景一起放大，视觉上就是「这张照片被拎了出来」。
+   transform 走合成层，比动 background-size 省得多，手机上也不掉帧。 */
+/* 底图不写在 CSS 里，而是靠 JS 在滚动到附近时才挂上去（见脚本）。
+   24 格一旦写死 background-image，浏览器会在首屏就把 12 张全拉下来 ——
+   实测确认过。照片墙在页面第三屏，首屏根本看不见，没必要现在下载。
+   属性名用 data-bg 而不是 style：保持 CSS 静态、可缓存，JS 只管时机。 */
+.album i[data-bg]{background-image:var(--wall-bg)}
+.album i{aspect-ratio:1;border-radius:6px;background-size:cover;
+  background-position:center;background-repeat:no-repeat;
+  will-change:opacity}
+/* 被选中的那一格：不等压暗，先「选中」——亮起来、描一圈边、轻微冒出墙面。
+   这段是**留白**用的（选中后先停一下再放大），所以变化要看得见、又别太吵：
+   亮度加一点点、外边光勾勒轮廓、translateY 抬 2px 给出「被拎起来」的暗示。
+   注意这里动的是 filter/box-shadow，不影响格子的几何 —— 下面 setOrigin()
+   读 offsetLeft/offsetWidth 定位起点时，读到的仍是没被 transform 污染的布局值。 */
+/* --g 是放大倍率，1.5 是需求定的那个「原地放大」。
+   用变量而不是写死 1.5，是为了让第 ③ 拍能把 1.5 平滑收向 1 ——
+   大图从这一格长出来的同时，格子的放大态同步让位，两者共用同一条过渡。 */
+.album i[data-pick]{--g:1.5}
+/* [data-grow] 是"放大态留驻"：交接那一刻 data-pick 就摘掉了（否则它会盖住压暗），
+   但格子不能立刻跳回 1 倍 —— 得等 --g 过渡到 1 才落回。 */
+.album i[data-pick],.album i[data-grow]{
+  transform:scale(var(--g,1));z-index:2}
+.album i[data-pick]{opacity:1;filter:brightness(1.18) saturate(1.06);
+  box-shadow:0 0 0 2px rgba(255,255,255,.72),0 6px 18px rgba(0,0,0,.5)}
+/* 已经交出照片的那一格：压暗，视觉上「它被抽走了」。
+   两条都要**等权重**写。只写 `.album i[data-src]` 的话，它在样式表里排在
+   `[data-pick]` 之后、又同为 (0,2,1)，交接那一刻 `data-pick` 还没摘掉，
+   声明互相覆盖的结果是「已经交出去了、格子还是亮的」——
+   实测原格一直不压暗，看着像照片被复制了一份而不是被拎走。
+   这里把带 [data-pick] 的组合一起写上，交接时无论两个属性谁先谁后都压得下去。 */
+.album i[data-src],.album i[data-src][data-pick]{opacity:.25}
+/* 格子上的过渡：透明度、选中态、压暗都要走同一个缓动，
+   否则选中和压暗会硬切。放大本身不在这里 —— 放大走的是 #wall-fill 的 transform。 */
+.album i{transition:opacity .3s ease,transform .42s cubic-bezier(.22,.61,.36,1),
+  filter .32s ease,box-shadow .32s ease}
+/* 12 张底图按格分配（第 n 格用 pXXX.webp，循环两遍） */
+.album i:nth-child(1){--wall-bg:url(/static/wall/p01.webp)}
+.album i:nth-child(2){--wall-bg:url(/static/wall/p02.webp)}
+.album i:nth-child(3){--wall-bg:url(/static/wall/p03.webp)}
+.album i:nth-child(4){--wall-bg:url(/static/wall/p04.webp)}
+.album i:nth-child(5){--wall-bg:url(/static/wall/p05.webp)}
+.album i:nth-child(6){--wall-bg:url(/static/wall/p06.webp)}
+.album i:nth-child(7){--wall-bg:url(/static/wall/p07.webp)}
+.album i:nth-child(8){--wall-bg:url(/static/wall/p08.webp)}
+.album i:nth-child(9){--wall-bg:url(/static/wall/p09.webp)}
+.album i:nth-child(10){--wall-bg:url(/static/wall/p10.webp)}
+.album i:nth-child(11){--wall-bg:url(/static/wall/p11.webp)}
+.album i:nth-child(12){--wall-bg:url(/static/wall/p12.webp)}
+.album i:nth-child(13){--wall-bg:url(/static/wall/p07.webp)}
+.album i:nth-child(14){--wall-bg:url(/static/wall/p02.webp)}
+.album i:nth-child(15){--wall-bg:url(/static/wall/p11.webp)}
+.album i:nth-child(16){--wall-bg:url(/static/wall/p04.webp)}
+.album i:nth-child(17){--wall-bg:url(/static/wall/p09.webp)}
+.album i:nth-child(18){--wall-bg:url(/static/wall/p01.webp)}
+.album i:nth-child(19){--wall-bg:url(/static/wall/p06.webp)}
+.album i:nth-child(20){--wall-bg:url(/static/wall/p12.webp)}
+.album i:nth-child(21){--wall-bg:url(/static/wall/p03.webp)}
+.album i:nth-child(22){--wall-bg:url(/static/wall/p08.webp)}
+.album i:nth-child(23){--wall-bg:url(/static/wall/p05.webp)}
+.album i:nth-child(24){--wall-bg:url(/static/wall/p10.webp)}
 
 /* 聊天示意 */
 /* `.chat` 这个名字在页面里被用了两次，含义完全不同，共用一个类名是历史遗留：
@@ -272,8 +381,22 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
    下面任意一层加上 transform（或者是动画里带了 transform），上面的 `.chat`
    就会脱离文档流、跳到那个祖先的左上角去 —— 实测的表现正是"稻城亚丁那段
    文字浮上来盖住『每张照片都能写字』这句标题"。写死 static 从根上断掉这条路。 */
-.card .chat{position:static;display:flex;flex-direction:column;gap:10px}
-.msg{max-width:82%;padding:11px 15px;border-radius:15px;font-size:14px;line-height:1.5}
+/* **width:auto 必须显式写。** 第 715 行那条给第 5 屏全屏插图用的
+   `.chat{...width:60%}` 是全局的，卡片这套规则没写宽度就会继承它 ——
+   实测桌面 1440：.demo-box 1034px，气泡该占满却只有 600px（1034×60%≈620，
+   减边框正好 600），右边空出 434px。`.c-3` 那两张卡同理，气泡被压到 288px。
+   写回 auto 让 .chat 作为块级盒子撑满 .demo-box / .card 的可用宽度，
+   下面 .msg 的 max-width:100% 才真正等于"占满卡片"。 */
+.card .chat{position:static;width:auto;display:flex;flex-direction:column;gap:10px}
+/* max-width 封顶在 **75%**：气泡最多占聊天区的四分之三，对侧固定留出
+   整体宽度的 1/4。配合下面 .me 靠右 / .ai 靠左：
+     · 提问（.msg.me，align-self:flex-end）右侧贴边，左边留出 25% 空档；
+     · 回答（.msg.ai，align-self:flex-start）左侧贴边，右边留出 25% 空档。
+   留白是**靠 max-width 保证**的，不是靠"文字短正好够不着" —— 段落再长也
+   撑不过 75%，所以两条留白线在任何内容下都稳。
+   宽度仍是收缩的（不写 width），短句就窄、长句才到 75%，气泡该有的样子。
+   两者都还留着 border-radius 上那个小尖角（4/5px）保留气泡的指向感。 */
+.msg{max-width:75%;padding:11px 15px;border-radius:15px;font-size:14px;line-height:1.5}
 .msg.me{align-self:flex-end;background:var(--grad);color:#fff;border-bottom-right-radius:5px}
 .msg.ai{align-self:flex-start;background:rgba(255,255,255,.07);color:var(--fg);
   border:1px solid var(--line);border-bottom-left-radius:5px}
@@ -289,7 +412,14 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
 .codeline .k{color:var(--brand-1)}
 
 /* ---------- 数字条 ---------- */
+/* **align-items:start 是把「标题各行其是」按住的。**
+   grid 默认 stretch —— 四列各自等高，但每格内部的 <b> 和 <span> 是
+   两个独立块级盒子，谁的内容先折行谁就把 <span> 往下推：改前的表现是
+   「朋友点开就看得见」折成两行标题，它下面那行说明就比邻列矮一整行。
+   改文案前四句标题都短，一直没暴露。加上 start 让四列按顶部对齐，
+   标题该占几行占几行，说明行拉平。 */
 .marquee-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;
+  align-items:start;
   border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:34px 0}
 .marquee-row div b{display:block;font-size:clamp(24px,3.4vw,36px);font-weight:700;
   letter-spacing:-.03em;background:var(--grad);-webkit-background-clip:text;
@@ -395,11 +525,19 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   .replay .bar{width:74px}
 
   .marquee-row{grid-template-columns:repeat(2,1fr);gap:26px 16px;padding:28px 0}
-  .marquee-row div b{font-size:19px}
-  .marquee-row div span{font-size:12.5px}
+  /* 手机上标题和说明都缩了字号，但**缩得不一样** —— 标题 36→19px（约 53%）
+     而说明只从 13.5 降到 12.5（约 93%），于是说明相对标题显得又大又挤。
+     两行说明顶到标题的视觉高度，四格高低差被放大。把行高和说明色阶一起
+     压一档，让标题重新占主导。 */
+  .marquee-row div b{font-size:19px;line-height:1.25}
+  .marquee-row div span{font-size:12.5px;line-height:1.55;margin-top:6px;
+    display:block;color:var(--fg-3)}
+  .marquee-row div{gap:0}
   /* 手机上反而要更多列：格子小才像「一面墙」，4 列会变成一张张大图 */
-  .album{grid-template-columns:repeat(6,1fr);gap:4px}
+  .album{grid-template-columns:repeat(4,1fr);gap:4px}
   .album i{border-radius:4px}
+  /* 铺满层在手机上是竖长条（墙 274×413），520px 的方图 cover 上去
+     只用到中间一条，够清晰；不用另备一套竖图。 */
   .card{padding:22px}
   .card h3{font-size:17.5px}
   .final{padding:52px 20px;border-radius:22px}
@@ -480,8 +618,24 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
           真正的 3D 观感由 `.stage-outer` 上那条 `perspective-origin` 之外的
           变化承担 —— 少一点纵深，换轮播能动，值。
       拿不准的时候：给 .carousel 的祖先链加任何 transform 之前先想清楚这一条。 */
-.carousel{position:relative;overflow:hidden}
-.carousel-clip{position:relative;overflow:hidden;perspective:none}
+/* touch-action:pan-y —— **这是手机上手势能用的前提，漏了就整个失效。**
+   默认值 auto 允许浏览器把横向拖动当成原生滚动/后退手势吃掉：手指还没移出
+   几个像素，浏览器就接管了这次触摸，pointermove 不再派发给我们，
+   JS 里的跟手逻辑从头到尾收不到一个 move（表现就是"怎么划都不动"）。
+   允许 pan-y（纵向留给浏览器滚页面，横向归我们），配合 JS 里
+   认领后才 preventDefault，就能在"页面能上下滚"和"照片能左右划"之间共存。
+
+   注意：这条必须挂在**手指真正落下的那一层**上，也就是 .carousel-track
+   （.carousel-slide 是它的子元素，会继承这个行为）——挂在 .carousel 上
+   不生效，因为 touch-action 只看事件目标自身的计算值，不向祖先回溯。 */
+.carousel, .carousel-clip, .carousel-track, .carousel-slide{touch-action:pan-y}
+/* z-index:0 建一个层叠上下文，把轨道关在这一层里。
+   两个作用：① 桌面端 .stage-outer 的 perspective 传进来时，被变换过的
+   轨道不会跑到 .carousel 外面去；② 让后面那些没有 z-index 的兄弟节点
+   （左右箭头）稳定地压在轨道之上 —— 否则同一层叠上下文里按 DOM 顺序排，
+   排在前面的轨道内容会盖住箭头，`elementFromPoint` 命中的是图片而不是按钮，
+   鼠标根本 hover 不到箭头。 */
+.carousel-clip{position:relative;overflow:hidden;perspective:none;z-index:0}
 .carousel-track{
   display:flex;height:100%;
   will-change:transform;
@@ -619,7 +773,22 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
      优先级同为 (0,2,0) 却写在更后面，不带 !important 会被它反压，
      等于白改（试过，五屏又全变回方形）。 */
   .stage[data-slide="3"]{aspect-ratio:4/3!important;min-height:0}
-  .stage[data-slide="3"] .shot-img{object-fit:contain;object-position:center}
+  /* 这一屏在手机上**也走 cover**，不再是 contain。
+     手机版源图是 1:1（1000×1000），容器是 4:3 —— contain 会把它按高度
+     缩到 264px，左右各空出 44px 的黑边（刚哥反馈："两边没有撑满容器"）。
+     按「放大到撑满容器、顶部对齐、用容器裁掉多余部分」处理：
+     cover 让方图放大到宽 352（1:1 下同时给出 352 的高），比容器 264 高出
+     的那 88px 由 object-position:center top 全部从**底部**裁掉 ——
+     分享页的二维码和卡片都靠上，顶部对齐才能保住"切一点就不能扫"的那块。
+
+     **这张图的裁切同时发生在两处**，改一边就要改另一边：
+       ① 图片加工（tools/make-slides.py 的 JOBS）把 1:1 原图裁成 1000×1000；
+       ② 这里的 cover + center top 把方图裁进 4:3 容器。
+     两处都是"保上边、裁下边"才对得上。之前脚本那侧写的是 center
+     （照更早的竖版原图配的），结果图在 ① 就被砍了顶，这里再怎么 top 也救不回来。
+     注意 object-position 的纵轴对 cover 只决定"从上往下切还是从下往上切"，
+     横向因为比例相反没有裁切余地，center 是唯一合理值。 */
+  .stage[data-slide="3"] .shot-img{object-fit:cover;object-position:center top}
 
   /* 五屏高度必须一致。轨道是 flex 行，默认 align-items:stretch ——
      任何一屏自己算高了，其余四屏会被一起撑上去，`.stage` 的 overflow:hidden
@@ -750,6 +919,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 
 @media (prefers-reduced-motion:reduce){
   .up-card,.wall i{animation:none}
+  /* 相册墙的抽卡播放由 JS 定时驱动，这里把过渡也关掉：
+     用户在系统里勾了「减少动态效果」，就不该再有一格一格弹开的效果。
+     真正的开关在脚本里（matchMedia），这句只是兜底。 */
+  .album i{transition:none}
   /* 减少动态效果时不要逐条演：直接全部就位 */
   .a-1,.a-2,.a-3,.a-4,.a-5{animation:none;opacity:1}
   .api-live i{animation:none}
@@ -972,7 +1145,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 <section class="hero">
   <div class="wrap">
     <span class="eyebrow"><span class="dot"></span
-      ><span class="only-pc">不碰第三方 · 数据随时导出 · MCP 就绪</span
+      ><span class="only-pc">数据随时导出 · 不做广告推荐 · MCP 就绪</span
       ><span class="only-m">数据随时导出 · MCP 就绪</span></span>
     <h1>把一趟旅行，<br>变成<span class="grad">能重新走一遍</span>的记忆</h1>
     <p class="sub">
@@ -1203,9 +1376,23 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
             <small>自然语言提问，接口返回结构化行程，答案能追到原始照片</small></p>
         </div>
 
-        <!-- 左右切换箭头。**放在 .carousel 里面**（不是外面）—— CSS 是靠
-             `.carousel:hover .car-nav` 控制显隐的，挪到外面那套悬停判据就失效了。
-             tabindex 默认可用，键盘也能翻页；触屏下面由 CSS 藏起来，走手势。 -->
+        </div><!-- /carousel-track -->
+       </div><!-- /carousel-clip -->
+
+        <!-- 左右切换箭头。**必须放在 .carousel-track 外面、.carousel 里面**：
+
+             ① 放 track 外面 —— 箭头是 position:absolute，一旦落在轨道里，
+                就被轨道那条 translate3d 一起平移走了。实测（这是刚哥报的
+                "只有第一屏有箭头、别的屏鼠标放上去不出现"的原因）：
+                切到第 2~5 屏时轨道的位移是 -354 / -708 / -1062 / -1416，
+                箭头跟着跑到可视区左边外面，`elementFromPoint` 在箭头位置上
+                命中的是 hero 甚至 null，鼠标根本 hover 不到它。
+
+             ② 留 .carousel 里面 —— CSS 靠 `.carousel:hover .car-nav` 控制显隐，
+                挪到 .carousel 外面那套悬停判据就失效了。
+
+             另外 .carousel 必须是 position:relative（它确实是），
+             否则绝对定位的箭头会往更上层找参照系。 -->
         <button class="car-nav prev" type="button" data-car-prev
                 aria-label="上一张">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>
@@ -1214,8 +1401,6 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
                 aria-label="下一张">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
         </button>
-        </div><!-- /carousel-track -->
-       </div><!-- /carousel-clip -->
       </div><!-- /carousel -->
 
       <!-- 轮播圆点。点图是播视频，点圆点是翻页 —— 两件事分开，别互相抢。 -->
@@ -1227,11 +1412,26 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 <!-- ========== 数字条 ========== -->
 <section style="padding:0">
   <div class="wrap">
+    <!-- **这四句是「用户视角的价值」，不是「功能点」。**
+         改前写的是「真实驾车路线 / 拍完就传 / 断点续传 / 自己的服务器」——
+         全是从实现出发的技术词（断点续传是协议、自己的服务器是部署方式），
+         刚哥的反馈是「和整个页面不太符合」。这一条带的作用是**承接轮播、
+         勾住往下看的兴趣**，紧接着 01~04 才一个一个分述功能，所以它只该
+         回答「这 App 对我有什么用」，具体怎么实现留到下面讲。
+
+         写法：主句用**用户自己的动作**（自动 / 只 / 找 / 一直在），副句补
+         一句能立刻想象出画面的具体好处。四句按下面的分述顺序排列，
+         每句都对应一节：① 记录　② 回看　③ 分享　④ 开放接口。 -->
+    <!-- 标题长度有硬上限：1440 下每列 261px、字号 36px，超了就折行、折行就
+         把整条带子的基线搅乱（实测「朋友点开就看得见」288px 溢出、
+         「照片只留在原地」252px 只是勉强不溢出但没余量）。所以四句标题统一
+         压在 6 个字以内：中文单字按字号等宽算，6 字 ×36px=216px 是安全线，
+         下面的数字就是这么定的，改标题前先量一量。 -->
     <div class="marquee-row reveal">
-      <div><b>真实驾车路线</b><span>不是两点之间的直线</span></div>
-      <div><b>拍完就传</b><span>时间和坐标自动读出来</span></div>
-      <div><b>断点续传</b><span>大视频中断了接着传，不用重来</span></div>
-      <div><b>自己的服务器</b><span>不上传给任何第三方</span></div>
+      <div><b>路线自动还原</b><span>点几个落脚点，真正开过的那条路自己长出来</span></div>
+      <div><b>照片交给它收</b><span>传完就回相册躺着，不用再挑再整理</span></div>
+      <div><b>想找就能找</b><span>一句话问出来，答案能追到当时那张照片</span></div>
+      <div><b>朋友点开就看</b><span>发条链接过去，不用注册、不用装 App</span></div>
     </div>
   </div>
 </section>
@@ -1263,9 +1463,26 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <p>不是只能起个标题。当时在想什么、那家店叫什么、下次来要注意什么 —— 该写的写下来，一个月后你会感谢自己。</p>
         <div class="demo-box">
           <div class="chat">
+            <!-- 标题、正文、落款本来是三个 `<br>` 断开的**硬换行**。
+                 这张卡是 .c-6（整行，内容宽约 1030px），气泡早就占满了
+                 容器 —— 右边空一大片是因为**文字自己在提前断行**，不是宽度不够。
+                 去掉硬换行改由浏览器自己折，长句自然铺满整行。
+                 `.demo-box` 那层深色底 + 边框还在，撑满的是那个演示框。
+
+                 **这条气泡要 100%、不能跟智能体那块一起收到 75%**，所以宽度
+                 写在内联样式上。原先我以为内联是"忘了删的历史遗留"，把它去掉
+                 想让全页统一 —— 那是错的：去掉之后这条也跟着收到 75%，
+                 右边平白多出一块空白，正是要修的问题。
+                 两处的诉求本来就不同，别再"统一"：
+                   · 智能体那张卡是**对话**，一问一答要有来有回，气泡留 25%
+                     的错落感才对（`.msg{max-width:75%}` 管的就是它）；
+                   · 这张卡是**单条笔记**，舞台上就它一个元素，占满演示框
+                     才显得是"一条完整的记录"。
+                 写内联是这里的最优解：优先级最高，不会被 `.msg` 那条 75%
+                 干扰，也不用为它单独加一个类名 + 一条带 !important 的规则。 -->
             <div class="msg ai" style="max-width:100%">
-              <b>10 月 4 日 · 稻城亚丁 · 冲古草甸</b><br>
-              海拔 3900，走两步喘一次。<strong>下午四点</strong>光线最好，牛比人多。<br>
+              <b>10 月 4 日 · 稻城亚丁 · 冲古草甸</b>
+              海拔 3900，走两步喘一次。<strong>下午四点</strong>光线最好，牛比人多。
               <span style="color:rgba(255,255,255,.42)">— 下次记得带氧气瓶，别逞强</span>
             </div>
           </div>
@@ -1295,12 +1512,33 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <h3>相册墙</h3>
         <p>整趟行程的照片铺成一面墙，双指捏合改每行几张，按时间排、按类型筛。</p>
       </div>
+      <!-- 「随时整份带走」原来在页尾单独一张卡。它和这块讲的是同一件事的两端：
+           回看是**在站内**重新走一遍，导出是**拿走之后**照样能走一遍 ——
+           并在这里，回看完的顾虑（照片是不是就锁在你站里了）当场就答了，
+           页尾也不再重复。 -->
       <div class="card c-6 reveal" style="padding-bottom:28px">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 5h9v9H4z"/><path d="M9 9l11-4M15 9v6a3 3 0 01-3 3H9"/></svg></div>
+        <h3>不只是在这儿能看，随时整份带走</h3>
+        <p style="margin-bottom:18px">每趟行程都能导出成一个文件，照片和文字一起 ——
+           哪天不想用了，拿走就是。不做广告推荐，也不拿去训练模型。</p>
         <div class="demo-box" style="margin-top:0">
-          <div class="album">
-            <i class="ph-a"></i><i class="ph-b"></i><i class="ph-c"></i><i class="ph-d"></i><i class="ph-e"></i><i class="ph-b"></i>
-            <i class="ph-c"></i><i class="ph-e"></i><i class="ph-a"></i><i class="ph-d"></i><i class="ph-b"></i><i class="ph-c"></i>
-            <i class="ph-d"></i><i class="ph-a"></i><i class="ph-e"></i><i class="ph-c"></i><i class="ph-d"></i><i class="ph-a"></i>
+          <!-- 相册墙：24 格，每格一张独立小图（底图由上面的 :nth-child 分配）。
+               顺序刻意打散、不按 p01..p12 排：同一张照片的两格不相邻，
+               否则一眼看出是重复的。
+               #wall-fill 是「被选中那张铺满整面墙」的那一层，平时空着；
+               播放时 JS 把选中格的图填进去，它从那一格的位置放大到盖住整墙。
+               放在 .album 之外、.demo-box 之内，这样它铺满的是照片墙那一块，
+               不会溢出到卡片外面去。 -->
+          <div class="wall-stage" id="wall-stage">
+            <div class="album" id="wall-album">
+              <i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i>
+            </div>
+            <div class="wall-fill" id="wall-fill" aria-hidden="true"></div>
           </div>
         </div>
       </div>
@@ -1315,9 +1553,9 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <p>照片按地点聚成一堆，跟着缩放变大小 —— 哪儿拍得最多，一眼就看出来。</p>
       </div>
       <div class="card c-2 reveal">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5M4 20h16"/></svg></div>
-        <h3>存回手机</h3>
-        <p>照片按原图下载，视频可选清晰度，文件名自动按「日期 + 地点 + 序号」拼好。</p>
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 17l4-9 5 5 4-8 5 12z"/></svg></div>
+        <h3>整趟带走</h3>
+        <p>一趟行程导出成一个文件，照片和文字都在里面 —— 下载、备份、换台设备接着看都行。</p>
       </div>
     </div>
   </div>
@@ -1337,6 +1575,14 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <p style="font-size:16px;margin-top:16px;color:var(--fg-2)">
           <strong style="color:#fff;font-weight:620">一个分享页只含那一趟行程</strong> ——
           你的足迹热力图、别的行程的照片，不会跟着漏出去。
+        </p>
+        <!-- 「链接随时收回」原来单独占着页尾隐私区的一张卡（原标题「删了就是删了」），
+             讲的其实全是分享这条链路上的事，和上面这段重复，所以并到这里来 ——
+             「能收回」紧跟在「漏不出去」后面是同一件事的两面：边界天生就窄，
+             窄的同时你说撤就撤。并完页尾少一张，不再两处各讲半截。 -->
+        <p style="font-size:16px;margin-top:14px;color:var(--fg-2)">
+          链接<strong style="color:#fff;font-weight:620">随时可以收回</strong>，
+          设过期时间、加密码都行 —— 手滑发错了，撤掉那条链接就失效了，照片不会流出去。
         </p>
       </div>
       <div class="card c-3 reveal" style="display:flex;flex-direction:column;justify-content:center;
@@ -1412,21 +1658,20 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 <!-- ========== 隐私 ========== -->
 <section>
   <div class="wrap">
+    <!-- 这一条带原来有三张卡。「随时整份带走」并进了 02/回看，「删了就是删了」
+         并进了 03/分享（两处都见那边的注释），只剩下面这两张 —— 它们讲的是
+         站在站内、面向所有行程的一条底线，跟某趟行程或某条链接无关，
+         留在页尾才合适。删两张后 .c-2 的栅格仍然成立，不用改 CSS。 -->
     <div class="bento">
       <div class="card c-2 reveal">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.4 8.2-8 9.6C7.4 20.2 4 17 4 12V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
-        <h3>随时整份带走</h3>
-        <p>每趟行程都能导出成一个文件，照片和文字一起。不做广告推荐，也不拿去训练模型。</p>
-      </div>
-      <div class="card c-2 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
-        <h3>删了就是删了</h3>
-        <p>分享链接可撤销、Key 可吊销，权限边界写死在接口里。</p>
+        <h3>不做广告，不训模型</h3>
+        <p>你的行程只用来给你自己看，不拿去推荐、不拿去训练，也不卖给谁。</p>
       </div>
       <div class="card c-2 reveal">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></div>
-        <h3>照片不经第三方</h3>
-        <p>上传的照片和视频只进本站自己的存储，不借道任何图床或云相册，也不会同步给别的服务。</p>
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5M4 20h16"/></svg></div>
+        <h3>存回手机</h3>
+        <p>照片按原图下载，视频可选清晰度，文件名自动按「日期 + 地点 + 序号」拼好。</p>
       </div>
     </div>
   </div>
@@ -2079,6 +2324,214 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
     location.href = '/app';
   });
 });
+</script>
+<script>
+/* ---------- 相册墙：每一轮 = 选中 → 停 → 原地放大 → 停 → 铺满 → 停 → 收回 ----------
+   这张卡的文案讲的是「随时整份带走」，图得先说清「带走的是什么样的一堆照片」。
+   静态色块说不出这个，所以换成真照片；而真正的说服力在「它是一整面墙、能
+   一张张拎出来看」—— 这正是应用里相册的用法，于是让它自己演一遍。
+
+   节奏（一轮的总时长 ≈ 1.0 + 0.62 + 0.42 + 0.52 + 0.76 + 2.2 + 0.52 ≈ 6s）：
+     ① 整面墙静止 HOLD_STILL(1s)
+     ② 随机挑一格「选中」：点亮 + 描边 + 抬起，停 HOLD_PICK(0.62s)
+     ③ 这一格原地放大到 GROW(1.5) 倍，停 HOLD_GROW(0.52s)
+     ④ 大图从它原来的位置长开、铺满整面墙，停 DWELL_FULL(2.2s)
+     ⑤ 缩回原来那一格，原格复原，再静止 HOLD_STILL …… 如此往复
+
+   为什么是「一张铺满」而不是「同时放大几张小的」：
+   前者对应应用里点开一张照片看大图，后者只是墙上多几个色块。前者才是相册的用法。
+
+   两次停留（②之后、③之后）是刻意的：没有它们，选中和放大就是一瞬间的事，
+   看不出「先选中、再放大」这个先后关系。②用格子的 CSS 做，③才是放大 ——
+   两个阶段动的是不同元素（格子 vs #wall-fill），改任意一个都不会串台。
+ */
+(function () {
+  var stage = document.getElementById('wall-stage');
+  var box   = document.getElementById('wall-album');
+  var fill  = document.getElementById('wall-fill');
+  if (!stage || !box || !fill) return;
+  var cells = Array.prototype.slice.call(box.querySelectorAll('i'));
+  if (cells.length < 8) return;
+
+  /* 用户在系统里勾了「减少动态效果」就完全不播：不建定时器、不挂过渡。
+     比播完再用 CSS 压掉动画更彻底 —— 连跳动的可能性都不留。 */
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  /* 一轮五拍的节奏：静止 → 选中停 → 原地放大停 → 铺满停 → 收回静。
+     时间常量集中在这里，调手感只改这几个数。 */
+  var HOLD_STILL  = 1000;  // 整面墙完全静止（上一张收回之后）
+  var HOLD_PICK   = 620;   // 选中之后、开始放大之前的停留
+  var GROW_MS     = 420;   // 原地放大 / 收回用的过渡时长，必须和上面 cell.style.transition 一致
+  var GROW        = 1.5;   // 原地放大到几倍（1.5 是需求定的）
+  var HOLD_GROW   = 520;   // 放大到 1.5 倍之后、开始铺满之前的停留
+  var GROW_FULL   = 760;   // 从格子铺满整墙的过渡时长，必须和 .wall-fill 的 transition 一致
+  var DWELL_FULL  = 2200;  // 铺满之后停留多久
+  var REHIDE      = 520;   // 收回（铺满 → 回到那一格）的过渡时长，同样要对齐 CSS
+
+  /* 底图懒挂：照片墙在第三屏，首屏不该背这 12 张（540KB）。
+     实测过 —— 把 background-image 写在 CSS 里，浏览器首屏就全下完了。
+     所以底图 URL 先搁在 --wall-bg 上，等这一块快进视口时再加 data-bg
+     把 --wall-bg 真正接上。rootMargin 给 300px 提前量。
+     不支持 IntersectionObserver 的老浏览器就直接全挂上，退回旧行为。 */
+  var lazy = function () { cells.forEach(function (el) { el.setAttribute('data-bg', ''); }); };
+  var loaded = false;
+  var load = function () { if (!loaded) { loaded = true; lazy(); } };
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (ents) {
+      ents.forEach(function (e) { if (e.isIntersecting) { load(); io.disconnect(); } });
+    }, { rootMargin: '300px' });
+    io.observe(box);
+  } else { load(); }
+
+  var timers = [];
+  function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+
+  /* 窗口尺寸一变（手机横竖屏、桌面拖窗口），格子边长和墙的尺寸全变，
+     起点位置立刻失效。当前这一拍停掉、重新从头开始，比让大图从错误的位置
+     长出来好。resize 只做去抖，不重建 IO。 */
+  var rz;
+  window.addEventListener('resize', function () {
+    clearTimeout(rz);
+    rz = setTimeout(function () { clearTimers(); reset(); later(round, 200); }, 200);
+  });
+
+  /* 页面在后台标签页里时不要空转：切回来再从头开始一轮，
+     否则用户看到的第一眼永远是「上一轮播到一半」的残影。 */
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) clearTimers();
+    else { clearTimers(); reset(); later(round, 300); }
+  });
+
+  function reset() {
+    fill.removeAttribute('data-on');
+    fill.removeAttribute('data-out');
+    fill.style.borderRadius = '';
+    fill.style.transition = 'none';       // 复位时不要播过渡，否则切的瞬间会闪一下
+    fill.style.transform = '';
+    cells.forEach(function (el) {
+      el.removeAttribute('data-src');
+      el.removeAttribute('data-pick');
+      el.removeAttribute('data-grow');
+      el.style.removeProperty('--g');     // 清掉原地放大，别把 1.5 倍留在墙上
+      el.style.transition = '';
+    });
+  }
+
+  /* 起点：让铺满层看起来是从这一格里长出来的。
+     难点在于一格是正方形、整面墙不是（桌面 1000×665、手机 274×413），
+     而铺满态的 transform 是 none —— 一个等比变换，想让起点精确等于正方形格子
+     是做不到的。**这里选了「起点优先」**：起点用非等比缩放锚在格子中心，
+     因此起点严格等于那一格、边界严丝合缝；代价是长开过程中 fill 的宽高比
+     会从 1:1 渐变到墙的宽高比，照片在中间帧上有极轻微的拉伸，
+     到铺满时完全消失。旧版反过来保等比、牺牲起点，结果起点永远差一点、
+     和格子对不齐 —— 两害相权，选了不留缝的这个。 */
+  /* 变换的统一写法：和 .wall-fill 的初始 transform 完全一致，见文件头 .wall-fill 注释。 */
+  function xf(cx, cy, s) {
+    return 'translate(' + cx + 'px,' + cy + 'px) scale(' + s + ')';
+  }
+
+  /* 算出「从这一格开始」的几个位置，但不落地。返回的对象里：
+       cx/cy —— 该格中心相对墙中心的偏移
+       sx/sy —— 起点缩放（格子尺寸 / 墙尺寸，各自独立）
+       mid   —— 原地放大 GROW 倍后的变换串（预留给手调，正常走格子自己的 CSS） */
+  function geom(cell) {
+    var w = box.clientWidth, h = box.clientHeight;
+    var cw = cell.offsetWidth, ch = cell.offsetHeight;
+    var cx = cell.offsetLeft + cw / 2 - w / 2;
+    var cy = cell.offsetTop + ch / 2 - h / 2;
+    var sx = cw / w, sy = ch / h;
+    return { cx: cx, cy: cy, sx: sx, sy: sy,
+             mid: xf(cx, cy, sx * GROW) };
+  }
+
+  function setTransform(str) { fill.style.transform = str; }
+
+  function round() {
+    /* 随机挑一格。用 Math.random 直接取下标即可 —— 只取一个，
+       不存在 sort(() => Math.random() - .5) 那种分布不均的问题。 */
+    var cell = cells[Math.floor(Math.random() * cells.length)];
+    var bg = getComputedStyle(cell).backgroundImage;
+    if (!bg || bg === 'none') { later(round, HOLD_STILL); return; }
+
+    fill.style.backgroundImage = bg;              // 大图用这一格的照片
+    fill.style.borderRadius = '';                 // 继承样式表里的 8px
+    var g = geom(cell);
+
+    /* ---- 阶段 1：选中，先停 HOLD_PICK ----------------------------------
+       整面墙静止，这一格亮起来、描边、微微抬起。此刻 #wall-fill 还没有
+       data-on（opacity:0），所以只有格子本身在动 —— 这是「选中」而不是「放大」。
+       起点必须先写进内联样式：阶段 3 要把内联 transform 置空才能
+       由样式表接管动到铺满，置空那一瞬间如果还没进过 transition，
+       就会从起点直接闪到铺满、丢掉整个放大过程。 */
+    fill.style.transition = 'none';
+    setTransform(xf(g.cx, g.cy, g.sx, g.sy));
+    cell.setAttribute('data-pick', '');
+
+    /* ---- 阶段 2：原地放大 GROW 倍，再停 HOLD_GROW -----------------------
+       1.5 倍是挂在 `[data-pick]` 上的规则，第 ② 拍只是加这个属性。
+       **不要**改成在这里写内联 `cell.style.transform`：`.album i` 是 24 格
+       共用的选择器，放大态必须靠属性驱动，摘掉属性就是唯一的复位途径。
+       实测踩过 —— 交接时 `removeAttribute` 和 `style.transform=''` 混用，
+       会把「放大态让位」那一下过渡整个吃掉（见阶段 3）。 */
+    later(function () {
+
+      /* ---- 阶段 3：交接，fill 从这一格长到铺满整墙 ---------------------
+         交接的时机是「原地放大停够 HOLD_GROW 之后」而不是放大刚结束：
+         用户要的是 选中→停→放大→停→铺满，两个停留缺一不可。
+         fill 从起点（= 原来那一格）长出来时，格子已经放大到 1.5 倍。
+         这里必须先加 data-grow 再摘掉，两个属性**分两次赋值**：
+         同一帧里 `setAttribute('data-grow')` + `removeAttribute('data-pick')`
+         是一次样式重算，浏览器只看到「放大态 → 压暗态」这一个终态，
+         中间的 1.5 倍 → 1 倍过渡根本不会发生（实测：原地放大那一下
+         会硬切回去，看着像闪了一下）。分两次赋值才会产生两个可插值的状态。
+         `.album i[data-pick]` 的 transform 用 CSS 变量 --g 表达放大倍率，
+         fill 长开的同时把 --g 从 1.5 收向 1，两件事同一个时长、同一条缓动。 */
+      later(function () {
+        fill.style.transition = '';
+        cell.setAttribute('data-grow', '');       // 留驻放大态，见 .album i[data-grow]
+        cell.removeAttribute('data-pick');
+        cell.setAttribute('data-src', '');        // 格子压暗（这条带 .3s 过渡）
+        cell.style.setProperty('--g', '1');       // 1.5 → 1，和 fill 长开同步
+        fill.setAttribute('data-on', '');         // opacity 0→1
+        /* 必须把起点那个内联 transform 清掉，铺满态才会生效。
+           样式表里的 `.wall-fill[data-on]{transform:none}` 盖不过内联样式 ——
+           `style.transform = '...'` 是内联的，优先级更高，于是光加 data-on
+           只会让透明度变 1、几何仍停在起点。**手机端就是这么坏的**：
+           fill 一直卡在 44×66（起点大小），看着只是一个小格子在闪，
+           从来没有铺满过。桌面端当时没暴露，是因为验证时手动写了
+           transform='none'，恰好绕过了这个 bug —— 验证方式本身掩盖了问题。
+           置空之后由样式表接管，transition 就能从起点动到铺满。 */
+        setTransform('');
+
+        /* ---- 阶段 4：铺满后停 DWELL_FULL，然后收回 --------------------
+           收回分两步：fill 缩回它那一格的起点（border-radius 同步从 8px
+           收到 6px，免得放大的圆角原样缩回去时看着比格子还方），
+           再把那格的压暗撤掉 —— 照片「落回格子里」。 */
+        later(function () {
+          setTransform(xf(g.cx, g.cy, g.sx, g.sy));
+          fill.style.borderRadius = '6px';
+          /* 收回去的两件事必须同帧发生：fill 缩向格子 + 它变淡。
+             只缩不变淡的话，大图会一直不透明地压在墙上缩回去，
+             看着像"又把照片收了进去"而不是"这一轮结束了"。 */
+          fill.setAttribute('data-out', '');
+          cell.removeAttribute('data-src');
+          cell.removeAttribute('data-grow');      // 照片落回格子，摘掉放大态
+          cell.style.removeProperty('--g');
+          later(function () {
+            fill.removeAttribute('data-on');
+            fill.removeAttribute('data-out');
+            fill.style.borderRadius = '';
+            setTransform('');
+            later(round, REHIDE + HOLD_STILL);
+          }, REHIDE);
+        }, DWELL_FULL);
+      }, GROW_MS + HOLD_GROW);
+    }, HOLD_PICK);
+  }
+
+  later(round, HOLD_STILL);
+})();
 </script>
 </body>
 </html>
