@@ -843,7 +843,14 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   // （不引 common.js，见页面顶部注释），所以这里抄一份精简版；改网络判据时
   // 两处要一起改。想知道为什么这么判，看 common.js 那边的注释。
   function promoBudget() {
-    var netCap = 720;              // 未知网络默认 720：手机不默认上 1080p
+    // **跟 common.js 不同的一处：拿不到 connection API 时不要压 720。**
+    // 桌面浏览器基本没有这个 API（Chrome 只对部分平台暴露，有线的 PC
+    // 通常拿不到），照抄 common.js 的 720 兜底会让「1920×1080 的有线桌面」
+    // 也只拿到 720p —— 既没省流量顾虑、屏幕又够大，没道理不给 1080p。
+    // 所以未知网络按「不设限」处理，交给下面的屏幕预算去卡（屏幕小自然降）。
+    // 手机上同样安全：移动端普遍有 connection API，真没有时屏幕也小，
+    // 屏幕预算会把档位压下去。
+    var netCap = 1080;
     try {
       var c = navigator.connection || navigator.mozConnection
               || navigator.webkitConnection;
