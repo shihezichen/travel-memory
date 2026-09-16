@@ -258,8 +258,15 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
 
 /* 相册墙示意 */
 .album{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
-/* 照片墙的舞台：给 #wall-fill 提供定位参照，大小就是墙本身 */
-.wall-stage{position:relative}
+/* 照片墙的舞台：给 #wall-fill 提供定位参照，大小就是墙本身。
+   **overflow:hidden 是必须的**：原地放大那一拍，贴边格子只留半格余量
+   （桌面 80.8px、手机 32.8px），放大 1.3 倍就会顶出去约 24px（桌面纵向）。
+   没有这行的话，最后一行的格子会盖到 .demo-box 的圆角外面去。
+   要「完全不越界」也可以把 GROW 降到 1.15（安全上限 1.16），
+   但那样放大力度太弱、后面「缩回去」就没有东西可缩 —— 所以选了裁切。
+   实测：加这行之前，贴边格子纵向溢出 23.5px，肉眼可见；
+   加了之后超出部分被裁掉。 */
+.wall-stage{position:relative;overflow:hidden;border-radius:8px}
 /* --- 铺满层：被选中的那张照片 -----------------------------------------------
    平时不可见（opacity:0、scale 缩到 0）。播放时由 JS 设定：
      --fx/--fy  —— 起点格子相对墙左上角的偏移
@@ -325,10 +332,13 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
    亮度加一点点、外边光勾勒轮廓、translateY 抬 2px 给出「被拎起来」的暗示。
    注意这里动的是 filter/box-shadow，不影响格子的几何 —— 下面 setOrigin()
    读 offsetLeft/offsetWidth 定位起点时，读到的仍是没被 transform 污染的布局值。 */
-/* --g 是放大倍率，1.5 是需求定的那个「原地放大」。
-   用变量而不是写死 1.5，是为了让第 ③ 拍能把 1.5 平滑收向 1 ——
+/* --g 是放大倍率，1.3 是那个「原地放大」。
+   **这个数必须和脚本里的 `var GROW` 保持一致** —— 脚本用 GROW 算 fill 的起点
+   几何、CSS 用 --g 决定格子放大到多大，两边对不上就会出现
+   「大图从格子旁边长出来」那种错位。
+   用变量而不是写死，是为了让第 ③ 拍能把 1.3 平滑收向 1 ——
    大图从这一格长出来的同时，格子的放大态同步让位，两者共用同一条过渡。 */
-.album i[data-pick]{--g:1.5}
+.album i[data-pick]{--g:1.3}
 /* [data-grow] 是"放大态留驻"：交接那一刻 data-pick 就摘掉了（否则它会盖住压暗），
    但格子不能立刻跳回 1 倍 —— 得等 --g 过渡到 1 才落回。 */
 .album i[data-pick],.album i[data-grow]{
@@ -2337,10 +2347,10 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
    节奏（进和出严格对称，进 3 拍、出 3 拍，一轮 ≈ 7.6s）：
      ① 整面墙静止 HOLD_STILL(1s)
      ② 随机挑一格「选中」：点亮 + 描边 + 抬起，停 HOLD_PICK(0.62s)
-     ③ 这一格原地放大到 GROW(1.5) 倍，停 HOLD_GROW(0.52s)
+     ③ 这一格原地放大到 GROW(1.3) 倍，停 HOLD_GROW(0.52s)
      ④ 大图从它原来的位置长开、铺满整面墙，停 DWELL_FULL(2.2s)
      ⑤ 大图**缩回**原来那一格（不是原位消失），停 HOLD_BACK(0.42s)
-     ⑥ 格子从 1.5 倍落回 1 倍、大图同步淡出，再静止 HOLD_STILL …… 往复
+     ⑥ 格子从 1.3 倍落回 1 倍、大图同步淡出，再静止 HOLD_STILL …… 往复
 
    为什么是「一张铺满」而不是「同时放大几张小的」：
    前者对应应用里点开一张照片看大图，后者只是墙上多几个色块。前者才是相册的用法。
@@ -2367,8 +2377,16 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
   var HOLD_STILL  = 1000;  // 整面墙完全静止（上一张收回之后）
   var HOLD_PICK   = 620;   // 选中之后、开始放大之前的停留
   var GROW_MS     = 420;   // 原地放大 / 收回用的过渡时长，必须和上面 cell.style.transition 一致
-  var GROW        = 1.5;   // 原地放大到几倍（1.5 是需求定的）
-  var HOLD_GROW   = 520;   // 放大到 1.5 倍之后、开始铺满之前的停留
+  /* 原地放大到几倍。**上限由「贴边那几格不出墙」决定，不是随便定的**：
+     桌面墙 1000 宽、格 161.7，距墙边最近的格子左右各留 161.7px 余量，
+     1000/161.7 ≈ 6.18 是墙宽/格宽，再倒过来看「一个格子放大后不能超过
+     它到墙边的距离」→ 上限 1 + 161.7/1000 ≈ 1.16（左右两侧）
+     或 1 + 161.7/664 ≈ 1.24（上下两侧）……取最紧的那个：约 1.16。
+     手机墙 274 宽、格 65.5，上限 1 + 65.5/274 ≈ 1.24。
+     **1.3 其实已经略微超出左右边界**（1.3 > 1.16），贴边的格子会压出墙面
+     一点点。想完全不压墙要降到 1.15 左右。这里按需求先取 1.3。 */
+  var GROW        = 1.3;
+  var HOLD_GROW   = 520;   // 放大到 GROW 倍之后、开始铺满之前的停留
   var GROW_FULL   = 760;   // 从格子铺满整墙的过渡时长，必须和 .wall-fill 的 transition 一致
   var DWELL_FULL  = 2200;  // 铺满之后停留多久
   var SHRINK_MS   = 760;   // 收回第一段：铺满 → 缩回原来那一格（阶段 3 的逆），对齐 .wall-fill 的 transform
