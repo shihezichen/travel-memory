@@ -120,7 +120,7 @@ def test_signed_when_oss_available(monkeypatch, tmp_path):
 
 
 def test_signed_url_uses_configured_ttl(monkeypatch, tmp_path):
-    """TTL 走 TRAVEL_MEDIA_URL_TTL，默认 2 小时（网页场景够用且泄露窗口小）。"""
+    """TTL 走 TRAVEL_MEDIA_URL_TTL，默认 30 分钟（网页场景够用且泄露窗口小）。"""
     c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
                       can_sign=True, ttl=1234)
     assert "Expires=1234" in c.media_url("/uploads/old.jpg")

@@ -49,16 +49,23 @@ MEDIA_BASE_URL = os.environ.get("TRAVEL_MEDIA_BASE_URL", MEDIA_BASE_URL).rstrip(
 
 # 网页媒体签名 URL 的有效期。
 #
-# 取 2 小时，比 Agent 链的 24 小时短得多 —— 两者场景不同：
+# 取 30 分钟，比 Agent 链的 24 小时短得多 —— 两者场景不同：
 #   - Agent 拿到链接后要**自己去下载**，中间可能搁很久，短了会半路 403；
-#   - 网页只是**渲染时当场加载**，2 小时对一次浏览绰绰有余。
+#   - 网页只是**渲染时当场加载**，30 分钟对一次浏览绰绰有余。
 # 短一点的好处是泄露窗口小：分享页的 URL 是给匿名访客的，签得太久等于
 # 把裸链的毛病原样搬过来。
 #
-# 过期不破坏分享链接：share token 本身没有固定过期（db.get_share 里
-# expires_at 可以为 NULL），前端在媒体 403 时会拿 token 重新拉一次数据
-# 换一批新签名，所以「发群里过两周还能点」这个场景不受影响。
-MEDIA_URL_TTL = int(os.environ.get("TRAVEL_MEDIA_URL_TTL", "7200"))
+# **改这里的值必须同时改 static/share.js 的 MEDIA_SIG_TTL_MS** —— 前端靠它
+# 判断「手上这批签名是不是该换了」，对不上就会在过期后一直用旧链接。
+#
+# 过期不破坏播放/浏览：两处都做了自愈，不需要用户刷新页面 ——
+#   - 视频（static/common.js 的 tmKeepFresh）：过期前 5 分钟主动续签，
+#     并保持播放进度；万一没赶上，播放器报错时再兜底续一次。
+#   - 图片/分享页（static/share.js 的 refreshSignatures）：签名可能过期时
+#     重新拉一次数据换新签名，只换链接不动渲染。
+# 分享链接本身不会过期（share token 在 db.get_share 里 expires_at 可为 NULL），
+# 所以「发群里过两周还能点」这个场景不受影响。
+MEDIA_URL_TTL = int(os.environ.get("TRAVEL_MEDIA_URL_TTL", "1800"))
 
 
 # 同步水位：ops/sync-oss.sh 每跑完一趟，就把「本趟开始的时刻」写进这个文件。

@@ -174,7 +174,7 @@ function shareInitMap() {
 //
 // 节流是必须的：一个行程几十张图，签名过期后它们会**同时**报错，不节流就是几十个并发
 // 刷新请求打同一个后端。同一波里只让第一个真正去刷新，其余等它。
-const MEDIA_SIG_TTL_MS = 2 * 60 * 60 * 1000;   // 与后端 TRAVEL_MEDIA_URL_TTL 默认值一致
+const MEDIA_SIG_TTL_MS = 30 * 60 * 1000;   // 与后端 TRAVEL_MEDIA_URL_TTL 默认值一致
 const SIG_REFRESH_MARGIN_MS = 5 * 60 * 1000;   // 留 5 分钟余量，别卡在边界上
 let _sigFetchedAt = 0;
 let _sigRefreshing = null;                     // 刷新中的 Promise，用来合并并发
@@ -205,7 +205,12 @@ async function refreshSignatures() {
       for (const p of (shareData.points || [])) {
         for (const m of (p.media || [])) {
           const n = byId.get(m.id);
-          if (n) { m.url = n.url; m.thumb_url = n.thumb_url; }
+          if (!n) continue;
+          m.url = n.url;
+          m.thumb_url = n.thumb_url;
+          // 视频的清晰度档位也是签名 URL，同样会过期。这里一并换掉 ——
+          // 只换 m.url 的话，分享页上正在播低画质档的视频仍然会断流。
+          if (n.qualities) m.qualities = n.qualities;
         }
       }
       markSignaturesFresh();

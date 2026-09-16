@@ -6,7 +6,9 @@
 
 做的事：
   1. 踢掉该账号所有登录会话（别人正开着的页面下次操作会被要求重新登录）
-  2. 清掉该账号在各张附属表里的痕迹：API Key、偏好、生成记录、幂等键、审计日志、点元数据
+  2. 清掉该账号在各张附属表里的痕迹：偏好、生成记录、幂等键、审计日志、点元数据
+     **但 API Key 保留不删** —— 重置的是演示内容，不是吊销对外凭证。详见下面
+     main() 里那段注释。
   3. 调用 seed_test_user.py 重建行程 / 地点 / 照片 / 描述（只写库；媒体在 OSS 上，
      由 scripts/publish_demo_assets.py 一次性发布，这里不碰文件）
   4. 重置密码为出厂值，并把「上次打开的行程」指回第一个
@@ -57,12 +59,25 @@ def main():
         c.execute(
             "DELETE FROM idempotency_keys WHERE api_key_id IN "
             "(SELECT id FROM api_keys WHERE user_id=?)", (uid,))
-        n_keys = c.execute("DELETE FROM api_keys WHERE user_id=?", (uid,)).rowcount
+        # ---- API Key：不删 ----
+        # 2026-09-16 刚哥明确要求：重置演示账号时，**这个账号已经发出去的 API Key
+        # 必须保留**。原来自动化的 OpenClaw / companion 之类接在这台演示账号上，
+        # 每晚 3 点被重置删掉一次，第二天调用方全部 401，而调用方那边根本不知道
+        # 自己手里的 key 是"因为演示账号被重置"才失效的 —— 排查起来极其费劲。
+        #
+        # 所以 api_keys 这张表在这里碰都不碰。它跟"行程数据"是两码事：行程是给人
+        # 看的演示内容，key 是对外签出去的凭证。重置演示内容不等于吊销凭证。
+        #
+        # 想作废某把 key，走正规途径：页面上的吊销，或者
+        # UPDATE api_keys SET revoked=1 WHERE id=?。
+        n_keys = c.execute("SELECT COUNT(*) FROM api_keys WHERE user_id=?",
+                           (uid,)).fetchone()[0]
         c.execute("DELETE FROM audit_log WHERE user_id=?", (uid,))
         c.execute("DELETE FROM user_prefs WHERE user_id=?", (uid,))
         c.commit()
         c.close()
-        log("已清理：%d 个会话、%d 个 API Key，以及偏好/生成/审计/点元数据" % (n_sess, n_keys))
+        log("已清理：%d 个会话，以及偏好/生成/审计/点元数据（保留 %d 个 API Key）"
+            % (n_sess, n_keys))
 
     # 先确保 OSS 上素材齐全，再重建库里的行。
     #

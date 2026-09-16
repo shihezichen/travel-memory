@@ -79,6 +79,13 @@ PLAN = [
                      "Unsplash valley river"]),
     ("hutiaoxia", 3, ["Unsplash gorge river", "Unsplash river rapids", "Unsplash deep canyon",
                       "Unsplash cliff river"]),
+    # 2026-09 加的点：滇藏线进藏段（芒康转 G318 → 然乌 → 鲁朗终点）
+    ("mangkang", 3, ["Unsplash tibet mountains", "Unsplash tibetan plateau",
+                     "Unsplash mountain pass road", "Unsplash himalaya valley"]),
+    ("ranwu", 3, ["Unsplash mountain lake fog forest", "Unsplash alpine lake pine",
+                  "Unsplash lake conifer mountain", "Unsplash lake reflection mountain"]),
+    ("lulang", 3, ["Unsplash spruce forest fog", "Unsplash forest valley mist",
+                   "Unsplash pine forest mountain", "Unsplash conifer forest green"]),
 ]
 
 # 视频：Commons 上自由授权的片段基本是 webm/ogv，浏览器兼容性参差，

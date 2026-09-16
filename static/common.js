@@ -49,6 +49,116 @@ function mediaFallbackToLocal(elm, localPath) {
   });
 }
 
+// OSS 签名 URL 是会过期的（默认 2 小时，见 config.MEDIA_URL_TTL）。播放器把
+// src 设一次就不管了，播到一半链接过期会直接断流、而且用户看不到任何提示 ——
+// 只能手动刷新页面。这里给视频挂上「过期前主动续签 + 失败时兜底续签」。
+//
+// 续签走 /api/media/{id}/variants（刻意不鉴权，分享页也能用），它每次返回的
+// 都是**新签出来**的 URL。不重新拉整个点详情，省一次大请求。
+//
+// 为什么是「提前续签」而不是「等它挂掉再续」：等挂了再续，播放器已经进入
+// error 状态、缓冲清空，用户会看到一次真实的卡顿；提前换则几乎无感。
+var QUALITY_RESIGN_MARGIN = 5 * 60;      // 过期前 5 分钟动手
+
+// 从 OSS 签名 URL 里读 Expires（Unix 秒）。不是签名的 URL 返回 null ——
+// 本机 /uploads/ 路径永远不过期，不需要续。
+function tmUrlExpires(url) {
+  if (!url || url.indexOf('OSSAccessKeyId=') < 0) return null;
+  var m = /[?&]Expires=(\d+)/.exec(url);
+  return m ? parseInt(m[1], 10) * 1000 : null;
+}
+
+// 拉一次这条媒体最新签出来的档位。失败返回 null（调用方保留原样，
+// 续签是锦上添花，绝不能因为它把播放搞挂）。
+function tmFetchFreshQualities(mediaId) {
+  return fetch('/api/media/' + encodeURIComponent(mediaId) + '/variants')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) { return (d && d.qualities) || null; })
+    .catch(function () { return null; });
+}
+
+// 给一个正在播的视频安排续签。
+//   v     —— <video> 元素
+//   m     —— 媒体行（要 m.id）
+//   label —— 当前正在播的档位名；续签后要换回同一档，不能偷偷降级
+//
+// 返回一个 stop()，在关灯箱/切走时调用，把定时器和监听都收掉。
+function tmKeepFresh(v, m, label) {
+  if (!v || !m || !m.id) return function () {};
+  var stopped = false;
+  var timer = null;
+  var renewing = false;
+
+  function currentUrl() { return v.currentSrc || v.src || ''; }
+
+  // 换 src 会丢播放进度，所以复刻 tmSwitchQuality 的做法：记时间 → 换源 → seek 回。
+  function swap(url) {
+    var at = v.currentTime || 0;
+    var wasPlaying = !v.paused && !v.ended;
+    var onReady = function () {
+      v.removeEventListener('loadedmetadata', onReady);
+      try {
+        if (at > 0 && isFinite(v.duration)) v.currentTime = Math.min(at, v.duration - 0.05);
+        else if (at > 0) v.currentTime = at;
+      } catch (e) {}
+      if (wasPlaying) { var p = v.play(); if (p && p.catch) p.catch(function () {}); }
+    };
+    v.addEventListener('loadedmetadata', onReady);
+    v.src = url;
+    v.load();
+  }
+
+  function renew() {
+    if (stopped || renewing) return;
+    renewing = true;
+    tmFetchFreshQualities(m.id).then(function (qs) {
+      renewing = false;
+      if (stopped || !qs) return;
+      // 优先拿同一档；那一档没了（比如转码失败被清）才退回原画，绝不静默换档
+      var hit = null;
+      for (var i = 0; i < qs.length; i++) {
+        if (qs[i].label === label && qs[i].status === 'done' && qs[i].url) { hit = qs[i]; break; }
+      }
+      if (!hit) {
+        for (var j = 0; j < qs.length; j++) {
+          if (qs[j].label === 'original' && qs[j].url) { hit = qs[j]; break; }
+        }
+      }
+      if (!hit || !hit.url) return;
+      m.qualities = qs;                       // 回写，后面切档用新的
+      if (hit.url === currentUrl()) return;   // 没变（本机路径等）就不用折腾
+      swap(hit.url);
+      schedule();
+    });
+  }
+
+  function schedule() {
+    if (stopped) return;
+    clearTimeout(timer);
+    var exp = tmUrlExpires(currentUrl());
+    if (exp === null) return;                 // 本机路径 / 没有签名，不需要续
+    var wait = exp - Date.now() - QUALITY_RESIGN_MARGIN * 1000;
+    // 已经进入续签窗口就立刻续；否则等到窗口起点再动
+    timer = setTimeout(renew, Math.max(wait, 0));
+  }
+
+  // 兜底：万一定时器没赶上（标签页休眠、时钟跳变），播放器报错时再续一次。
+  // 但只在「确实是因为过期」时报错才续 —— 不然文件真的坏了会无限重试。
+  function onError() {
+    var exp = tmUrlExpires(currentUrl());
+    if (exp !== null && Date.now() >= exp - QUALITY_RESIGN_MARGIN * 1000) renew();
+  }
+
+  v.addEventListener('error', onError);
+  schedule();
+
+  return function stop() {
+    stopped = true;
+    clearTimeout(timer);
+    v.removeEventListener('error', onError);
+  };
+}
+
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -383,6 +493,15 @@ function tmSetupQuality(wrap, v, m) {
   let qualities = (m.qualities && m.qualities.length) ? m.qualities : tmFallbackQualities(m);
   let current = null;
 
+  // 当前播放的档位变了 → 换一条续签定时器（续签逻辑见 tmKeepFresh）。
+  // 起播、手动切档、自动切档、转码完成自动升级，全都得走这里。
+  let stopFresh = null;
+  function rearmFresh() {
+    if (stopFresh) { stopFresh(); stopFresh = null; }
+    if (!current) return;
+    stopFresh = tmKeepFresh(v, m, current.label);
+  }
+
   function render() {
     const auto = !loadQualityPref();
     btn.textContent = current ? (QUALITY_NAMES[current.label] || current.label) : '清晰度';
@@ -402,6 +521,7 @@ function tmSetupQuality(wrap, v, m) {
       if (pick && (!current || pick.label !== current.label)) {
         current = pick;
         tmSwitchQuality(v, pick.url);
+        rearmFresh();
         tmToast('已切换到自动（' + (QUALITY_NAMES[pick.label] || pick.label) + '）');
       } else {
         tmToast('已切回自动选档');
@@ -431,6 +551,7 @@ function tmSetupQuality(wrap, v, m) {
           current = q;
           saveQualityPref(q.label);          // 手动选过就记住，下次沿用
           tmSwitchQuality(v, q.url);
+          rearmFresh();
           render();
           tmToast('已切换到 ' + (QUALITY_NAMES[q.label] || q.label));
         };
@@ -453,6 +574,7 @@ function tmSetupQuality(wrap, v, m) {
   v.src = (current && current.url) || mediaSrc(m, 'full', '?v=1');
   // 原画档还没同步到 OSS 时，回退本机那份（转码档位 variants 同理，由上面的 url 决定）
   mediaFallbackToLocal(v, '/uploads/' + m.filename + '?v=1');
+  rearmFresh();                            // 起播：给签名 URL 安排过期前续签
   render();
 
   // 还有档位在转码 → 轮询刷新（转好了菜单里就能选了）。
@@ -467,10 +589,17 @@ function tmSetupQuality(wrap, v, m) {
       if (better && better.label !== 'original') {
         current = better;
         tmSwitchQuality(v, better.url);
+        rearmFresh();                      // 换档了，续签要跟着新档位走
       }
     }
     render();
   });
+
+  // 关灯箱 / 这一格被摘掉时把续签定时器收掉，别让它对着已经没了的元素转
+  const mo = new MutationObserver(() => {
+    if (!wrap.isConnected && stopFresh) { stopFresh(); stopFresh = null; mo.disconnect(); }
+  });
+  try { mo.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
 }
 
 // 轮询某个视频的转码进度，转完就停。最多盯 3 分钟，避免后台一直打接口。

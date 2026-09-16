@@ -56,7 +56,7 @@ if not KEY:
 
 | 链路 | 有效期 | 说明 |
 |---|---|---|
-| 网页 / 分享页（`config.media_url`） | 2 小时（`TRAVEL_MEDIA_URL_TTL`） | 渲染时当场加载，2 小时够用；短一点泄露窗口小 |
+| 网页 / 分享页（`config.media_url`） | 30 分钟（`TRAVEL_MEDIA_URL_TTL`） | 渲染时当场加载；短一点泄露窗口小。前端会在过期前主动续签，用户无需刷新 |
 | Agent 链（`agent_media.py`） | 24 小时（`TRAVEL_AGENT_URL_TTL`） | Agent 拿到链接后可能隔很久才下载 |
 
 **分享链接本身不过期。** share token 的 `expires_at` 可以是 NULL（永久），
