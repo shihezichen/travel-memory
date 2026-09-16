@@ -261,7 +261,18 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
 .album i{aspect-ratio:1;border-radius:6px;background-size:cover}
 
 /* 聊天示意 */
-.chat{display:flex;flex-direction:column;gap:10px}
+/* `.chat` 这个名字在页面里被用了两次，含义完全不同，共用一个类名是历史遗留：
+     ① `[data-slide="4"] .chat` —— 第 5 屏的全屏插图，必须是 absolute，靠
+        left/top/width 在舞台里摆位；
+     ② `.card .chat`（本组规则）—— 卡片里的内联聊天示图，得老老实实待在日常流里。
+   第 ② 种**必须显式写回 position:static**，不能指望"默认就是 static"：
+   CSS 里绝对定位的参照系是**最近的已定位祖先**，而"已定位"的触发条件不只是
+   position —— transform / filter / backdrop-filter / contain 任何一个非 none
+   都会让元素成为包含块。卡片这套样式是给手机准备的，只要哪天给 .card 或它
+   下面任意一层加上 transform（或者是动画里带了 transform），上面的 `.chat`
+   就会脱离文档流、跳到那个祖先的左上角去 —— 实测的表现正是"稻城亚丁那段
+   文字浮上来盖住『每张照片都能写字』这句标题"。写死 static 从根上断掉这条路。 */
+.card .chat{position:static;display:flex;flex-direction:column;gap:10px}
 .msg{max-width:82%;padding:11px 15px;border-radius:15px;font-size:14px;line-height:1.5}
 .msg.me{align-self:flex-end;background:var(--grad);color:#fff;border-bottom-right-radius:5px}
 .msg.ai{align-self:flex-start;background:rgba(255,255,255,.07);color:var(--fg);
@@ -448,17 +459,72 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 }
 
 /* ---------- 首屏轮播 ---------- */
-/* 4 张幻灯片叠在同一个格子里做交叉淡入。不用 transform 位移是因为 .stage 上
-   已经有 rotateX 的 3D 透视，再叠加位移容易出层叠顺序问题。 */
-.carousel{position:relative}
-.carousel-slide{position:absolute;inset:0;opacity:0;visibility:hidden;
-  transition:opacity .55s ease,visibility .55s;
+/* 5 屏横着排成一条轨道，靠 translate3d 整条平移 —— 也就是"上一张往左移出
+   屏幕、下一张从右边移进来"的跟手效果。
+
+   这里是**第三次**改这套轮播，前两次的教训都写在这儿，别再走回头路：
+
+   ① 最早是 5 张 absolute 叠在同一个格子里做交叉淡入。淡入淡出看着还行，
+      但"照片跟着手指走"这个诉求它天然给不了 —— 叠着的东西没有"左右"。
+
+   ② 后来试过"划一下直接翻一张"（不跟手，只认按下点到抬起点的净位移），
+      想躲开 3D 变换的层叠问题。结果是：能翻页，但手指底下照片纹丝不动，
+      用户完全不觉得这玩意儿能被划 —— 这次明确要求返工，所以必须跟手。
+
+   ③ 现在这版是位移。**关键前提：整条轨道不能被任何 transform 变换过。**
+      一旦祖先上有 transform / perspective / filter / backdrop-filter，
+      轨道就会撑出一个自己的层叠上下文，被`.stage` 的 overflow:hidden 裁掉
+      或者盖住（`.stage` 上那点 rotateX 透视就是干这个的）。所以：
+        · `.stage-outer` 在手机上把 perspective 关掉（原来只为 PC 服务的）；
+        · 桌面端多一层 `.carousel-clip{perspective:none}` 把透视就地掐断，
+          真正的 3D 观感由 `.stage-outer` 上那条 `perspective-origin` 之外的
+          变化承担 —— 少一点纵深，换轮播能动，值。
+      拿不准的时候：给 .carousel 的祖先链加任何 transform 之前先想清楚这一条。 */
+.carousel{position:relative;overflow:hidden}
+.carousel-clip{position:relative;overflow:hidden;perspective:none}
+.carousel-track{
+  display:flex;height:100%;
+  will-change:transform;
+  transition:transform .5s cubic-bezier(.25,.8,.3,1);
+}
+/* 每屏的宽度必须等于**可视区**的宽度，所以用 px 而不是 %：
+   百分比是相对轨道自己算的，而轨道宽度 = n × 100% 会自我指涉。
+   --car-w 由 JS 在初始化、resize、切屏时写死。 */
+.carousel-slide{
+  position:relative;flex:0 0 var(--car-w,100%);
+  width:var(--car-w,100%);min-width:0;
   cursor:pointer;-webkit-tap-highlight-color:transparent}
-/* 第一屏要占位撑开高度（其余都是 absolute，否则容器高度塌成 0） */
-.carousel-slide:first-child{position:relative}
-.carousel-slide.is-active{opacity:1;visibility:visible;z-index:2}
-.carousel-slide:focus-visible{outline:2px solid #FF8A00;outline-offset:3px}
-@media (prefers-reduced-motion:reduce){.carousel-slide{transition:none}}
+.carousel-slide:focus-visible{outline:2px solid #FF8A00;outline-offset:-2px}
+.carousel.is-dragging .carousel-track{transition:none}
+.carousel.is-dragging .carousel-slide{cursor:grabbing}
+@media (prefers-reduced-motion:reduce){
+  .carousel-track{transition:none}
+}
+
+/* 左右切换箭头。**只在鼠标移到轮播图上时才出现**（.carousel:hover），
+   平时藏着，免得跟画面里的按钮和"看演示"浮层抢注意力。
+   触屏设备单独用一套判据：那里没有悬停这回事，`.carousel:hover` 在
+   iOS 上会变成"点一下才粘住"，反而添乱；所以 (hover:hover) 才显示，
+   触屏设备靠手势翻页，不给箭头。 */
+.car-nav{position:absolute;top:50%;z-index:4;width:44px;height:44px;padding:0;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transform:translateY(-50%);border-radius:50%;
+  border:1px solid rgba(255,255,255,.22);background:rgba(12,14,20,.62);
+  backdrop-filter:blur(8px);color:#fff;
+  opacity:0;visibility:hidden;transition:opacity .22s,visibility .22s,background .18s;
+  -webkit-tap-highlight-color:transparent}
+.car-nav svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:2.1;
+  stroke-linecap:round;stroke-linejoin:round}
+.car-nav.prev{left:14px}
+.car-nav.next{right:14px}
+.car-nav:hover{background:rgba(12,14,20,.88);border-color:rgba(255,255,255,.4)}
+.car-nav:focus-visible{outline:2px solid #FF8A00;outline-offset:2px}
+@media (hover:hover) and (pointer:fine){
+  .carousel:hover .car-nav,.carousel:focus-within .car-nav{opacity:1;visibility:visible}
+}
+/* 键盘用户也该够得着：不给鼠标也让它能被 Tab 到并显示出来 */
+.car-nav:focus-visible{opacity:1;visibility:visible}
+@media (prefers-reduced-motion:reduce){.car-nav{transition:none}}
 
 .carousel-dots{display:flex;gap:9px;justify-content:center;margin-top:20px}
 .carousel-dots button{width:9px;height:9px;padding:0;border-radius:50%;cursor:pointer;
@@ -525,6 +591,44 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 @media (min-width:641px){
   .stage-shot .only-pc{display:block}
   .stage-shot .only-m{display:none}
+}
+
+/* 第 4 屏（分享页）在手机上走 **contain** 而不是 cover。
+   这屏的原图是竖版的 P4.1（721x1008，比例 0.715），容器是 1/1，两者对不上 ——
+   再 cover 就要把卡片的两头切掉，而分享页那个二维码卡片正是"切一点就不能扫"的
+   东西。换成 contain 让整张图完整落进容器，两侧留出的空由这一屏自己的
+   深色底衬掉（见 .shot-img 的 background）。桌面端仍是横版 P4 + cover，
+   规则不变。 */
+@media (max-width:640px){
+  /* 必须写 `.stage[data-slide="3"]`（同一元素）而不是 `[data-slide="3"] .stage`
+      —— data-slide 就挂在 .stage 自己身上，没有后代关系。而且这条要压过
+     base 的 `.stage{aspect-ratio:16/9}`，得跟它同优先级、放在它后面。
+
+     **「第四屏比别的屏高、戳出轮播容器」的根源就是这一行。**
+     实测（390 宽）五屏高度 280/280/280/**354**/280 —— 第四屏正好等于它
+     354 的宽度，一个正方形。查下来 `.stage[data-slide="3"]` 的计算
+     `aspect-ratio` 就是 `1 / 1`：整屏被做成了正方形，那自然比 4/3 的
+     兄弟屏高出一整截，而且它会把 flex 行里其余四屏一起 stretch。
+
+     这个 1/1 是照**当年那张竖版原图**（P4.1，721×1008）配的。后来手机版
+     已经换成 1:1 的 `slide-share-m.webp` + `object-fit:contain` ——
+     图和容器同为方图，容器再保持 1/1 就成了纯粹多出来的高度。
+     改成跟其余四屏一致的 4/3。
+
+     `!important` 是必须的：下面那条 `.stage[data-slide]{aspect-ratio:4/3}`
+     优先级同为 (0,2,0) 却写在更后面，不带 !important 会被它反压，
+     等于白改（试过，五屏又全变回方形）。 */
+  .stage[data-slide="3"]{aspect-ratio:4/3!important;min-height:0}
+  .stage[data-slide="3"] .shot-img{object-fit:contain;object-position:center}
+
+  /* 五屏高度必须一致。轨道是 flex 行，默认 align-items:stretch ——
+     任何一屏自己算高了，其余四屏会被一起撑上去，`.stage` 的 overflow:hidden
+     挡不住（轨道已经先定型）。这里把每屏高度按容器写死，断掉连锁。
+     配合上面把 .stage 的 min-height 归零：手机上容器宽 354 时
+     354 × 3/4 = 265px < 280px，桌面那条 `min-height:280px` 会把比例顶掉。 */
+  .stage[data-slide]{min-height:0}
+  .carousel-track{align-items:stretch}
+  .carousel-slide{height:100%}
 }
 
 /* --- 第 2 屏：上传卡片 --- */
@@ -667,13 +771,25 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
      这里改成：对话同时给 top 和 bottom，让它在两块之间**自适应伸缩**。 */
   [data-slide="4"] .slide-cap{top:0;bottom:auto;padding:12px 0 4px;background:none;
     background:linear-gradient(0deg,rgba(6,8,12,0) 2%,rgba(6,8,12,.72) 45%,rgba(6,8,12,.9))}
+  /* 这屏的内容条数比其它屏都多，手机上高度是硬约束。
+     标题和副标题各收一号、副标题收一行 —— 省下来的 ~24px 全留给对话，
+     小屏（360 一档）才不会顶到底部的工具条上。 */
+  [data-slide="4"] .slide-cap .cap-t{font-size:13.5px}
+  [data-slide="4"] .slide-cap small{font-size:10.5px;line-height:1.35;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   [data-slide="4"] .slide-cap::before{display:none}
   [data-slide="4"] .stage-map{opacity:.3}
 
-  /* 工具条先钉死在底部（它是固定高度，好算） */
+  /* 工具条钉在底部（它是固定高度，好算）。四个 chip 在 350px 上排不下，
+     改成**强制单行**：`flex:1 1 0` + `min-width:0` 让它们等分宽度，
+     长的靠 `text-overflow` 自己省略。以前靠 flex-wrap 自己折，350px 上
+     会折成两行（多占 ~20px），而下面的对话又是定高——两头一挤就把
+     答案和引用顶上去了。单行是省空间，也是让高度可预期。 */
   [data-slide="4"] .tool-list{left:14px;right:14px;top:auto;bottom:12px;
-    max-width:none;gap:4px;justify-content:center}
-  [data-slide="4"] .tl-item{font-size:9px;padding:2px 6px;gap:4px}
+    max-width:none;gap:4px;flex-wrap:nowrap}
+  [data-slide="4"] .tl-item{flex:1 1 0;min-width:0;
+    font-size:9px;padding:2px 5px;gap:3px;white-space:nowrap;overflow:hidden}
+  [data-slide="4"] .tl-item span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 
   /* 对话：上边躲开字幕渐变（约 86px），下边躲开工具条。
      两端都定住，中间的内容自己排。
@@ -683,14 +799,24 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
      "少了一行"，实际是被裁了。留三行（问 / 回执 / 答）够讲清楚这条链路，
      引用行是小屏上最该让位的：它的意思在"答案能追到原始照片"那句副标题里
      已经有了。宽屏空间够，那一行照常显示。 */
-  /* 对话区：上边躲开字幕渐变，下边躲开工具条，两端定住、中间自排。
-     实测三行（问 28 + 回执 28 + 答 57 + 间距）需要 118px，盒子必须给够，
-     否则 overflow:hidden 会悄悄把最后一行切掉 —— 这种"少了一行"最难发现，
-     因为它不报错、也不溢出，只是内容没了。这里把整条可用带子都给对话。 */
+  /* 对话区：**只钉上边，下边不钉**。
+     原来的写法是 top+bottom 两端都定死、加 overflow:hidden —— 可内容高度是
+     随字号和折行变的。真实设备上按 10.5px 正文排下来，"问 + 回执 + 答"
+     比留给它的那条带子高，overflow:hidden 不报错也不溢出，只是安静地把
+     下面的内容切掉：这就是"只看到第一句『我上次去香格里拉』，下面全没了"的
+     原因（标题和第一句在上半段，正好留下）。
+     改成 `top` 定住、高度由内容撑开，切不掉任何东西；万一真顶到底部，
+     让上边的标题条（z-index:2，本来就有从透明到 .9 的渐变底）压住交界，
+     观感上像是"对话滚到标题下面"，而不是缺一块。
+     `.chat` 是 flex 列，默认 stretch，这里显式 width:auto 让它撑满左右边距。 */
   [data-slide="4"] .chat{left:14px;right:14px;width:auto;
-    top:82px!important;bottom:66px!important;gap:4px;
-    justify-content:center;overflow:hidden}
-  [data-slide="4"] .cite-row{display:none}
+    top:78px!important;bottom:auto!important;gap:5px;
+    justify-content:flex-start;overflow:visible}
+  /* 引用行保留 —— "答案能追回原始照片"是这屏最该讲清的一件事，
+     但在 350px 上它必须极省：小缩略图、小字、一行放完。 */
+  [data-slide="4"] .cite-row{gap:5px;font-size:9.5px}
+  [data-slide="4"] .cite-thumb{width:20px;height:20px;border-radius:4px}
+  [data-slide="4"] .cite-tag,[data-slide="4"] .cite-more{font-size:9.5px}
   [data-slide="4"] .tool-call{padding:4px 8px;font-size:9.5px;gap:5px}
   [data-slide="4"] .bubble{padding:6px 10px;font-size:10.5px;line-height:1.35}
   /* 回答那条最容易折成三行（它字数最多）。给它小一号字和更紧的行高，
@@ -700,27 +826,60 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   [data-slide="4"] .api-float{display:none}
 }
 
+/* 极窄机型（iPhone SE 一档，360 及以下）：第 4 屏的元素按 390 排会顶到底部工具条，
+   这里再收一轮。**只动第 4 屏自己的字号和留白**，其它屏和页面其余部分不受影响。 */
+@media (max-width:380px){
+  [data-slide="4"] .slide-cap{padding:10px 0 2px}
+  [data-slide="4"] .slide-cap .cap-t{font-size:12.5px}
+  [data-slide="4"] .slide-cap small{font-size:10px}
+  [data-slide="4"] .chat{top:70px!important}
+  [data-slide="4"] .bubble{padding:5px 9px;font-size:10px}
+  [data-slide="4"] .bubble.ai{font-size:9.5px}
+  [data-slide="4"] .tool-call{padding:3px 7px;font-size:9px}
+  [data-slide="4"] .tl-item{font-size:8.5px;padding:2px 4px}
+}
+
 /* ---------- 演示视频：示意图上的播放按钮 + 弹层 ---------- */
 /* 按钮压在首屏示意图上：那张图本来就是静态示意，让它"能点开看真的"最自然。 */
 .promo-cta .tri{font-size:.8em;margin-right:2px;opacity:.85}
-/* pointer-events:none 让点击穿到下面的轮播图上；只有圆环和文字标签自己重新
-   打开。以前这里铺满整张示意图接点击，加了轮播之后会整块吞掉"点图播视频"
+/* pointer-events:none 让点击穿到下面的轮播图上；只有圆环自己重新打开。
+   以前这里铺满整张示意图接点击，加了轮播之后会整块吞掉"点图播视频"
    之外的所有交互（圆点也点不到）。 */
 .promo-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   gap:12px;background:transparent;border:0;cursor:pointer;z-index:3;
   pointer-events:none;
   font:inherit;color:#fff;-webkit-tap-highlight-color:transparent}
-.promo-play .ring,.promo-play .lbl{pointer-events:auto}
-.promo-play .ring{width:74px;height:74px;border-radius:50%;display:grid;place-items:center;
+.promo-play .ring{pointer-events:auto;width:74px;height:74px;border-radius:50%;display:grid;place-items:center;
   background:rgba(12,18,32,.62);backdrop-filter:blur(6px);
   border:1.5px solid rgba(255,255,255,.55);
   box-shadow:0 10px 34px rgba(0,0,0,.34);transition:transform .22s,background .22s}
 .promo-play .ring svg{width:26px;height:26px;margin-left:4px;fill:#fff}
-.promo-play .lbl{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
-  font-size:13px;letter-spacing:.02em;padding:6px 14px;border-radius:999px;
-  background:rgba(12,18,32,.62);backdrop-filter:blur(6px);white-space:nowrap}
 .promo-play:hover .ring,.promo-play:focus-visible .ring{transform:scale(1.08);background:rgba(12,18,32,.8)}
 @media (prefers-reduced-motion:reduce){.promo-play .ring{transition:none}}
+
+/* PC：大播放按钮**只在鼠标移到轮播图上时才出现**。
+   它压在轮播正中间，五屏里每一屏的构图中心都被那个圆环占着 —— 常驻就等于
+   在替用户「一直点着」播放，画面永远看不干净。跟左右箭头同一套判据
+   （见上面的 .car-nav）：平时淡出，鼠标进来淡入，键盘 Tab 到也能亮。
+   只让圆环淡出，**外面这层 .promo-play 保持可点**（它是 pointer-events:none，
+   本来就不拦事件），所以鼠标一进来就能立刻点到。
+
+   触屏设备**一个字都不改**：那里没有"悬停"这回事，藏起来就再也点不到了，
+   所以下面的规则整条包在 (hover:hover) and (pointer:fine) 里。 */
+@media (hover:hover) and (pointer:fine){
+  .promo-play .ring{
+    opacity:0;visibility:hidden;
+    transition:opacity .22s,visibility .22s,transform .22s,background .22s}
+  /* 用 :has() 从**父级**往下选，不能用 `~`：DOM 里 .promo-play 排在 .carousel
+     **前面**（按钮在前、轮播在后），兄弟组合子只能向后选，`~` 永远匹配不到，
+     写了等于没写（实测踩到：PC 上圆环一直不出来）。:has() 让父级在"轮播被
+     悬停"时命中，能往前选到按钮，这才是这里真正需要的方向。
+     浏览器支持：Chrome 105+ / Safari 15.4+ / Firefox 121+；更老的浏览器只是
+     没有这个"悬停才出现"的效果，圆环常驻，功能不受影响。 */
+  .stage-outer:has(.carousel-promo:hover) .promo-play .ring,
+  .promo-play:focus-within .ring{
+    opacity:1;visibility:visible}
+}
 
 .promo-modal{position:fixed;inset:0;z-index:90;display:none;
   align-items:center;justify-content:center;padding:24px;
@@ -851,9 +1010,17 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
       <button class="promo-play" type="button" id="promo-open"
               aria-label="播放 60 秒产品演示视频">
         <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>
-        <span class="lbl">▶ 看 60 秒演示</span>
       </button>
-      <div class="carousel" id="promo-carousel">
+      <div class="carousel carousel-promo" id="promo-carousel">
+       <!-- 轨道外面再套一层 .carousel-clip：桌面端 .stage-outer 上挂着
+            perspective:1600px（第 1 屏那点 3D 倾斜就靠它）。那点透视会让
+            .carousel-track 变成"被变换过"的元素，整条轨道被 .stage 的
+            overflow:hidden 裁掉，就只剩第一屏能看见。
+            perspective:none 在这里就地掐断，既保住 .stage 自己的 rotateX，
+            又让轨道老老实实待在自己平面里 —— 位移才是位移。
+            手机上 .stage-outer 本来就是 none，这一层不产生影响。 -->
+       <div class="carousel-clip">
+        <div class="carousel-track" id="promo-track">
         <!-- 第一屏：主界面 —— 地图上按顺序摆出落脚点，串成一条路线。
              手绘 SVG，不是截图：抽象概念用插画讲比"糊一张图"清楚，
              而且这屏要承担"点图播视频"的点击区，插画不会跟真界面抢注意力。 -->
@@ -958,9 +1125,12 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
             <img class="shot-img only-pc" loading="lazy" width="1920" height="1080"
                  src="/static/promo/slide-share-pc.webp"
                  alt="旅行记忆分享页：左边设有效期和访问密码，右边是分享链接、二维码和行程缩略图">
-            <img class="shot-img only-m" loading="lazy" width="1000" height="750"
+            <!-- 手机版是**竖版**原图 P4.1 加工的 1:1（1000x1000），跟上面
+                 第 2/3 屏的 4:3 不一样。width/height 属性要跟真实文件一致，
+                 写错会让浏览器按错的固有比例预留盒子高度（见 .shot-img 注释）。 -->
+            <img class="shot-img only-m" loading="lazy" width="1000" height="1000"
                  src="/static/promo/slide-share-m.webp"
-                 alt="旅行记忆分享页：分享设置与二维码卡片">
+                 alt="旅行记忆分享页：分享设置在上、行程地图与二维码卡片在下">
           </div>
           <p class="slide-cap">分享旅程，一同感受彼此
             <small>一条链接或一个二维码，对方打开就能看，改不了</small></p>
@@ -1032,6 +1202,20 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
           <p class="slide-cap">智能体，激活所有旅程记忆
             <small>自然语言提问，接口返回结构化行程，答案能追到原始照片</small></p>
         </div>
+
+        <!-- 左右切换箭头。**放在 .carousel 里面**（不是外面）—— CSS 是靠
+             `.carousel:hover .car-nav` 控制显隐的，挪到外面那套悬停判据就失效了。
+             tabindex 默认可用，键盘也能翻页；触屏下面由 CSS 藏起来，走手势。 -->
+        <button class="car-nav prev" type="button" data-car-prev
+                aria-label="上一张">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>
+        </button>
+        <button class="car-nav next" type="button" data-car-next
+                aria-label="下一张">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+        </div><!-- /carousel-track -->
+       </div><!-- /carousel-clip -->
       </div><!-- /carousel -->
 
       <!-- 轮播圆点。点图是播视频，点圆点是翻页 —— 两件事分开，别互相抢。 -->
@@ -1334,8 +1518,35 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   var dotsBox = document.getElementById('promo-dots');
   if (slides.length < 2 || !dotsBox) return;
 
+  var track = document.getElementById('promo-track');
+  if (!track) return;
   var idx = 0, timer = null, paused = false;
+  var swipeHandled = false;   // 手势刚翻过页，紧接着的那个 click 要吃掉
   var DURATION = 6000;
+
+  // 每一屏的宽度 = 可视区宽度。**必须是 px**，不能用 100%：
+  // 轨道宽度 = 5 × 100%，而这里的 100% 又是相对轨道自己算的，自我指涉。
+  // 初始化、resize、旋屏、字体加载完都可能变，所以反复量、反复写。
+  function setW() {
+    var w = track.parentNode.clientWidth;
+    if (w) track.style.setProperty('--car-w', w + 'px');
+    return w;
+  }
+  // 位移用 translate3d 交给合成层，避免拖动时逐帧重排
+  function pos(px) {
+    track.style.transform = 'translate3d(' + px + 'px,0,0)';
+  }
+  function w() {
+    return track.parentNode.clientWidth || slides[0].getBoundingClientRect().width || 0;
+  }
+  // drag=true 时由手指直接给 px（跟手，不加缓动）
+  function offsetFor(i, drag) {
+    setW();
+    var vw = parseFloat(track.style.getPropertyValue('--car-w')) || w();
+    var off = -idx * vw;
+    if (drag) off += drag;
+    pos(off);
+  }
 
   // 圆点：一次建好，之后只改 aria-selected
   slides.forEach(function (s, i) {
@@ -1356,6 +1567,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     idx = (i + slides.length) % slides.length;
     slides.forEach(function (s, n) { s.classList.toggle('is-active', n === idx); });
     dots.forEach(function (d, n) { d.setAttribute('aria-selected', n === idx ? 'true' : 'false'); });
+    offsetFor(0);          // 落位：整条轨道平移 -idx × 可视区宽度
   }
   function next() { go(idx + 1); }
   function restart() {
@@ -1374,10 +1586,153 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     root.addEventListener('focusin', pause);
     root.addEventListener('focusout', resume);
   }
+
+  // ---- 左右箭头 ----
+  // 手动翻页后都 restart()，把自动播放的计时重新起算，免得刚翻过去就被切走。
+  ['prev', 'next'].forEach(function (dir) {
+    var btn = document.querySelector('[data-car-' + dir + ']');
+    if (!btn) return;
+    btn.addEventListener('click', function (e) {
+      // 箭头压在 .carousel-slide 上面，不拦一下会顺带触发"点图播视频"
+      e.stopPropagation();
+      e.preventDefault();
+      go(dir === 'next' ? idx + 1 : idx - 1);
+      restart();
+    });
+  });
+
+  // ---- 手势左右滑动（跟手） ----
+  // Pointer Events 一套代码覆盖触摸 / 触控笔 / 鼠标拖拽。
+  //
+  // 上一版是"划一下直接翻一张"（只比对按下点和抬起点的净位移），能翻页，
+  // 但手指底下照片纹丝不动，用起来完全不像能划的东西 —— 这次要的就是
+  // "照片跟着手指走"，所以改成实时位移：
+  //   · 手指按下先**不表态**，只记录起点；
+  //   · 等到横向位移明确超过纵向（|dx| > |dy| 且超过 10px）才**认领**这次手势，
+  //     认领时补 setPointerCapture —— 手指滑出轮播区、滑到屏幕外，事件照样
+  //     回到这里。不这么做的话，手指一离开轮播图，pointermove 就断了，
+  //     照片停在半路。
+  //   · 认领之前的纵向滑动一律不拦，页面照常上下滚。
+  //   · 松手看两件事：走得够远（超过 22% 宽度）或者甩得够快（0.35 px/ms），
+  //     两者满足其一就翻页，否则弹回原位。跟手机相册的手感对齐。
+  //
+  // 拖到第一张还想往右划、或最后一张还想往左划：位移只给 0.35 倍，制造
+  // "到头了拽不动"的手感，松手弹回。这里刻意**不做循环** —— 循环会让
+  // 相邻屏贴在一起，而 .chat 之类的元素改过位置（见上面的说明），
+  // 首尾相接时容易露出半张别的屏。
+  if (track && window.PointerEvent) {
+    var activeId = null;      // 已认领手势的 pointerId
+    var pending = false;      // 还没认领
+    var sX = 0, sY = 0, lastX = 0, lastT = 0, vel = 0, dx = 0;
+    var CLAIM = 10;           // 认领门槛（px）：太小会把纵向滚动抢过来
+    var COMMIT_RATIO = 0.22;  // 翻页的位移门槛，按可视区宽度取比例
+    var COMMIT_VEL = 0.35;    // 翻页的速度门槛（px/ms）
+
+    function block(e) {
+      if (e.cancelable) e.preventDefault();
+    }
+
+    track.addEventListener('pointerdown', function (e) {
+      if (activeId !== null || pending) return;
+      if (e.button !== undefined && e.button !== 0) return;   // 只接主键
+      if (e.target.closest && e.target.closest('.car-nav')) return;
+      pending = true;
+      sX = lastX = e.clientX; sY = e.clientY;
+      lastT = Date.now(); vel = 0; dx = 0;
+      // 手指按住时自动播放要停 —— 正在看的那张不能被翻走
+      pause();
+    });
+
+    track.addEventListener('pointermove', function (e) {
+      if (activeId === null && !pending) return;
+      var x = e.clientX, y = e.clientY;
+
+      if (pending) {
+        var ax = Math.abs(x - sX), ay = Math.abs(y - sY);
+        // 还看不出方向：不动
+        if (ax < CLAIM && ay < CLAIM) return;
+        // 纵向为主 -> 这不是翻页，是把页面往下拉。放手，别抢。
+        if (ay >= ax) { pending = false; return; }
+        // 认领：从这里开始完全接管
+        pending = false;
+        activeId = e.pointerId;
+        if (track.setPointerCapture) track.setPointerCapture(e.pointerId);
+        root.classList.add('is-dragging');
+      }
+      if (e.pointerId !== activeId) return;
+
+      var now = Date.now();
+      var dt = now - lastT;
+      if (dt > 0) vel = (x - lastX) / dt;     // 只留最近一次的瞬时速度
+      lastX = x; lastT = now;
+
+      dx = x - sX;
+      // 首尾两端给个阻尼：拉得动，但拉不远，松手会弹回来
+      if ((idx === 0 && dx > 0) || (idx === slides.length - 1 && dx < 0)) dx *= 0.35;
+      pos(-idx * w() + dx);
+      block(e);                                // 认领之后才拦默认行为
+    });
+
+    function endDrag(e) {
+      if (activeId === null || (e && e.pointerId !== activeId)) return;
+      var id = activeId;
+      activeId = null;
+      root.classList.remove('is-dragging');
+      if (track.releasePointerCapture && track.hasPointerCapture &&
+          track.hasPointerCapture(id)) track.releasePointerCapture(id);
+
+      var vw = w();
+      var far = Math.abs(dx) > vw * COMMIT_RATIO;
+      var fast = Math.abs(vel) > COMMIT_VEL && (dx < 0) === (vel < 0);
+      var to = dx < 0 ? idx + 1 : idx - 1;
+      // **两端都不循环。** 这里必须先自己判越界，不能把越界值丢给 go()：
+      // go() 内部是 `(i + len) % len`，会老老实实回绕 ——
+      // 在第一屏往右划会 go(-1) → 直接跳到第五屏，正好跟"到头拽不动、
+      // 松手弹回"的阻尼手感反着来（实测踩到：第一屏右划翻到了第五屏）。
+      var atEdge = to < 0 || to >= slides.length;
+      // 走得远 or 甩得快，且方向确实是横向的那一边
+      if (!atEdge && (far || fast) && Math.abs(dx) > CLAIM) {
+        go(to);
+        swipeHandled = true;      // 让随后的 click 别再去播视频
+      } else {
+        offsetFor(0);             // 没到线 / 到头了，弹回原位
+      }
+      dx = 0; vel = 0;
+      resume();                   // 松手恢复自动播放计时
+    }
+    track.addEventListener('pointerup', endDrag);
+    track.addEventListener('pointercancel', endDrag);
+
+    // 手势翻过页后，浏览器还会补一个 click，那个 click 会落到
+    // [data-promo-open] 上把宣传片弹出来。这里吃掉它。
+    root.addEventListener('click', function (e) {
+      if (swipeHandled) { swipeHandled = false; e.stopPropagation(); e.preventDefault(); }
+    }, true);
+  }
   // 切到别的标签页时停掉，回来再继续：后台空转没意义
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) clearInterval(timer); else restart();
   });
+
+  // 视口一变，每屏的宽度就变了，轨道的落位必须重算。
+  // 手机旋屏、PC 拉窗口、以及**打开/关闭调试面板**都会走这里。
+  window.addEventListener('resize', function () { offsetFor(0); });
+  // 字体是异步加载的，加载完 .carousel-dots 高度会变、轮播区宽度也会变；
+  // 用 ResizeObserver 兜住这一类"不是 resize 事件的尺寸变化"。
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(function () { offsetFor(0); });
+    ro.observe(track.parentNode);
+  }
+  // 尺寸兜底：万一 CSS 变量没生效（老浏览器不支持 flex-basis 用变量），
+  // 至少别让 5 屏挤成一屏 —— 直接给每屏写死 px，跟轨道一起重算。
+  // 正常路径下这里只是把同一个数值写两遍，无害。
+  function fallbackWidths() {
+    var vw = track.parentNode.clientWidth;
+    if (vw) slides.forEach(function (s) { s.style.width = vw + 'px'; });
+  }
+  fallbackWidths();
+
+  window.addEventListener('resize', fallbackWidths);
   // 尊重"减少动态效果"：不自动翻页，只留圆点手动切
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
   if (reduce && reduce.matches) paused = true;
