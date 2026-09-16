@@ -286,10 +286,13 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
   will-change:transform,opacity;
   transition:transform .76s cubic-bezier(.22,.61,.36,1),
              opacity .28s ease}
-/* 只挂 [data-on] 是铺满态；[data-on][data-out] 是"缩回格子、但还没消失"的中间态。
-   两态都必须显式写 transform:none，原因见下面脚本阶段 3 那条注释：
-   内联 transform 一旦存在，光靠 `[data-on]` 是压不住它的。
-   data-out 的作用是把 opacity 从 1 往下按（否则缩回的过程全程不透明）。 */
+/* 只挂 [data-on] 是铺满态；[data-on][data-out] 是收尾态（大图已缩回格子、正在淡出）。
+   两态都必须**显式**写 transform:none，这是同一条坑的两端：
+   `[data-on]` 那行不写，内联 transform 一旦存在就压不住它（见脚本阶段 3 注释）；
+   `[data-out]` 那行不写更隐蔽 —— 脚本里 `setTransform('')` 把内联样式删掉、
+   控制权交还样式表，浏览器退回去匹配 `[data-on]{transform:none}`，
+   大图**当场弹回铺满尺寸**再在原地淡出。实测桌面 1000×664：
+   fill 从 360px 一路涨回 948px 才消失，看着像"又铺满了一次"。 */
 .wall-fill[data-on]{opacity:1;transform:none}
 .wall-fill[data-on][data-out]{opacity:0;transform:none}
 .wall-fill::after{content:'';position:absolute;inset:0;border-radius:8px;
@@ -2331,19 +2334,21 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
    静态色块说不出这个，所以换成真照片；而真正的说服力在「它是一整面墙、能
    一张张拎出来看」—— 这正是应用里相册的用法，于是让它自己演一遍。
 
-   节奏（一轮的总时长 ≈ 1.0 + 0.62 + 0.42 + 0.52 + 0.76 + 2.2 + 0.52 ≈ 6s）：
+   节奏（进和出严格对称，进 3 拍、出 3 拍，一轮 ≈ 7.6s）：
      ① 整面墙静止 HOLD_STILL(1s)
      ② 随机挑一格「选中」：点亮 + 描边 + 抬起，停 HOLD_PICK(0.62s)
      ③ 这一格原地放大到 GROW(1.5) 倍，停 HOLD_GROW(0.52s)
      ④ 大图从它原来的位置长开、铺满整面墙，停 DWELL_FULL(2.2s)
-     ⑤ 缩回原来那一格，原格复原，再静止 HOLD_STILL …… 如此往复
+     ⑤ 大图**缩回**原来那一格（不是原位消失），停 HOLD_BACK(0.42s)
+     ⑥ 格子从 1.5 倍落回 1 倍、大图同步淡出，再静止 HOLD_STILL …… 往复
 
    为什么是「一张铺满」而不是「同时放大几张小的」：
    前者对应应用里点开一张照片看大图，后者只是墙上多几个色块。前者才是相册的用法。
 
-   两次停留（②之后、③之后）是刻意的：没有它们，选中和放大就是一瞬间的事，
-   看不出「先选中、再放大」这个先后关系。②用格子的 CSS 做，③才是放大 ——
-   两个阶段动的是不同元素（格子 vs #wall-fill），改任意一个都不会串台。
+   每一拍后面都跟一次停留，进出都是。少了任何一次停顿，两个相邻阶段就会
+   连成一气呵成的滑动 —— 而这一段想讲的恰恰是「先 A、停、再 B」的先后关系。
+   ②③是格子自己的 CSS（属性驱动），④⑤⑥才是 #wall-fill 的 transform ——
+   两个元素各管各的，改任意一边都不会串台。
  */
 (function () {
   var stage = document.getElementById('wall-stage');
@@ -2366,7 +2371,9 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
   var HOLD_GROW   = 520;   // 放大到 1.5 倍之后、开始铺满之前的停留
   var GROW_FULL   = 760;   // 从格子铺满整墙的过渡时长，必须和 .wall-fill 的 transition 一致
   var DWELL_FULL  = 2200;  // 铺满之后停留多久
-  var REHIDE      = 520;   // 收回（铺满 → 回到那一格）的过渡时长，同样要对齐 CSS
+  var SHRINK_MS   = 760;   // 收回第一段：铺满 → 缩回原来那一格（阶段 3 的逆），对齐 .wall-fill 的 transform
+  var HOLD_BACK   = 420;   // 缩回格子之后、格子落回 1 倍之前的停留（阶段 3 停顿的镜像）
+  var REHIDE      = 520;   // 收回第二段：格子 1.5 → 1 倍 + 大图淡出，对齐 .album i 的 transform
 
   /* 底图懒挂：照片墙在第三屏，首屏不该背这 12 张（540KB）。
      实测过 —— 把 background-image 写在 CSS 里，浏览器首屏就全下完了。
@@ -2504,27 +2511,46 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
            置空之后由样式表接管，transition 就能从起点动到铺满。 */
         setTransform('');
 
-        /* ---- 阶段 4：铺满后停 DWELL_FULL，然后收回 --------------------
-           收回分两步：fill 缩回它那一格的起点（border-radius 同步从 8px
-           收到 6px，免得放大的圆角原样缩回去时看着比格子还方），
-           再把那格的压暗撤掉 —— 照片「落回格子里」。 */
+        /* ---- 阶段 4：铺满后停 DWELL_FULL，然后**倒着走一遍** ------------
+           收回不是「原地消失」，是阶段 3 反过来：大图先缩回它原来那一格，
+           停一下，格子再落回 1 倍。中间那次停留是刻意的 ——
+           少了它就退化成「一气缩到底」，放大时那两拍停顿时白给的。
+
+           所以这里**不要**把 fill 的 opacity 往下按：大图缩回格子的过程中
+           必须一直不透明，缩到格子大小、停住，最后才让格子自己收回去。
+           压暗也一样，等最后才撤 —— 中途撤掉的话，大图一边缩、
+           原来那格一边亮起来，看起来就是两张照片在打架。 */
         later(function () {
-          setTransform(xf(g.cx, g.cy, g.sx, g.sy));
-          fill.style.borderRadius = '6px';
-          /* 收回去的两件事必须同帧发生：fill 缩向格子 + 它变淡。
-             只缩不变淡的话，大图会一直不透明地压在墙上缩回去，
-             看着像"又把照片收了进去"而不是"这一轮结束了"。 */
-          fill.setAttribute('data-out', '');
-          cell.removeAttribute('data-src');
-          cell.removeAttribute('data-grow');      // 照片落回格子，摘掉放大态
-          cell.style.removeProperty('--g');
+          setTransform(xf(g.cx, g.cy, g.sx, g.sy));   // 铺满 → 格子（阶段 3 的逆）
+          fill.style.borderRadius = '6px';            // 圆角同步收，免得比格子还方
           later(function () {
-            fill.removeAttribute('data-on');
-            fill.removeAttribute('data-out');
-            fill.style.borderRadius = '';
-            setTransform('');
-            later(round, REHIDE + HOLD_STILL);
-          }, REHIDE);
+            /* ---- 阶段 5：格子从 1.5 倍落回 1 倍 -----------------------
+               这时 fill 还盖在格子上、且和格子等大，两层是重合的。
+               先给格子留驻放大态再摘 data-pick，否则同一帧只算一次样式重算，
+               「1.5 → 1」这段过渡整个消失（就是阶段 2→3 那个坑的镜像）。
+
+               **这里绝不能写 setTransform('')**：置空等于删掉内联样式、
+               控制权交还样式表，浏览器会退回去匹配 `[data-on]{transform:none}`，
+               大图当场弹回铺满尺寸，然后在原地淡出 ——
+               实测桌面 fill 从 360px 一路涨回 948px 才消失。
+               内联的缩小位移必须一直留着，直到 data-on 被摘掉为止。 */
+            fill.setAttribute('data-out', '');        // 缩到位才淡出
+            cell.removeAttribute('data-src');         // 这一格重新亮回来
+            cell.setAttribute('data-grow', '');
+            cell.style.setProperty('--g', '1');       // 1.5 → 1，和 fill 淡出同步
+            later(function () {
+              /* 落回 1 倍、大图也已淡干净，这一轮才真正结束。
+                 fill 的 opacity 是 .28s，比格子的 .52s 先走完 ——
+                 所以这里等 REHIDE 是够的，不会在淡出没结束时就把下一拍挂上。 */
+              fill.removeAttribute('data-on');
+              fill.removeAttribute('data-out');
+              fill.style.borderRadius = '';
+              cell.removeAttribute('data-grow');     // 摘掉放大态，格子完全复原
+              cell.style.removeProperty('--g');
+              setTransform('');
+              later(round, REHIDE + HOLD_STILL);
+            }, REHIDE);
+          }, HOLD_BACK);
         }, DWELL_FULL);
       }, GROW_MS + HOLD_GROW);
     }, HOLD_PICK);
