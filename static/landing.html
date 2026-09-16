@@ -393,6 +393,34 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   .card h3{font-size:17.5px}
   .final{padding:52px 20px;border-radius:22px}
   .foot nav{margin-left:0;width:100%}
+
+  /* ---- 轮播在手机上的重排 ----
+     手机是 4:3、宽度只有 ~350px，桌面那套绝对定位的元素会互相压住
+     （实测上传卡片、EXIF 浮层、说明文字全叠在一起）。这里把它们改小、
+     改成从上到下的竖排，并收掉桌面才摆得下的浮层。 */
+  .slide-cap{left:16px;right:16px;bottom:0;padding:36px 0 14px;font-size:15.5px}
+  .slide-cap small{font-size:11px}
+
+  .up-card{width:auto;left:14px!important;right:14px;padding:9px 11px;gap:9px}
+  .up-card .up-thumb{width:26px;height:26px}
+  .up-card .up-meta b{font-size:11px}
+  .up-card .up-meta span{font-size:10px}
+  .up-card[style*="top:16%"]{top:11%!important}
+  .up-card[style*="top:44%"]{top:36%!important}
+  .up-card[style*="top:72%"]{top:61%!important}
+  /* 手机上卡片铺满宽度，右侧的 EXIF 浮层没地方放，收掉 ——
+     它演示的「自动读出时间坐标」信息在卡片副标题里已经表达了 */
+  .exif-float{display:none}
+
+  .wall{left:6%;top:14%;width:64%;gap:6px}
+  .timeline{left:78%;top:20%;height:44%}
+
+  .chat{left:12px;right:12px;width:auto;top:12%;gap:9px}
+  .bubble{max-width:100%;font-size:11.5px;padding:10px 12px}
+  .bubble.ai b{font-size:10.5px}
+  .api-float{display:none}
+
+  .carousel-dots{margin-top:16px;gap:8px}
 }
 /* 极窄机型（iPhone SE 一档）再收一次，标题不能出现孤字行 */
 @media (max-width:360px){
@@ -401,12 +429,114 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   .eyebrow{font-size:11.5px;padding:0 11px 0 8px}
 }
 
+/* ---------- 首屏轮播 ---------- */
+/* 4 张幻灯片叠在同一个格子里做交叉淡入。不用 transform 位移是因为 .stage 上
+   已经有 rotateX 的 3D 透视，再叠加位移容易出层叠顺序问题。 */
+.carousel{position:relative}
+.carousel-slide{position:absolute;inset:0;opacity:0;visibility:hidden;
+  transition:opacity .55s ease,visibility .55s;
+  cursor:pointer;-webkit-tap-highlight-color:transparent}
+/* 第一屏要占位撑开高度（其余都是 absolute，否则容器高度塌成 0） */
+.carousel-slide:first-child{position:relative}
+.carousel-slide.is-active{opacity:1;visibility:visible;z-index:2}
+.carousel-slide:focus-visible{outline:2px solid #FF8A00;outline-offset:3px}
+@media (prefers-reduced-motion:reduce){.carousel-slide{transition:none}}
+
+.carousel-dots{display:flex;gap:9px;justify-content:center;margin-top:20px}
+.carousel-dots button{width:9px;height:9px;padding:0;border-radius:50%;cursor:pointer;
+  border:1px solid rgba(255,255,255,.35);background:transparent;transition:.25s}
+.carousel-dots button[aria-selected="true"]{background:var(--brand-1);border-color:var(--brand-1);
+  width:26px;border-radius:5px}
+
+/* 幻灯片里的通用小标签（标题 + 说明），压在各屏左下角。
+   文字直接叠在手绘 SVG 的色块上会花，垫一层左下加深的渐变让字始终吃得住；
+   高度按两行文案（标题 19px + 说明 12.5px）留，别按单行留否则说明会掉到底边。*/
+.slide-cap{position:absolute;left:26px;right:26px;bottom:0;margin:0;z-index:2;
+  padding:44px 0 18px;
+  font-size:19px;font-weight:700;letter-spacing:-.01em;color:#fff;
+  text-shadow:0 2px 14px rgba(0,0,0,.85)}
+.slide-cap::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:linear-gradient(180deg,rgba(8,8,12,0),rgba(8,8,12,.72) 52%,rgba(8,8,12,.88))}
+.slide-cap small{display:block;font-size:12.5px;font-weight:400;color:rgba(255,255,255,.62);
+  margin-top:3px;letter-spacing:0}
+
+/* --- 第 2 屏：上传卡片 --- */
+.up-card{position:absolute;width:270px;display:flex;align-items:center;gap:11px;
+  padding:11px 13px;border-radius:12px;border:1px solid var(--line-strong);
+  background:rgba(16,16,22,.82);backdrop-filter:blur(8px);
+  box-shadow:0 10px 30px -12px rgba(0,0,0,.8);animation:floaty 5s ease-in-out infinite}
+.up-card .up-thumb{width:34px;height:34px;border-radius:7px;flex:none;
+  background:linear-gradient(135deg,#FF8A00,#F5296E)}
+.up-card .up-thumb.b{background:linear-gradient(135deg,#4C9AFF,#7B61FF)}
+.up-card .up-thumb.c{background:linear-gradient(135deg,#2FD3A5,#4C9AFF)}
+.up-card .up-meta{min-width:0;flex:1}
+.up-card .up-meta b{display:block;font-size:12px;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.up-card .up-meta span{font-size:11px;color:var(--fg-3)}
+.up-card .up-bar{position:absolute;left:0;right:0;bottom:0;height:2px;
+  background:rgba(255,255,255,.09);border-radius:0 0 12px 12px;overflow:hidden}
+.up-card .up-bar span{display:block;height:100%;background:var(--grad);
+  border-radius:0 2px 2px 0;transition:width .5s ease}
+.up-card .up-done{color:#2FD3A5;font-size:14px;font-weight:700;flex:none}
+.up-card .up-pct{font-size:11.5px;color:var(--fg-2);flex:none;font-variant-numeric:tabular-nums}
+
+/* --- 第 2 屏：EXIF 浮层 --- */
+.exif-float{position:absolute;right:7%;top:24%;width:242px;padding:15px 17px;border-radius:14px;
+  border:1px solid var(--line-strong);background:rgba(16,16,22,.84);backdrop-filter:blur(8px);
+  box-shadow:0 14px 40px -14px rgba(0,0,0,.85);z-index:2}
+.exif-row{display:flex;justify-content:space-between;gap:14px;font-size:12px;
+  padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.exif-row:last-child{border-bottom:0;padding-bottom:0}
+.exif-row span{color:var(--fg-3)}
+.exif-row b{font-weight:600;font-variant-numeric:tabular-nums}
+
+/* --- 第 3 屏：照片墙 + 时间线 --- */
+.wall{position:absolute;left:8%;top:19%;width:56%;display:grid;
+  grid-template-columns:repeat(3,1fr);gap:9px;z-index:2}
+.wall i{display:block;aspect-ratio:1;border-radius:9px;border:1px solid var(--line-strong);
+  animation:floaty 6s ease-in-out infinite}
+.timeline{position:absolute;left:70%;top:26%;width:2px;height:48%;z-index:2;
+  display:flex;flex-direction:column;align-items:center;justify-content:space-between}
+.tl-dot{width:11px;height:11px;border-radius:50%;border:2px solid rgba(255,255,255,.4);
+  background:#0D0D11;flex:none}
+.tl-dot.on{background:var(--brand-1);border-color:var(--brand-1);
+  box-shadow:0 0 0 5px rgba(255,138,0,.16)}
+.tl-line{flex:1;width:2px;background:rgba(255,255,255,.14)}
+
+/* --- 第 4 屏：对话 + 接口 --- */
+.chat{position:absolute;left:7%;top:17%;width:60%;display:flex;flex-direction:column;
+  gap:11px;z-index:2}
+.bubble{max-width:82%;padding:12px 15px;border-radius:15px;font-size:13px;line-height:1.55}
+.bubble.me{align-self:flex-end;background:rgba(255,255,255,.11);
+  border:1px solid rgba(255,255,255,.14);border-bottom-right-radius:5px}
+.bubble.ai{align-self:flex-start;background:rgba(16,16,22,.86);
+  border:1px solid var(--line-strong);border-bottom-left-radius:5px}
+.bubble.ai b{display:block;font-size:11.5px;color:var(--brand-1);margin-bottom:5px;font-weight:600}
+.bubble.ai span{color:var(--fg-2)}
+.api-float{position:absolute;right:7%;top:20%;display:flex;align-items:center;gap:9px;
+  padding:12px 15px;border-radius:12px;border:1px solid var(--line-strong);
+  background:rgba(16,16,22,.84);backdrop-filter:blur(8px);z-index:2;
+  box-shadow:0 14px 40px -14px rgba(0,0,0,.85)}
+.api-tag{padding:2px 8px;border-radius:5px;background:var(--grad);font-size:10.5px;
+  font-weight:700;letter-spacing:.04em}
+.api-float b{font-size:12.5px;font-weight:600;
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+
+@media (prefers-reduced-motion:reduce){
+  .up-card,.wall i{animation:none}
+}
+
 /* ---------- 演示视频：示意图上的播放按钮 + 弹层 ---------- */
 /* 按钮压在首屏示意图上：那张图本来就是静态示意，让它"能点开看真的"最自然。 */
 .promo-cta .tri{font-size:.8em;margin-right:2px;opacity:.85}
+/* pointer-events:none 让点击穿到下面的轮播图上；只有圆环和文字标签自己重新
+   打开。以前这里铺满整张示意图接点击，加了轮播之后会整块吞掉"点图播视频"
+   之外的所有交互（圆点也点不到）。 */
 .promo-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   gap:12px;background:transparent;border:0;cursor:pointer;z-index:3;
+  pointer-events:none;
   font:inherit;color:#fff;-webkit-tap-highlight-color:transparent}
+.promo-play .ring,.promo-play .lbl{pointer-events:auto}
 .promo-play .ring{width:74px;height:74px;border-radius:50%;display:grid;place-items:center;
   background:rgba(12,18,32,.62);backdrop-filter:blur(6px);
   border:1.5px solid rgba(255,255,255,.55);
@@ -521,14 +651,19 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         style="color:var(--fg-2);text-decoration:underline;text-underline-offset:3px">登录</a></span>
     </p>
 
-    <!-- 产品示意（非截图）：地图 + 真实路线 + 挂在地点上的照片堆 -->
+    <!-- 产品示意（非截图）：4 张手绘 SVG 轮播，每张讲一个主要特性。
+         点任意一张图 = 播宣传片（跟「看 60 秒演示」按钮共用 handler），
+         所以整块 .carousel-slide 都是按钮语义。 -->
     <div class="stage-outer" style="position:relative">
       <button class="promo-play" type="button" id="promo-open"
               aria-label="播放 60 秒产品演示视频">
         <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>
         <span class="lbl">▶ 看 60 秒演示</span>
       </button>
-      <div class="stage">
+      <div class="carousel" id="promo-carousel">
+        <!-- 第一屏：地图 + 真实路线 + 挂在地点上的照片堆 -->
+        <div class="stage carousel-slide is-active" data-slide="0" data-promo-open tabindex="0"
+             role="button" aria-label="真实驾车路线：地图上按顺序摆出落脚点，点开看演示">
         <!-- preserveAspectRatio=none 是刻意的：地图是抽象图形，拉伸没人看得出来，
              但它让 viewBox 坐标和容器百分比严格一一对应 —— pin/照片堆是用
              百分比定位的，用 slice 裁剪就会和路线错位（手机 4/3 下尤其明显）。 -->
@@ -583,7 +718,109 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
           <span class="bar"><span></span></span>
           <span>2×</span>
         </div>
-      </div>
+        </div><!-- /slide 0 -->
+
+        <!-- 第二屏：拍完就传 —— 上传进度 + 自动读出的时间/坐标 -->
+        <div class="stage carousel-slide" data-slide="1" data-promo-open tabindex="0"
+             role="button" aria-label="拍完就传：照片上传后自动读出时间与坐标，点开看演示">
+          <svg class="stage-map" viewBox="0 0 1200 675" preserveAspectRatio="none" aria-hidden="true">
+            <path class="land" d="M80 120 Q 380 60 640 140 T 1120 110 L1140 330 Q 800 380 500 330 T 70 360Z"/>
+            <g class="road">
+              <path d="M0 220 H1200"/><path d="M0 400 H1200"/><path d="M300 0 V675"/><path d="M820 0 V675"/>
+            </g>
+          </svg>
+
+          <!-- 三张正在上传的卡片，进度各不相同 -->
+          <div class="up-card" style="left:9%;top:16%;animation-delay:.2s">
+            <i class="up-thumb"></i>
+            <div class="up-meta">
+              <b>IMG_4821.HEIC</b>
+              <span>云南 · 香格里拉</span>
+            </div>
+            <div class="up-bar"><span style="width:100%"></span></div>
+            <span class="up-done">✓</span>
+          </div>
+          <div class="up-card" style="left:9%;top:44%;animation-delay:1.1s">
+            <i class="up-thumb b"></i>
+            <div class="up-meta">
+              <b>IMG_4822.HEIC</b>
+              <span>云南 · 香格里拉</span>
+            </div>
+            <div class="up-bar"><span style="width:68%"></span></div>
+            <span class="up-pct">68%</span>
+          </div>
+          <div class="up-card" style="left:9%;top:72%;animation-delay:2.0s">
+            <i class="up-thumb c"></i>
+            <div class="up-meta">
+              <b>VID_0093.MOV</b>
+              <span>云南 · 香格里拉</span>
+            </div>
+            <div class="up-bar"><span style="width:24%"></span></div>
+            <span class="up-pct">24%</span>
+          </div>
+
+          <!-- 右侧：读出来的 EXIF -->
+          <div class="exif-float">
+            <div class="exif-row"><span>时间</span><b>2026-10-08 14:32</b></div>
+            <div class="exif-row"><span>坐标</span><b>27.82°N 99.71°E</b></div>
+            <div class="exif-row"><span>海拔</span><b>3,281 m</b></div>
+          </div>
+
+          <p class="slide-cap">拍完就传<small>时间和坐标自动读出来，不用手填</small></p>
+        </div>
+
+        <!-- 第三屏：一眼翻完一趟旅行 —— 照片墙 + 时间线 -->
+        <div class="stage carousel-slide" data-slide="2" data-promo-open tabindex="0"
+             role="button" aria-label="照片墙与时间线：整趟旅行的照片聚成一面墙，点开看演示">
+          <svg class="stage-map" viewBox="0 0 1200 675" preserveAspectRatio="none" aria-hidden="true">
+            <path class="water" d="M0 520 Q 300 480 600 520 T 1200 490 L1200 675 L0 675Z"/>
+          </svg>
+
+          <div class="wall">
+            <i class="ph-a"></i><i class="ph-b"></i><i class="ph-c"></i>
+            <i class="ph-d"></i><i class="ph-e"></i><i class="ph-a"></i>
+          </div>
+
+          <div class="timeline">
+            <span class="tl-dot"></span>
+            <span class="tl-line"></span>
+            <span class="tl-dot"></span>
+            <span class="tl-line"></span>
+            <span class="tl-dot on"></span>
+            <span class="tl-line"></span>
+            <span class="tl-dot"></span>
+          </div>
+
+          <p class="slide-cap">一眼翻完一趟旅行<small>每个地点一摞照片，点开是整面墙</small></p>
+        </div>
+
+        <!-- 第四屏：AI 读得懂的记忆接口 —— 对话 + 返回结构化记忆 -->
+        <div class="stage carousel-slide" data-slide="3" data-promo-open tabindex="0"
+             role="button" aria-label="AI 记忆接口：用自然语言问旅行，返回结构化记忆，点开看演示">
+          <svg class="stage-map" viewBox="0 0 1200 675" preserveAspectRatio="none" aria-hidden="true">
+            <path class="land" d="M140 150 Q 420 90 700 160 T 1130 130 L1150 340 Q 820 390 520 340 T 110 370Z"/>
+          </svg>
+
+          <div class="chat">
+            <div class="bubble me">我上次去香格里拉，那天天气怎么样？</div>
+            <div class="bubble ai">
+              <b>2026-10-08 · 香格里拉</b>
+              <span>晴，气温 6–17℃。当天拍了 42 张照片、3 段视频，
+              海拔 3,281 m，停留 6 小时。</span>
+            </div>
+          </div>
+
+          <div class="api-float">
+            <span class="api-tag">MCP</span>
+            <b>get_trip_memory()</b>
+          </div>
+
+          <p class="slide-cap">AI 读得懂的记忆<small>自然语言提问，返回结构化行程</small></p>
+        </div>
+      </div><!-- /carousel -->
+
+      <!-- 轮播圆点。点图是播视频，点圆点是翻页 —— 两件事分开，别互相抢。 -->
+      <div class="carousel-dots" id="promo-dots" role="tablist" aria-label="产品示意切换"></div>
     </div>
   </div>
 </section>
@@ -876,6 +1113,64 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 </div>
 
 <script>
+/* ---------- 首屏轮播 ---------- */
+(function () {
+  var slides = document.querySelectorAll('.carousel-slide');
+  var dotsBox = document.getElementById('promo-dots');
+  if (slides.length < 2 || !dotsBox) return;
+
+  var idx = 0, timer = null, paused = false;
+  var DURATION = 6000;
+
+  // 圆点：一次建好，之后只改 aria-selected
+  slides.forEach(function (s, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-label', '第 ' + (i + 1) + ' 张：' + (s.getAttribute('aria-label') || ''));
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();                 // 别顺带触发"点图播视频"
+      go(i);
+      restart();                           // 手动翻页后重新计时
+    });
+    dotsBox.appendChild(b);
+  });
+  var dots = dotsBox.querySelectorAll('button');
+
+  function go(i) {
+    idx = (i + slides.length) % slides.length;
+    slides.forEach(function (s, n) { s.classList.toggle('is-active', n === idx); });
+    dots.forEach(function (d, n) { d.setAttribute('aria-selected', n === idx ? 'true' : 'false'); });
+  }
+  function next() { go(idx + 1); }
+  function restart() {
+    clearInterval(timer);
+    if (paused) return;
+    timer = setInterval(next, DURATION);
+  }
+
+  // 悬停/聚焦时停自动播放 —— 用户正在看某一张，不该被翻走
+  var root = document.getElementById('promo-carousel');
+  function pause() { paused = true; clearInterval(timer); }
+  function resume() { paused = false; restart(); }
+  if (root) {
+    root.addEventListener('mouseenter', pause);
+    root.addEventListener('mouseleave', resume);
+    root.addEventListener('focusin', pause);
+    root.addEventListener('focusout', resume);
+  }
+  // 切到别的标签页时停掉，回来再继续：后台空转没意义
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) clearInterval(timer); else restart();
+  });
+  // 尊重"减少动态效果"：不自动翻页，只留圆点手动切
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+  if (reduce && reduce.matches) paused = true;
+
+  go(0);
+  restart();
+})();
+
 /* ---------- 演示视频 ---------- */
 (function () {
   var modal = document.getElementById('promo-modal');
@@ -1076,7 +1371,18 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     if (lastFocus) lastFocus.focus();
   }
 
-  openBtns.forEach(function (b) { b.addEventListener('click', open); });
+  openBtns.forEach(function (b) {
+    b.addEventListener('click', open);
+    // 幻灯片是 <div role="button">，不像 <button> 那样自带回车/空格触发，
+    // 得自己接。只对这类元素接，真 <button> 由浏览器管、重复接会触发两次。
+    if (b.getAttribute('role') === 'button') {
+      b.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();               // 空格默认会滚页面
+        open();
+      });
+    }
+  });
   closeBtn.addEventListener('click', close);
   // 点背景关掉，但点到视频本身不关（拖进度条常常会滑出视频区域）
   modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
