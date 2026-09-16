@@ -1265,6 +1265,41 @@ def get_trip_stats(trip_id):
 
 
 # ---------- 媒体 ----------
+def list_trip_media(trip_id, limit=None, offset=0):
+    """整个行程的媒体，按「点顺序 + 点内顺序」排。
+
+    带 limit/offset 是为了分页 —— 一条行程上千张照片是正常量级，一次全吐出去
+    既慢又容易把 Agent 的上下文撑爆。带上点名称/日期，Agent 拿到就知道哪张是哪儿。
+    """
+    conn = get_conn()
+    sql = (
+        "SELECT m.*, p.name AS point_name, p.start_date AS point_date "
+        "FROM media m JOIN points p ON p.id = m.point_id "
+        "WHERE p.trip_id=? "
+        "ORDER BY p.start_date ASC, p.sort_order ASC, p.id ASC, "
+        "         COALESCE(NULLIF(m.sort_order,0), 999999) ASC, "
+        "         COALESCE(m.exif_time, m.created_at) ASC, m.id ASC"
+    )
+    params = [trip_id]
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params += [int(limit), int(offset)]
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
+
+
+def count_trip_media(trip_id):
+    """行程媒体总数。分页接口要拿它算总页数，别让 Agent 靠翻到空页才停。"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM media m JOIN points p ON p.id = m.point_id "
+        "WHERE p.trip_id=?", (trip_id,)
+    ).fetchone()
+    conn.close()
+    return row["n"] if row else 0
+
+
 def list_media(point_id):
     conn = get_conn()
     # 手工排过序的（sort_order > 0）排在前面并按该顺序；没排过的仍按拍摄时间。

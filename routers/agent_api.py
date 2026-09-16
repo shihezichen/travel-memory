@@ -23,6 +23,7 @@ from starlette.concurrency import run_in_threadpool
 
 import db
 from routers import deps
+import agent_media
 import media as media_mod
 import media_purge
 import mcp_http
@@ -354,6 +355,15 @@ def _point_to_bundle(p: dict) -> dict:
             "type": m["type"], "filename": m["filename"],
             "thumb_filename": m["thumb_filename"], "exif_time": m["exif_time"],
             "exif_lat": m["exif_lat"], "exif_lng": m["exif_lng"],
+            # 带有效期的签名链接。之前这里只给裸文件名，Agent 根本拼不出能用的
+            # 地址 —— 这正是「Agent 分享香格里拉照片时说没接口」的根因之一。
+            "url": agent_media.urls_for(f"/uploads/{m['filename']}"),
+            "download_url": agent_media.urls_for(
+                f"/uploads/{m['filename']}", download=True,
+                filename=m["filename"]),
+            "thumb_url": (agent_media.urls_for(
+                f"/uploads/thumbs/{m['thumb_filename']}")
+                if m.get("thumb_filename") else None),
         } for m in media]
     return out
 
@@ -495,6 +505,41 @@ async def ai_memory_import(request: Request, client_request_id: str = None):
     _audit(key, "memory.import", "ok",
            detail=f"trips={n_trips} points={n_points} media={n_media}")
     return result
+
+
+@router.get("/api/ai/trips/{trip_id}/media")
+def ai_trip_media(request: Request, trip_id: int, limit: int = 50,
+                  offset: int = 0):
+    """导出整个行程的媒体（read scope），**分页**返回带签名的下载链接。
+
+    为什么分页而不是一次性全给：一条行程上千张照片很正常，一次性返回既慢
+    又会把调用方（Agent 的上下文窗口）撑爆 —— 你提的「不能让人等十几分钟」
+    说的就是这个。这里每页默认 50 条，调用方按 total 自己翻页，翻到哪用哪。
+
+    链接是签名 + 24 小时有效期的临时链，**不需要服务端打包**：不用生成 zip、
+    不用等任务队列，请求即返回。这也是 A 方案相比「异步导出任务」更简单的地方。
+    """
+    key = _api_key_auth(request, "read")
+    if not _key_is_owner(key, db.get_trip_owner_id(trip_id)):
+        raise HTTPException(404, "行程不存在")
+    limit = max(1, min(int(limit), 200))          # 夹紧，防一次拉爆
+    offset = max(0, int(offset))
+    rows = db.list_trip_media(trip_id, limit=limit, offset=offset)
+    total = db.count_trip_media(trip_id)
+    _audit(key, "media.trip_export", "ok",
+           detail=f"trip={trip_id} offset={offset} n={len(rows)}")
+    return {
+        "trip_id": trip_id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(rows) < total,
+        "expires_in": agent_media.AGENT_URL_TTL,
+        "note": "链接为 24 小时有效的签名 URL，过期后重新调用本接口获取。",
+        "items": [dict(agent_media.enrich_media(m),
+                       point_id=m["point_id"], point_name=m.get("point_name"),
+                       point_date=m.get("point_date")) for m in rows],
+    }
 
 
 @router.get("/api/ai/trips/{trip_id}/generations")
@@ -1231,7 +1276,9 @@ def ai_list_media(request: Request, point_id: int):
     if not _key_is_owner(key, db.get_point_owner_id(point_id)):
         raise HTTPException(404, "地点不存在")
     _audit(key, "media.list", "ok", detail=f"point={point_id}")
-    return db.list_media(point_id)
+    # 每条媒体补上带有效期的签名链接（url / download_url / thumb_url）。
+    # 只加字段：老的 filename / thumb_filename 原样保留，老 Agent 不受影响。
+    return [agent_media.enrich_media(m) for m in db.list_media(point_id)]
 
 
 @router.post("/api/ai/points/{point_id}/media")
@@ -1274,8 +1321,16 @@ def ai_upload_media(request: Request, point_id: int, data_base64: str = Form(...
                        exif_time, exif_lat, exif_lng)
     transcode.on_media_uploaded(mid, src_path, mtype)   # 视频丢后台转码，不阻塞本请求
     _audit(key, "media.upload", "ok", detail=f"point={point_id} type={mtype}")
+    # 刚落的文件还在「本地 → OSS」的 2 分钟同步空窗里，签名会在 OSS 上 404，
+    # urls_for 会自动回落到本机路径（跟网页链路同款处理），不会给出死链。
     return {"id": mid, "type": mtype, "filename": stored_name, "thumb": thumb_name,
-            "exif_time": exif_time, "exif_lat": exif_lat, "exif_lng": exif_lng}
+            "exif_time": exif_time, "exif_lat": exif_lat, "exif_lng": exif_lng,
+            "url": agent_media.urls_for(f"/uploads/{stored_name}"),
+            "download_url": agent_media.urls_for(f"/uploads/{stored_name}",
+                                                 download=True,
+                                                 filename=stored_name),
+            "thumb_url": (agent_media.urls_for(f"/uploads/thumbs/{thumb_name}")
+                          if thumb_name else None)}
 
 
 @router.delete("/api/ai/media/{media_id}")

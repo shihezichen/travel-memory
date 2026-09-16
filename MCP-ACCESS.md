@@ -89,7 +89,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 |---|---|---|
 | `initialize` | 握手，返回协议版本/能力/服务信息 | 是 |
 | `notifications/initialized` | 客户端就绪通知 | 否（HTTP 202） |
-| `tools/list` | 列出全部可用工具（36 个），返回的是**实时** schema | 是 |
+| `tools/list` | 列出全部可用工具（37 个），返回的是**实时** schema | 是 |
 | `tools/call` | 调用工具 | 是 |
 | `ping` | 健康检查 | 是 |
 
@@ -117,7 +117,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 
 ---
 
-## 5. 工具清单（36 个）
+## 5. 工具清单（37 个）
 
 | 工具 | 所需 scope | 说明 |
 |---|---|---|
@@ -154,7 +154,8 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 | `create_share` | share | 为某次行程生成只读分享链接（token），供他人查看（参数：trip_id, expire_days, password） |
 | `delete_share` | share | 撤销某次行程的全部分享链接（参数：trip_id） |
 | `share_count` | read | 查询某次行程当前有效分享链接数量（参数：trip_id） |
-| `list_media` | read | 列出某地点已上传的照片/视频媒体（含缩略图、EXIF 时间/坐标）（参数：point_id） |
+| `list_media` | read | 列出某地点已上传的照片/视频媒体（含缩略图、EXIF 时间/坐标；返回 `url`/`download_url`/`thumb_url` 签名链接，24 小时有效）（参数：point_id） |
+| `list_trip_media` | read | **分页**导出整个行程的照片/视频（含所在点名称、日期、签名下载链接；返回 total/has_more，按 offset 翻页）（参数：trip_id, limit, offset） |
 | `upload_media` | write | 给某地点上传一张照片或一段视频（data_base64 为文件内容 base64 编码）（参数：point_id, data_base64, filename, content_type） |
 | `delete_media` | write | 删除某条媒体（照片/视频）（参数：media_id） |
 
@@ -279,6 +280,9 @@ curl -s -o /dev/null -w "%{http_code}" $BASE -H "Authorization: Bearer tm_wrong"
 - 📡 **无流式**：当前返回完整 JSON，不支持 SSE 流式输出
 - 🚦 **限流**：按 Key 分级限流（读 120/写 60/生成 20 次/分钟）+ 按 IP 兜底（300 次/分钟）。超限返回 429，请按提示退避
 - 🔁 **幂等**：写操作（create_trip / add_point / upload_media）支持传 `client_request_id`（建议 UUID）。网络重试时传相同值不会重复创建，直接返回首次结果
+- 🔗 **媒体链接签名**：`list_media` / `list_trip_media` / `get_memory` 返回的媒体链接
+  是**带签名的临时 URL，24 小时有效**。过期后旧链接返回 403，**重新调用接口获取新链接**即可。
+  请勿把链接写死进配置长期使用。
 - 🔒 **传输安全**：全程 HTTPS，Let's Encrypt 正式证书（签给域名 `top001.xin`，90 天，服务端自动续期），
   客户端**无需**跳过证书校验（不要用 `curl -k` / `verify=False`）。HTTP 会 301 跳 HTTPS。
 - ℹ️ **端点变更历史**：2026-09-10 域名 `top001.xin` 备案通过（粤ICP备2026134597号），
@@ -306,6 +310,22 @@ curl -s -o /dev/null -w "%{http_code}" $BASE -H "Authorization: Bearer tm_wrong"
 `major` 删了工具、改了必填参数、或改变了已有参数的语义。
 
 ### 9.2 变更记录
+
+**v1.3.0**（2026-09-16）
+
+新增：
+
+- `list_trip_media(trip_id, limit, offset)` —— **分页**导出整个行程的照片/视频，
+  含所在点名称、日期与签名下载链接。返回 `total` / `has_more`，按 `offset` 翻页
+  （默认每页 50，上限 200）。行程媒体量大时用它，不要逐点调用 `list_media`。
+
+行为变更（**纯增强，无需改动已有代码**）：
+
+- `list_media`、`get_memory`、`upload_media` 的返回**新增** `url` / `download_url` /
+  `thumb_url` 三个字段，均为签名链接。**原有字段（`filename` / `thumb_filename` /
+  `exif_*`）全部保留、语义不变**，老 Agent 不受影响。
+- 此前接口只返回文件名、不给可用 URL（Agent 拿不到照片，会被误判成"没有这个接口"）；
+  现在返回可直接访问的链接。
 
 **v1.2.0**（2026-09-16）
 

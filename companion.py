@@ -81,8 +81,13 @@ def _get_ds_key():
 
 
 # ---------- 领域 API 客户端（工具实现） ----------
-def _call_api(method, path, form=None, json_body=None):
+def _call_api(method, path, form=None, json_body=None, params=None):
     url = BASE_URL + path
+    if params:
+        qs = urllib.parse.urlencode({k: v for k, v in params.items()
+                                     if v is not None})
+        if qs:
+            url += ("&" if "?" in url else "?") + qs
     req = urllib.request.Request(url, method=method)
     req.add_header("Authorization", f"Bearer {_api_key()}")
     if json_body is not None:
@@ -262,6 +267,11 @@ def tool_share_count(trip_id):
 
 def tool_list_media(point_id):
     return _call_api("GET", f"/api/ai/points/{point_id}/media")
+
+
+def tool_list_trip_media(trip_id, limit=50, offset=0):
+    return _call_api("GET", f"/api/ai/trips/{trip_id}/media",
+                     params={"limit": limit, "offset": offset})
 
 
 def tool_upload_media(point_id, data_base64, filename="", content_type=""):
@@ -749,11 +759,27 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_media",
-            "description": "列出某地点已上传的照片/视频媒体（含缩略图、EXIF 时间/坐标）。当用户问'XX地点有什么照片'时调用。",
+            "description": "列出某地点已上传的照片/视频媒体。返回每条媒体的 url（可发给他人的签名链接）、download_url（另存为）、thumb_url（缩略图），均 24 小时有效；含 EXIF 时间/坐标。当用户问'XX地点有什么照片'或'把某地点的照片分享给我'时调用。",
             "parameters": {
                 "type": "object",
                 "properties": {"point_id": {"type": "integer", "description": "地点 id。不确定就先调 get_memory 看这趟的时间线"}},
                 "required": ["point_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_trip_media",
+            "description": "分页导出整个行程的照片/视频（含所在点名称、日期、签名下载链接）。当用户说'把整趟行程的照片给我'或需要批量取媒体时调用。默认每页 50 条，返回 total/has_more，按 offset 翻页。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "integer", "description": "行程 id"},
+                    "limit": {"type": "integer", "description": "每页条数，默认 50，最大 200"},
+                    "offset": {"type": "integer", "description": "偏移量，默认 0；用返回值里的 has_more 判断是否继续翻页"},
+                },
+                "required": ["trip_id"],
             },
         },
     },

@@ -78,6 +78,7 @@ TOOL_ROUTES = {
     "export_trip":      ("GET",    "/api/ai/trips/{trip_id}/export",   "read",  ["trip_id"], [], []),
     "get_stats":        ("GET",    "/api/ai/trips/{trip_id}/stats",    "read",  ["trip_id"], [], []),
     "list_media":       ("GET",    "/api/ai/points/{point_id}/media",  "read",  ["point_id"], [], []),
+    "list_trip_media":  ("GET",    "/api/ai/trips/{trip_id}/media",    "read",  ["trip_id"], ["limit", "offset"], []),
     "upload_media":     ("POST",   "/api/ai/points/{point_id}/media",  "write", ["point_id"], [], ["data_base64", "filename", "content_type"]),
     "delete_media":     ("DELETE", "/api/ai/media/{media_id}",         "write", ["media_id"], [], []),
     "create_share":     ("POST",   "/api/ai/trips/{trip_id}/share",    "share", ["trip_id"], [], ["expire_days", "password"]),

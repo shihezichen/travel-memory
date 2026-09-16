@@ -31,7 +31,7 @@ import mcp_http
 
 pytestmark = pytest.mark.api
 
-EXPECTED_TOOL_COUNT = 36
+EXPECTED_TOOL_COUNT = 37
 
 
 def _bearer(raw):
@@ -299,6 +299,15 @@ def test_all_tools_execute(mcp_call, admin_key, make_user, seeded_trip,
 
     # ---- 媒体 ----
     run("list_media", {"point_id": pid})
+    _res, tmedia = run("list_trip_media", {"trip_id": new_tid})
+    tm = _json.loads(tmedia)
+    assert "total" in tm and "has_more" in tm and "items" in tm
+    assert tm["limit"] == 50 and tm["offset"] == 0
+    assert tm["total"] == len(tm["items"]) or tm["has_more"]
+    # 分页参数要真的生效（不是收下就丢）
+    _res, paged = run("list_trip_media", {"trip_id": new_tid, "limit": 1,
+                                          "offset": 0})
+    assert _json.loads(paged)["limit"] == 1
     _res, up = run("upload_media", {
         "point_id": pid,
         "data_base64": base64.b64encode(jpeg_bytes()).decode(),
