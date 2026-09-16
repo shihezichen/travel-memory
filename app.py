@@ -561,9 +561,16 @@ def render_landing(cacheable: bool) -> HTMLResponse:
     """
     html = (BASE / "static" / "landing.html").read_text(encoding="utf-8")
     html = html.replace("__ICP_FOOTER__", icp_footer_html())
-    # 演示视频挂在 OSS 上。MEDIA_BASE_URL 为空（本机开发、没配 OSS）时替换成空串，
-    # 于是 src 退化成站内相对路径 /uploads/promo/...，照样能播。
-    html = html.replace("__MEDIA_BASE__", MEDIA_BASE_URL)
+    # 演示视频挂在 OSS 上，走 media_url() 拿签名 URL。
+    # Bucket 关掉公共读之后，`MEDIA_BASE_URL + path` 拼出来的裸链一律 403 ——
+    # 这个占位符原来是直接替换前缀，于是首页的宣传片一直是「点开报错」。
+    # 签名失败（本机开发 / 没配 OSS）时 media_url() 自己退回站内相对路径
+    # /uploads/promo/...，跟别的媒体同一个出口，照样能播。
+    # 只签 promo 这一处：__MEDIA_BASE__ 在 index/share 里是给前端 JS 拼路径用的
+    # 前缀，不是完整 URL，不能整个换掉。
+    for name in ("travel-memory-promo.mp4", "travel-memory-promo.jpg"):
+        html = html.replace("__MEDIA_BASE__/uploads/promo/" + name,
+                            media_url("/uploads/promo/" + name))
     cc = "public, max-age=300" if cacheable else "no-cache, no-store, must-revalidate"
     return HTMLResponse(html, headers={"Cache-Control": cc})
 
