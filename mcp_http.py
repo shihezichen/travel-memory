@@ -25,7 +25,21 @@ import urllib.request
 
 import companion  # 复用 TOOLS 定义（工具清单与描述）
 
-SERVER_INFO = {"name": "travel-memory", "version": "1.1.0"}
+# serverInfo.version —— 这是接入方唯一能拿到的「工具集变没变」的信号。
+#
+# /mcp 是无状态实现（每个 POST 独立鉴权，不维护 session、没有 SSE 长连接），
+# 服务端物理上没法主动推 notifications/tools/list_changed，所以 capabilities 里
+# 也**不**声明 tools.listChanged —— 声明了却推不出去，比不声明更坏。
+# 接入方感知变更的正路只有两条：重连时重拉 tools/list，或比对这里的版本号。
+#
+# 因此：**动了 TOOLS 就必须动这个号**，否则对面缓存着旧 schema 你无从察觉。
+#   patch  只改了工具描述文字
+#   minor  新增工具、或给已有工具加可选参数
+#   major  删工具、改必填参数、或改变已有参数的语义
+#
+# 1.2.0：新增 list_points / update_trip；add_point、update_point 加 sort_order；
+#        update_point 的 name 由必填改可选、并改变了缺省坐标的行为（见 CHANGELOG）。
+SERVER_INFO = {"name": "travel-memory", "version": "1.2.0"}
 PROTOCOL_VERSION = "2025-03-26"
 
 # ---------- 工具 → 领域 API 路由表 ----------
@@ -54,9 +68,11 @@ TOOL_ROUTES = {
     "generate":         ("POST",   "/api/ai/generate",                 "read",  [], [], ["kind", "trip_id", "style", "language"]),
     "create_trip":      ("POST",   "/api/ai/trips",                    "write", [], [], ["name", "start_date", "end_date", "description", "status", "client_request_id"]),
     "update_trip_status": ("PUT",  "/api/ai/trips/{trip_id}",          "write", ["trip_id"], [], ["status"]),
+    "update_trip":      ("PUT",    "/api/ai/trips/{trip_id}",          "write", ["trip_id"], [], ["name", "start_date", "end_date", "description", "status"]),
     "geocode":          ("GET",    "/api/ai/geocode",                  "read",  [], ["address"], []),
-    "add_point":        ("POST",   "/api/ai/trips/{trip_id}/points",   "write", ["trip_id"], [], ["name", "lat", "lng", "start_date", "end_date", "description", "route_mode", "is_waypoint", "client_request_id"]),
-    "update_point":     ("PUT",    "/api/ai/points/{point_id}",        "write", ["point_id"], [], ["name", "lat", "lng", "start_date", "end_date", "description", "route_mode", "is_waypoint"]),
+    "add_point":        ("POST",   "/api/ai/trips/{trip_id}/points",   "write", ["trip_id"], [], ["name", "lat", "lng", "start_date", "end_date", "description", "route_mode", "is_waypoint", "sort_order", "client_request_id"]),
+    "update_point":     ("PUT",    "/api/ai/points/{point_id}",        "write", ["point_id"], [], ["name", "lat", "lng", "start_date", "end_date", "description", "route_mode", "is_waypoint", "sort_order", "regeocode"]),
+    "list_points":      ("GET",    "/api/ai/trips/{trip_id}/points",   "read",  ["trip_id"], [], []),
     "delete_point":     ("DELETE", "/api/ai/points/{point_id}",        "write", ["point_id"], [], []),
     "delete_trip":      ("DELETE", "/api/ai/trips/{trip_id}",          "write", ["trip_id"], [], []),
     "export_trip":      ("GET",    "/api/ai/trips/{trip_id}/export",   "read",  ["trip_id"], [], []),
@@ -78,7 +94,8 @@ _DEFAULTS = {
     "create_trip": {"status": "planning"},
     "update_trip_status": {"status": "planning"},
     "add_point": {"route_mode": "drive", "is_waypoint": "0"},
-    "update_point": {"route_mode": "drive", "is_waypoint": "0"},
+    # update_point 刻意不给默认值：这是局部更新，补一个 route_mode="drive" 会把
+    # 用户原本设成 line 的段（飞机/火车）在「只改个日期」时静默改回走路网。
 }
 
 

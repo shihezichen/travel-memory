@@ -147,24 +147,42 @@ def tool_update_trip_status(trip_id, status):
                      {"name": "", "status": status})
 
 
+def tool_update_trip(trip_id, name="", start_date="", end_date="", description="", status=""):
+    """改行程名称/起止日期/描述/状态。只改传了的字段。"""
+    form = {k: v for k, v in (("name", name), ("start_date", start_date),
+                              ("end_date", end_date), ("description", description),
+                              ("status", status)) if v}
+    return _call_api("PUT", f"/api/ai/trips/{trip_id}", form)
+
+
+def tool_list_points(trip_id):
+    return _call_api("GET", f"/api/ai/trips/{trip_id}/points")
+
+
 def tool_geocode(address):
     return _call_api("GET", "/api/ai/geocode?address=" + urllib.parse.quote(address))
 
 
 def tool_add_point(trip_id, name, lat="", lng="", start_date="", end_date="",
-                   description="", route_mode="drive", is_waypoint="0"):
-    return _call_api("POST", f"/api/ai/trips/{trip_id}/points",
-                     {"name": name, "lat": lat, "lng": lng, "start_date": start_date,
-                      "end_date": end_date, "description": description,
-                      "route_mode": route_mode, "is_waypoint": is_waypoint})
+                   description="", route_mode="drive", is_waypoint="0", sort_order=""):
+    form = {"name": name, "lat": lat, "lng": lng, "start_date": start_date,
+            "end_date": end_date, "description": description,
+            "route_mode": route_mode, "is_waypoint": is_waypoint}
+    if sort_order != "":
+        form["sort_order"] = sort_order
+    return _call_api("POST", f"/api/ai/trips/{trip_id}/points", form)
 
 
-def tool_update_point(point_id, name, lat="", lng="", start_date="", end_date="",
-                      description="", route_mode="drive", is_waypoint="0"):
-    return _call_api("PUT", f"/api/ai/points/{point_id}",
-                     {"name": name, "lat": lat, "lng": lng, "start_date": start_date,
-                      "end_date": end_date, "description": description,
-                      "route_mode": route_mode, "is_waypoint": is_waypoint})
+def tool_update_point(point_id, name="", lat="", lng="", start_date="", end_date="",
+                      description="", route_mode="", is_waypoint="", sort_order="",
+                      regeocode=""):
+    """局部更新：只把非空字段发过去 —— 补默认值会把没打算改的字段静默覆盖掉。"""
+    form = {k: v for k, v in (("name", name), ("lat", lat), ("lng", lng),
+                              ("start_date", start_date), ("end_date", end_date),
+                              ("description", description), ("route_mode", route_mode),
+                              ("is_waypoint", is_waypoint), ("sort_order", sort_order),
+                              ("regeocode", regeocode)) if v != ""}
+    return _call_api("PUT", f"/api/ai/points/{point_id}", form)
 
 
 def tool_delete_point(point_id):
@@ -394,6 +412,44 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "list_points",
+            "description": "列出某次行程下的所有地点，**带 point_id**。要改/删某个已有地点、"
+                           "或给它传照片，先调这个拿 id —— get_memory、export_trip、get_stats 都不返回 id。"
+                           "返回 point_id / index（时间线位次）/ sort_order（同日期内位次）/ 名称 / 坐标 / "
+                           "起止日期 / 描述 / 连线方式 / 是否路过点 / 媒体数。",
+            "parameters": {
+                "type": "object",
+                "properties": {"trip_id": {"type": "integer",
+                                           "description": "行程 id。不确定就先调 list_trips 拿"}},
+                "required": ["trip_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_trip",
+            "description": "修改行程本身的名称、起止日期、描述、状态。**只改你传了的字段**。"
+                           "当用户说'把行程改名叫XX'或'这趟延长到10月20号'时调用。"
+                           "只改状态用 update_trip_status 也行，两者等价。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "integer", "description": "行程 id。不确定就先调 list_trips 拿"},
+                    "name": {"type": "string", "description": "行程名称。不传 = 不改（名称不能清空）"},
+                    "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD。不传 = 不改，传 'null' = 清空"},
+                    "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD。不传 = 不改，传 'null' = 清空"},
+                    "description": {"type": "string", "description": "行程描述。不传 = 不改，传 'null' = 清空"},
+                    "status": {"type": "string", "enum": ["planning", "traveling", "completed", "archived"],
+                               "description": "行程状态。不传 = 不改"},
+                },
+                "required": ["trip_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "update_trip_status",
             "description": "更新行程状态机：planning 计划中 → traveling 进行中 → completed 已完成 → archived 已归档。当用户说'这个行程开始了/去过了/结束了/归档吧'时调用。",
             "parameters": {
@@ -437,6 +493,7 @@ TOOLS = [
                     "route_mode": {"type": "string", "enum": ["drive", "line"],
                                    "description": "到这个点怎么连线：drive 走真实路网（默认）/ line 直连（飞机、火车、无路可走的段）"},
                     "is_waypoint": {"type": "string", "enum": ["0", "1"], "description": "是否只是路过的辅助点（不进编号、地图上不可点）。默认 '0'"},
+                    "sort_order": {"type": "integer", "description": "同一天内的插入位次，0 = 当天第一个。不传 = 追加到当天末尾；给了值就插进去，原先排在它及之后的点顺延一格。跨天顺序仍由 start_date 决定"},
                     "client_request_id": {"type": "string", "description": "幂等键（可选）：网络重试时传相同值避免重复建点，建议用 UUID"},
                 },
                 "required": ["trip_id", "name"],
@@ -448,15 +505,16 @@ TOOLS = [
         "function": {
             "name": "update_point",
             "description": "修改行程中某个地点的信息。当用户说'把XX改成YY'或'更新XX地点'时调用。"
-                           "**只改你传了的字段**，没传的保持原值 —— 想改个名字就只传 point_id + name，"
-                           "不用把日期描述再抄一遍。要清空某个字段，把它显式传成字符串 'null'。",
+                           "**只改你传了的字段**，没传的保持原值 —— 想改个日期就只传 point_id + start_date，"
+                           "名称和坐标都不用重传。要清空某个字段，把它显式传成字符串 'null'。"
+                           "point_id 用 list_points 拿。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "point_id": {"type": "integer", "description": "地点 id。不确定就先调 get_memory 看这趟的时间线"},
-                    "name": {"type": "string", "description": "地点名称。必填 —— 不改名就把原来的名字原样传回来"},
-                    "lat": {"type": "number", "description": "纬度 WGS-84。lat/lng 都不传就按 name 重新地理编码"},
-                    "lng": {"type": "number", "description": "经度 WGS-84。lat/lng 都不传就按 name 重新地理编码"},
+                    "point_id": {"type": "integer", "description": "地点 id。用 list_points(trip_id) 拿"},
+                    "name": {"type": "string", "description": "地点名称。不传 = 保持原值"},
+                    "lat": {"type": "number", "description": "纬度 WGS-84。lat/lng 都不传 = 坐标保持原值（不会重新地理编码）"},
+                    "lng": {"type": "number", "description": "经度 WGS-84。lat/lng 都不传 = 坐标保持原值（不会重新地理编码）"},
                     "start_date": {"type": "string", "description": "到达日期 YYYY-MM-DD。不传 = 保持原值，传 'null' = 清空"},
                     "end_date": {"type": "string", "description": "离开日期 YYYY-MM-DD。不传 = 保持原值，传 'null' = 清空"},
                     "description": {"type": "string", "description": "地点备注。不传 = 保持原值，传 'null' = 清空"},
@@ -464,8 +522,11 @@ TOOLS = [
                                    "description": "连线方式：drive 走真实路网 / line 直连。不传 = 保持原值"},
                     "is_waypoint": {"type": "string", "enum": ["0", "1"],
                                     "description": "是否只是路过的辅助点。不传 = 保持原值"},
+                    "sort_order": {"type": "integer", "description": "同一天内的位次，0 = 当天第一个。不传 = 保持原值。重排一天内多个点时，逐个把它们改成 0,1,2..."},
+                    "regeocode": {"type": "string", "enum": ["0", "1"],
+                                  "description": "改了名字并且想按新地名重新查坐标时传 '1'。默认 '0' = 坐标原样不动"},
                 },
-                "required": ["point_id", "name"],
+                "required": ["point_id"],
             },
         },
     },
@@ -740,14 +801,20 @@ TOOL_FNS = {
                                                  kw.get("end_date", ""), kw.get("description", ""),
                                                  kw.get("status", "planning")),
     "update_trip_status": lambda **kw: tool_update_trip_status(kw["trip_id"], kw["status"]),
+    "update_trip": lambda **kw: tool_update_trip(kw["trip_id"], kw.get("name", ""),
+                                                 kw.get("start_date", ""), kw.get("end_date", ""),
+                                                 kw.get("description", ""), kw.get("status", "")),
+    "list_points": lambda **kw: tool_list_points(kw["trip_id"]),
     "add_point": lambda **kw: tool_add_point(kw["trip_id"], kw["name"], kw.get("lat", ""),
                                              kw.get("lng", ""), kw.get("start_date", ""),
                                              kw.get("end_date", ""), kw.get("description", ""),
-                                             kw.get("route_mode", "drive")),
-    "update_point": lambda **kw: tool_update_point(kw["point_id"], kw["name"], kw.get("lat", ""),
+                                             kw.get("route_mode", "drive"),
+                                             kw.get("is_waypoint", "0"), kw.get("sort_order", "")),
+    "update_point": lambda **kw: tool_update_point(kw["point_id"], kw.get("name", ""), kw.get("lat", ""),
                                                    kw.get("lng", ""), kw.get("start_date", ""),
                                                    kw.get("end_date", ""), kw.get("description", ""),
-                                                   kw.get("route_mode", "drive")),
+                                                   kw.get("route_mode", ""), kw.get("is_waypoint", ""),
+                                                   kw.get("sort_order", ""), kw.get("regeocode", "")),
     "delete_point": lambda **kw: tool_delete_point(kw["point_id"]),
     "delete_trip": lambda **kw: tool_delete_trip(kw["trip_id"]),
     "export_trip": lambda **kw: tool_export_trip(kw["trip_id"]),
@@ -777,7 +844,10 @@ SYSTEM = (
     f"今天是 {__import__('datetime').date.today().isoformat()}，用户说相对日期时默认按今年理解。"
     "你能访问他的旅行数据库（行程/记忆/联想/偏好），既能读也能写："
     "读——查行程、看记忆、找联想、生成总结/路书/明信片/日记、看统计、导出备份；"
-    "写——新建/删除行程、添加/删除地点；分享——生成或撤销分享链接。"
+    "写——新建/修改/删除行程、添加/修改/删除地点；分享——生成或撤销分享链接。"
+    "要改某个已有地点（日期、描述、顺序、名字）或给它传照片，先用 list_points(trip_id) "
+    "拿到它的 point_id —— get_memory、export_trip 都不返回 id。改的时候只传你要改的字段，"
+    "不用把名称坐标再抄一遍。"
     "回答时：1) 先判断需要哪些工具来获取或修改信息，按需调用；"
     "2) 基于工具返回的真实数据回答，不要编造；"
     "3) 当用户表达'记一下/去了/要去'等记忆意图时，主动用写工具帮他记下来，"

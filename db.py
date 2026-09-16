@@ -602,20 +602,21 @@ def create_trip(user, name, start_date, end_date, description="", status="planni
     return tid
 
 
+# 字段级更新里「不改」和「改成 NULL」是两件事，但都想用 None 表达。
+# 拿一个哨兵把后者分出来：val is None → 跳过；val is CLEAR → 写 NULL。
+CLEAR = object()
+
+
 def update_trip(trip_id, name=None, start_date=None, end_date=None,
                 description=None, status=None):
-    """字段级更新行程；None 字段跳过（支持只改 status 的状态机操作）。"""
+    """字段级更新行程；None 字段跳过（支持只改 status 的状态机操作），
+    CLEAR 字段写 NULL/空串 —— 跟 update_point 一个语义。"""
     sets, args = [], []
-    if name is not None:
-        sets.append("name=?"); args.append(name)
-    if start_date is not None:
-        sets.append("start_date=?"); args.append(start_date)
-    if end_date is not None:
-        sets.append("end_date=?"); args.append(end_date)
-    if description is not None:
-        sets.append("description=?"); args.append(description)
-    if status is not None:
-        sets.append("status=?"); args.append(status)
+    for col, val in (("name", name), ("start_date", start_date), ("end_date", end_date),
+                     ("description", description), ("status", status)):
+        if val is not None:
+            sets.append(f"{col}=?")
+            args.append(("" if col == "description" else None) if val is CLEAR else val)
     if not sets:
         return
     conn = get_conn()
@@ -947,12 +948,27 @@ def get_point(point_id):
     return dict(row) if row else None
 
 
-def create_point(trip_id, name, lat, lng, start_date, end_date, description="", route_mode="drive", is_waypoint=0):
+def create_point(trip_id, name, lat, lng, start_date, end_date, description="", route_mode="drive",
+                 is_waypoint=0, sort_order=None):
+    """建点。sort_order=None 时追加到同日期末尾；给了值就插到那个位次，
+    同日期里位次 >= 它的点整体后移一格（不然两个点抢同一个名次，顺序是静默乱的）。"""
     conn = get_conn()
+    if sort_order is None:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) AS m FROM points "
+            "WHERE trip_id=? AND COALESCE(start_date,'') = COALESCE(?,'')",
+            (trip_id, start_date)).fetchone()
+        sort_order = int(row["m"]) + 1
+    else:
+        sort_order = max(0, int(sort_order))
+        conn.execute(
+            "UPDATE points SET sort_order = sort_order + 1 "
+            "WHERE trip_id=? AND COALESCE(start_date,'') = COALESCE(?,'') AND sort_order >= ?",
+            (trip_id, start_date, sort_order))
     cur = conn.execute(
-        "INSERT INTO points(trip_id, name, lat, lng, start_date, end_date, description, route_mode, is_waypoint) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (trip_id, name, lat, lng, start_date, end_date, description, route_mode, int(is_waypoint)),
+        "INSERT INTO points(trip_id, name, lat, lng, start_date, end_date, description, route_mode, is_waypoint, sort_order) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (trip_id, name, lat, lng, start_date, end_date, description, route_mode, int(is_waypoint), sort_order),
     )
     conn.commit()
     pid = cur.lastrowid
@@ -960,13 +976,8 @@ def create_point(trip_id, name, lat, lng, start_date, end_date, description="", 
     return pid
 
 
-# 字段级更新里「不改」和「改成 NULL」是两件事，但都想用 None 表达。
-# 拿一个哨兵把后者分出来：val is None → 跳过；val is CLEAR → 写 NULL。
-CLEAR = object()
-
-
 def update_point(point_id, name=None, lat=None, lng=None, start_date=None, end_date=None,
-                 description=None, route_mode=None, is_waypoint=None):
+                 description=None, route_mode=None, is_waypoint=None, sort_order=None):
     """字段级更新地点；None 字段跳过，CLEAR 字段写 NULL —— 跟 update_trip 一个语义。
 
     原来是全量覆盖：没传的字段一律按默认值写进去。Web UI 每次都传全量，看不出
@@ -984,6 +995,9 @@ def update_point(point_id, name=None, lat=None, lng=None, start_date=None, end_d
     if is_waypoint is not None:
         sets.append("is_waypoint=?")
         args.append(int(is_waypoint))
+    if sort_order is not None:
+        sets.append("sort_order=?")
+        args.append(max(0, int(sort_order)))
     if not sets:
         return
     conn = get_conn()

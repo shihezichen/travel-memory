@@ -89,7 +89,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 |---|---|---|
 | `initialize` | 握手，返回协议版本/能力/服务信息 | 是 |
 | `notifications/initialized` | 客户端就绪通知 | 否（HTTP 202） |
-| `tools/list` | 列出全部可用工具（34 个） | 是 |
+| `tools/list` | 列出全部可用工具（36 个），返回的是**实时** schema | 是 |
 | `tools/call` | 调用工具 | 是 |
 | `ping` | 健康检查 | 是 |
 
@@ -117,7 +117,7 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 
 ---
 
-## 5. 工具清单（34 个）
+## 5. 工具清单（36 个）
 
 | 工具 | 所需 scope | 说明 |
 |---|---|---|
@@ -132,9 +132,11 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 | `generate` | read | 记忆创作引擎：根据行程生成内容（参数：kind, trip_id, style, language） |
 | `create_trip` | write | 创建一次新旅行行程（参数：name, start_date, end_date, description, status, client_request_id） |
 | `update_trip_status` | write | 更新行程状态机：planning 计划中 → traveling 进行中 → completed 已完成 → archived 已归档（参数：trip_id, status） |
+| `update_trip` | write | 修改行程的名称/起止日期/描述/状态，只改传了的字段（参数：trip_id, name, start_date, end_date, description, status） |
+| `list_points` | read | 列出行程下所有地点，**带 point_id**（含 index/sort_order/坐标/日期/描述/媒体数）。要改删地点或传照片，先用它拿 id（参数：trip_id） |
 | `geocode` | read | 按地名查经纬度（WGS-84）（参数：address） |
-| `add_point` | write | 给某次行程添加一个地点（参数：trip_id, name, lat, lng, start_date, end_date, description, route_mode, client_request_id） |
-| `update_point` | write | 修改行程中某个地点的信息（名称/坐标/日期/描述等）（参数：point_id, name, lat, lng, start_date, end_date, description, route_mode） |
+| `add_point` | write | 给某次行程添加一个地点；`sort_order` 可指定当天内的插入位次（参数：trip_id, name, lat, lng, start_date, end_date, description, route_mode, is_waypoint, sort_order, client_request_id） |
+| `update_point` | write | 修改地点，**只改传了的字段**；不传坐标 = 坐标原样保留（不重新地理编码），要重查坐标传 `regeocode=1`（参数：point_id, name, lat, lng, start_date, end_date, description, route_mode, is_waypoint, sort_order, regeocode） |
 | `delete_point` | write | 从行程中删除一个地点（参数：point_id） |
 | `delete_trip` | write | 删除整个行程（含所有地点和媒体）（参数：trip_id） |
 | `export_trip` | read | 导出某次行程为 JSON（坐标 WGS-84），供备份/迁移/二次加工（参数：trip_id） |
@@ -162,6 +164,31 @@ Travel Memory 是一个多用户旅行记忆开放平台。每个用户有自己
 - `share`：write + 创建/删除分享链接
 
 调用需要更高 scope 的工具而 Key 权限不足时，返回 MCP 错误 `-32002`（附所需 scope 提示）。
+
+### 5.0 改一个已有地点的正确姿势
+
+写操作（`update_point` / `delete_point` / `upload_media`）都要 `point_id`，而
+`get_memory` / `export_trip` / `get_stats` 都**不**返回 id。拿 id 用 `list_points`：
+
+```
+list_points(trip_id=133)
+  → {"trip_id":133, "count":9, "points":[
+       {"point_id":871, "index":0, "sort_order":0, "name":"香格里拉",
+        "lat":27.8231, "lng":99.7065, "start_date":"2026-10-01", ...,
+        "media_n":4}, ...]}
+```
+
+拿到 id 之后，每个字段可以单独改，**不用把其他字段抄一遍**：
+
+```
+update_point(point_id=871, start_date="2026-10-05")     # 只改日期，坐标/名称/描述不动
+update_point(point_id=871, description="null")          # 清空描述（字面量 "null"）
+update_point(point_id=871, name="香格里拉古城", regeocode="1")   # 改名并按新地名重查坐标
+```
+
+**排序**：跨天顺序由 `start_date` 决定；同一天内的先后由 `sort_order` 决定（0 起）。
+重排一天内的几个点，就逐个把它们的 `sort_order` 改成 0,1,2…；想插队建点，
+`add_point(..., sort_order=1)` 会把原先站在第 1 位及之后的点整体顺延。
 
 ### 5.1 调用示例（tools/call）
 
@@ -260,7 +287,51 @@ curl -s -o /dev/null -w "%{http_code}" $BASE -H "Authorization: Bearer tm_wrong"
 
 ---
 
-## 9. 常见问题
+## 9. 版本与变更记录
+
+### 9.1 你的 Agent 怎么知道接口变了
+
+本服务是**无状态** MCP 实现：每个 POST 独立鉴权，不维护 session，没有 SSE 长连接。
+服务端因此**无法**主动推送 `notifications/tools/list_changed`，`capabilities` 里也
+不会声明 `tools.listChanged`（声明了却推不出去只会更误导）。
+
+感知变更只有两条正路：
+
+1. **重连时重拉 `tools/list`** —— 返回的是实时 schema，不是快照。工具名、参数、
+   必填项、描述全都是当场从服务端生成的。**别把 schema 缓存过夜**。
+2. **比对 `initialize` 返回的 `serverInfo.version`** —— 工具集一变这个号就变。
+   长驻 Agent 建议每次 `initialize` 后比一下上次记下的版本，不同就重拉 `tools/list`。
+
+版本号规则：`patch` 只改了描述文字；`minor` 新增工具或给已有工具加可选参数；
+`major` 删了工具、改了必填参数、或改变了已有参数的语义。
+
+### 9.2 变更记录
+
+**v1.2.0**（2026-09-16）
+
+新增：
+
+- `list_points(trip_id)` —— 列出行程下所有地点，**带 `point_id`**。
+- `update_trip(trip_id, ...)` —— 改行程名称/起止日期/描述/状态，只改传了的字段。
+- `add_point` 和 `update_point` 新增可选参数 `sort_order`（同一天内的位次，0 起）。
+
+行为变更（**已接入的 Agent 请注意**）：
+
+- `update_point` 的 `name` 由必填改为可选，`required` 现在只有 `point_id`。
+- ⚠️ `update_point` **不传 `lat`/`lng` 时不再重新地理编码**，坐标原样保留。
+  旧行为是「不传坐标就按 `name` 重查」，导致「只改个日期」也要走一次地理编码，
+  地名稍偏就整次更新 400 失败。要恢复旧行为，显式传 `regeocode=1`。
+- `update_point` 不再对 `route_mode` 填默认值 `drive`。旧行为会在你「只改日期」时
+  把设成 `line` 的段（飞机/火车）静默改回走路网。
+- `update_trip` 传空 `name` 现在按「不改」处理，不再把行程名抹空。
+
+修复了什么：`point_id` 此前读不到（`get_memory` / `export_trip` / `get_stats` 都不返回），
+而写接口又都要它 —— 改一个已有地点的日期做不到，只能删掉整条行程重建、连带丢照片。
+`list_points` 补上了这个断口。
+
+---
+
+## 10. 常见问题
 
 **Q: 我的 Agent 报 `invalid_api_key`？**
 A: 检查 Key 是否复制完整（含 `tm_` 前缀）、是否已吊销。可在控制台重新创建。

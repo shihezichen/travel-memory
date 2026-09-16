@@ -897,17 +897,23 @@ def ai_create_trip(request: Request, name: str = Form(...), start_date: str = Fo
 
 @router.put("/api/ai/trips/{trip_id}")
 def ai_update_trip(request: Request, trip_id: int, name: str = Form(None),
-                   start_date: str = Form(""), end_date: str = Form(""),
-                   description: str = Form(""), status: str = Form(None)):
-    """更新行程（write scope）。status 可单独更新行程状态机。"""
+                   start_date: str = Form(None), end_date: str = Form(None),
+                   description: str = Form(None), status: str = Form(None)):
+    """更新行程（write scope）。**只改传了的字段**：名称、起止日期、描述、状态机。
+
+    日期/描述传 "null" 表示清空；名称不能清空（空串按「不改」处理 —— 只改状态的
+    调用方习惯带一个空 name 过来，照收会把行程名抹掉）。
+    """
     key = _api_key_auth(request, "write")
     if not db.get_trip(trip_id):
         raise HTTPException(404, "行程不存在")
     if not _key_is_owner(key, db.get_trip_owner_id(trip_id)):
         raise HTTPException(404, "行程不存在")
-    db.update_trip(trip_id, name, _normalize_date(start_date, "start_date"),
-                   _normalize_date(end_date, "end_date"),
-                   description or None,
+    new_name = None if name is None or not name.strip() else name.strip()
+    db.update_trip(trip_id, new_name,
+                   _optional_date(start_date, "start_date"),
+                   _optional_date(end_date, "end_date"),
+                   _optional_text(description),
                    _normalize_trip_status(status) if status else None)
     _audit(key, "trips.update", "ok", detail=f"trip={trip_id}")
     return {"ok": True}
@@ -956,8 +962,12 @@ def ai_create_point(request: Request, trip_id: int, name: str = Form(...),
                     lat: str = Form(""), lng: str = Form(""),
                     start_date: str = Form(""), end_date: str = Form(""),
                     description: str = Form(""), route_mode: str = Form("drive"),
-                    is_waypoint: str = Form("0"), client_request_id: str = Form("")):
+                    is_waypoint: str = Form("0"), sort_order: str = Form(None),
+                    client_request_id: str = Form("")):
     """为行程添加地点（write scope）。lat/lng 为 WGS-84（可选），缺失时按地名地理编码。
+
+    sort_order（可选）：同一天内的插入位次，0 是当天第一个。不传 = 追加到当天末尾；
+    给了值就插在那个位次，原先排在它及之后的点顺延一格。跨天顺序仍由 start_date 决定。
 
     client_request_id（可选）：幂等键，网络重试不会重复建点。
     """
@@ -976,9 +986,10 @@ def ai_create_point(request: Request, trip_id: int, name: str = Form(...),
         mode = route_mode if route_mode in ("drive", "line") else "drive"
         wp = 1 if is_waypoint in ("1", "true", "on", "yes") else 0
         gcj_lng, gcj_lat, src, fmt = _resolve_point_coords(name, lat, lng)
+        order = None if sort_order is None else _parse_sort_order(sort_order)
         pid = db.create_point(trip_id, name, gcj_lat, gcj_lng,
                               _normalize_date(start_date, "start_date"),
-                              _normalize_date(end_date, "end_date"), description, mode, wp)
+                              _normalize_date(end_date, "end_date"), description, mode, wp, order)
         _audit(key, "points.create", "ok", detail=f"trip={trip_id} name={name} coord={src}")
         result = {"id": pid, "coord_source": src, "formatted": fmt}
         _idempotency_save(key, client_request_id, result)
@@ -989,31 +1000,48 @@ def ai_create_point(request: Request, trip_id: int, name: str = Form(...),
 
 
 @router.put("/api/ai/points/{point_id}")
-def ai_update_point(request: Request, point_id: int, name: str = Form(...),
+def ai_update_point(request: Request, point_id: int, name: str = Form(None),
                     lat: str = Form(""), lng: str = Form(""),
                     start_date: str = Form(None), end_date: str = Form(None),
                     description: str = Form(None), route_mode: str = Form(None),
-                    is_waypoint: str = Form(None)):
+                    is_waypoint: str = Form(None), sort_order: str = Form(None),
+                    regeocode: str = Form(None)):
     """更新地点（write scope）。**只改传了的字段**，没传的保持原值。
 
-    lat/lng 为 WGS-84（可选），两个都不传就按地名重新地理编码。
-    想把日期或描述清空，显式传空串。
+    坐标：传了 lat/lng（WGS-84）就用新坐标；都不传就**沿用原坐标**，不重新地理编码。
+    以前这里是「不传坐标 = 按地名重新 geocode」，于是「只改个日期」这种调用也要
+    走一次高德，地名稍偏一点就 400「地理编码失败」，整次更新全废 —— 改日期和查坐标
+    本来就是两件事。确实想按当前地名重新解析，显式传 regeocode=1。
+
+    想把日期或描述清空，显式传 "null"。
     """
     key = _api_key_auth(request, "write")
-    if not db.get_point(point_id):
+    point = db.get_point(point_id)
+    if not point:
         raise HTTPException(404, "地点不存在")
     if not _key_is_owner(key, db.get_point_owner_id(point_id)):
         raise HTTPException(404, "地点不存在")
-    name = (name or "").strip()
-    if not name:
-        raise HTTPException(400, "地点名称不能为空")
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise HTTPException(400, "地点名称不能为空")
     mode = None if route_mode is None else (route_mode if route_mode in ("drive", "line") else "drive")
     wp = None if is_waypoint is None else (1 if is_waypoint in ("1", "true", "on", "yes") else 0)
-    gcj_lng, gcj_lat, src, fmt = _resolve_point_coords(name, lat, lng)
+    order = None if sort_order is None else _parse_sort_order(sort_order)
+
+    want_regeocode = (regeocode or "").strip().lower() in ("1", "true", "on", "yes")
+    if lat and lng:
+        gcj_lng, gcj_lat, src, fmt = _resolve_point_coords(name or point["name"], lat, lng)
+    elif want_regeocode:
+        gcj_lng, gcj_lat, src, fmt = _resolve_point_coords(name or point["name"], "", "")
+    else:
+        gcj_lng = gcj_lat = None      # None = 不改这两列
+        src, fmt = "unchanged", ""
+
     db.update_point(point_id, name, gcj_lat, gcj_lng,
                     _optional_date(start_date, "start_date"),
                     _optional_date(end_date, "end_date"),
-                    _optional_text(description), mode, wp)
+                    _optional_text(description), mode, wp, order)
     _audit(key, "points.update", "ok", detail=f"point={point_id} coord={src}")
     return {"ok": True, "coord_source": src, "formatted": fmt}
 
@@ -1050,6 +1078,47 @@ def ai_delete_trip(request: Request, trip_id: int):
     media_purge.purge_file_pairs(UPLOAD_DIR, media_mod.THUMB_DIR, files, variants)
     _audit(key, "trips.delete", "ok", detail=f"trip={trip_id}")
     return {"ok": True}
+
+
+@router.get("/api/ai/trips/{trip_id}/points")
+def ai_list_points(request: Request, trip_id: int):
+    """列出行程下所有地点（read scope），**带 point_id**。坐标对外转 WGS-84。
+
+    这个接口原来是缺的：get_memory / export_trip / get_stats 都不返回 point_id，
+    而 update_point / delete_point / upload_media 又都要 point_id —— 读接口拿不到
+    id、写接口非要 id，改一个已有地点的日期都做不到，只能删整条行程重建（连带丢照片）。
+    这里把那个断口补上。
+    """
+    key = _api_key_auth(request, "read")
+    trip = db.get_trip(trip_id)
+    if not trip:
+        raise HTTPException(404, "行程不存在")
+    if not _key_is_owner(key, db.get_trip_owner_id(trip_id)):
+        raise HTTPException(404, "行程不存在")
+    points = db.list_points(trip_id)
+    counts = db.get_point_media_counts(trip_id)
+    out = []
+    for idx, p in enumerate(points):
+        try:
+            wlng, wlat = domain_schemas.gcj02_to_wgs84(float(p["lng"]), float(p["lat"]))
+        except (TypeError, ValueError):
+            wlng, wlat = p["lng"], p["lat"]
+        c = counts.get(p["id"], {})
+        photo, video = int(c.get("photo", 0)), int(c.get("video", 0))
+        out.append({
+            "point_id": p["id"],
+            "index": idx,                       # 在时间线上的实际位次（0 起），跨天连续
+            "sort_order": int(p["sort_order"] or 0),   # 库内同日期组内的位次
+            "name": p["name"], "lat": wlat, "lng": wlng,
+            "start_date": p["start_date"], "end_date": p["end_date"],
+            "description": p["description"],
+            "route_mode": p["route_mode"] or "drive",
+            "is_waypoint": int(p["is_waypoint"] or 0),
+            "media_n": photo + video, "photo_n": photo, "video_n": video,
+        })
+    _audit(key, "points.list", "ok", detail=f"trip={trip_id} points={len(out)}")
+    return {"trip_id": trip_id, "trip_name": trip["name"],
+            "coord_sys": "wgs84", "count": len(out), "points": out}
 
 
 @router.get("/api/ai/trips/{trip_id}/export")
@@ -1303,6 +1372,20 @@ _DATE_PATTERNS = (
 # FastAPI 的 Form 里「传了空串」和「根本没传」拿到的都是默认值，分不开。
 # 所以约定一个明确的字面量，工具描述里写清楚。
 _CLEAR_WORDS = ("null", "none", "空")
+
+
+def _parse_sort_order(raw):
+    """局部更新/插入位次用：非负整数，认不出来抛 400（别静默当成 0 插到队首）。"""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        n = int(text)
+    except ValueError:
+        raise HTTPException(400, f"sort_order 必须是非负整数：「{text}」")
+    if n < 0:
+        raise HTTPException(400, "sort_order 不能为负")
+    return n
 
 
 def _optional_text(raw):

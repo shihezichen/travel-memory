@@ -1,4 +1,4 @@
-"""MCP 开放平台：34 个工具的可用性回归。
+"""MCP 开放平台：36 个工具的可用性回归。
 
 为什么要有这一层
 ----------------
@@ -10,7 +10,7 @@
 
 1. 目录一致性 —— 工具清单（companion.TOOLS）和路由表两边不许有孤儿；
 2. 路由表指向的每个 (method, path) 必须真的注册在 FastAPI 上；
-3. 34 个工具**逐个真跑一遍** tools/call，走完整链路：鉴权 → scope → 参数拼装
+3. 36 个工具**逐个真跑一遍** tools/call，走完整链路：鉴权 → scope → 参数拼装
    → 领域 API → 结果。跑不通的当场就红。
 
 第 3 步把 mcp_http._call_domain_api 换成「打进同一个 TestClient」的实现：
@@ -22,6 +22,8 @@ import base64
 import importlib
 import io
 
+import pathlib
+
 import pytest
 
 import companion
@@ -29,7 +31,7 @@ import mcp_http
 
 pytestmark = pytest.mark.api
 
-EXPECTED_TOOL_COUNT = 34
+EXPECTED_TOOL_COUNT = 36
 
 
 def _bearer(raw):
@@ -143,7 +145,7 @@ def mcp_call(client, monkeypatch):
 
 @pytest.fixture
 def admin_key(auth_client):
-    """一把读写分享全给的 Key —— 34 个工具要一次跑完，权限得配齐。"""
+    """一把读写分享全给的 Key —— 36 个工具要一次跑完，权限得配齐。"""
     r = auth_client.post("/api/console/keys",
                          data={"name": "mcp-test", "scope": "read,write,share"})
     assert r.status_code == 200, r.text
@@ -184,9 +186,39 @@ def test_initialize_and_tools_list(client, admin_key):
     assert len(tools) == EXPECTED_TOOL_COUNT
 
 
+def test_server_version_is_documented(client, admin_key):
+    """serverInfo.version 是接入方唯一能拿到的「工具集变没变」的信号。
+
+    /mcp 无状态，推不了 notifications/tools/list_changed，长驻 Agent 只能靠比对
+    这个号来决定要不要重拉 tools/list。所以它必须真的跟着工具集走 —— 改了 TOOLS
+    却忘了升版本，对面会一直拿着旧 schema 调用，而且双方都察觉不到。
+    这里把版本号钉在接入文档的变更记录上：升了号就得写清楚变了什么。
+    """
+    r = client.post("/mcp", headers=_bearer(admin_key), json={
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    version = r.json()["result"]["serverInfo"]["version"]
+    doc = (pathlib.Path(__file__).resolve().parents[2] / "MCP-ACCESS.md").read_text("utf-8")
+    assert f"**v{version}**" in doc, (
+        f"serverInfo.version = {version}，但 MCP-ACCESS.md 的变更记录里没有 v{version} "
+        f"这一条。改了工具就把版本号和变更记录一起改。")
+
+
+def test_capabilities_do_not_promise_list_changed(client, admin_key):
+    """无状态服务器推不出通知，就别在 capabilities 里声明 listChanged。
+
+    声明了却永远不推，客户端会一直等一个不会来的通知，比老老实实不声明更坏。
+    """
+    r = client.post("/mcp", headers=_bearer(admin_key), json={
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    caps = r.json()["result"]["capabilities"]
+    assert not caps.get("tools", {}).get("listChanged"), (
+        "/mcp 是无状态实现，没有 SSE 长连接推不了 notifications/tools/list_changed；"
+        "要声明 listChanged，得先真的把通知推出去")
+
+
 def test_all_tools_execute(mcp_call, admin_key, make_user, seeded_trip,
                            stub_llm, jpeg_bytes):
-    """34 个工具全跑一遍，任何一个报 isError 都算回归。
+    """36 个工具全跑一遍，任何一个报 isError 都算回归。
 
     调用顺序是有讲究的：先读、再写、最后删 —— 删完了后面的读就没数据了。
     """
@@ -239,13 +271,31 @@ def test_all_tools_execute(mcp_call, admin_key, make_user, seeded_trip,
     _res, created = run("create_trip", {"name": "MCP 建的行程", "start_date": "2026-06-01"})
     new_tid = _json.loads(created)["id"]
     run("update_trip_status", {"trip_id": new_tid, "status": "traveling"})
+    run("update_trip", {"trip_id": new_tid, "name": "MCP 改过名的行程",
+                        "end_date": "2026-06-05"})
     _res, added = run("add_point", {"trip_id": new_tid, "name": "京都",
                                     "lat": 35.0116, "lng": 135.7681,
                                     "start_date": "2026-06-01"})
     new_pid = _json.loads(added)["id"]
-    # 改名会触发重新地理编码，测试里出站网络是关的，所以显式带上坐标
+    # 不带坐标的局部更新：以前这会走一次地理编码（测试里出站网络是关的 → 400），
+    # 现在坐标沿用原值，改个名字/日期不该再碰高德。
     run("update_point", {"point_id": new_pid, "name": "京都站",
-                         "lat": 34.9855, "lng": 135.7587})
+                         "start_date": "2026-06-02"})
+    # 带坐标的更新仍然走新坐标
+    run("update_point", {"point_id": new_pid, "lat": 34.9855, "lng": 135.7587})
+
+    # ---- 读回 point_id：list_points 就是为了补上「读不到 id」这个断口 ----
+    _res, listed = run("list_points", {"trip_id": new_tid})
+    listing = _json.loads(listed)
+    assert listing["trip_id"] == new_tid
+    p0 = listing["points"][0]
+    assert p0["point_id"] == new_pid
+    assert p0["name"] == "京都站"          # 只传 name 的那次更新生效了
+    assert p0["start_date"] == "2026-06-02"
+    assert abs(p0["lat"] - 34.9855) < 0.01  # 坐标是后一次显式传的，没被 geocode 抹掉
+    for field in ("sort_order", "index", "end_date", "description",
+                  "route_mode", "is_waypoint", "media_n"):
+        assert field in p0, f"list_points 少了字段 {field}"
 
     # ---- 媒体 ----
     run("list_media", {"point_id": pid})
@@ -301,7 +351,7 @@ def test_mcp_requires_api_key(client):
 
 
 # --------------------------------------------------------------------------
-# 4) 自调用地址：这里曾经是写死的 8084，导致生产上 34 个工具全哑
+# 4) 自调用地址：这里曾经是写死的 8084，导致生产上 36 个工具全哑
 # --------------------------------------------------------------------------
 def test_base_url_is_configurable(monkeypatch):
     monkeypatch.setenv("TRAVEL_BASE_URL", "https://127.0.0.1:8443")
