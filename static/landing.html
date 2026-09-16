@@ -258,6 +258,10 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
 
 /* 相册墙示意 */
 .album{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+/* 照片墙**不做渐现**：它一直在，不参与收尾动画（用户 2026-09-17 明确）。
+   大图盖满时看到的不是「墙隐藏了」，而是墙被大图挡住了 ——
+   只要大图一进收尾就放开 `[data-on]` 的 opacity:1（见下方
+   `.wall-fill[data-burst]`），墙就当场露出来，不需要自己淡入。 */
 /* 照片墙的舞台：给 #wall-fill 提供定位参照，大小就是墙本身。
    **overflow:hidden 是必须的**：原地放大那一拍，贴边格子只留半格余量
    （桌面 80.8px、手机 32.8px），放大 1.3 倍就会顶出去约 24px（桌面纵向）。
@@ -304,6 +308,59 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
 .wall-fill[data-on][data-out]{opacity:0;transform:none}
 .wall-fill::after{content:'';position:absolute;inset:0;border-radius:8px;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+
+/* --- 收尾：铺满图停留够之后渐隐消失 -------------------------------------
+   流程简化后（2026-09-17）不再「缩回格子再交接」，铺满图停够就淡出。
+
+   ⚠ 前几版踩过的坑（都实测过，别再回头）：
+     ① 把「挂 data-burst」和「摘 data-burst」写在同一个同步块里 ——
+        浏览器一帧都没渲染过挂上的状态，动画永远不播（完全看不见）。
+        挂和摘必须隔开（见脚本：later(cleanupFill, BURST_MS)）。
+     ② 试过「用 clip-path 把画面切成两半，向左右让开、缝里透出后面的
+        照片墙」。**手机上做不出效果，已放弃**（用户 2026-09-17 反馈
+        「还是没有炸裂效果」，直接改成渐隐）。要复活这套的话，
+        先解决碎片和墙的层级 —— fill 盖满时墙整个不可见，
+        缝里透出的只能是 stage 的深色底。
+     ③ 白团太亮（brightness 2.6）—— 整张糊成一片白，照片认不出来。
+
+   现在的做法：**大图边渐隐边缩小到 0，照片墙不做任何事**（用户 2026-09-17）。
+
+   **缩小是线性的**（用户 2026-09-17 拍板）：`scale(1) → scale(0)` 一条直线，
+   不做分段、不加缓动。之前试过「后段减速」的三段式，被否了 ——
+   要的就是匀速收没。
+   所以缓动写 `linear`（两处），而不是 cubic-bezier。
+   缩小和淡出是**两条独立的动画**，各管各的属性，各用各的时长：
+
+   **为什么不用 data-out 那条现成的缩小路径**：那条是
+   `.wall-fill[data-on][data-out]{opacity:0;transform:none}` —— transform
+   写死 none，意思是「缩回格子」；而这里要的是「原地收成一点」，
+   两者几何完全不同，不能复用。 */
+@keyframes wall-fill-shrink{
+  0%  {transform:scale(1)}
+  100%{transform:scale(0)}
+}
+
+/* 挂了这个属性的这一拍，`[data-on]{opacity:1}` 要让位给 keyframes ——
+   [data-on] 权重 (0,2,0)，这里也是 (0,2,0)，靠**排在后面**赢。
+   同时**撤掉 `[data-on]{transform:none}` 的影响**：显式写 transform
+   （缩到 0），内联的起点 transform 会被它顶掉，正好 ——
+   这一拍本来就该由动画接管，不该再沿用下一轮的起点几何。
+   两条 animation 的时长必须和 JS 里的 BURST_MS 相等，三处一起改。 */
+.wall-fill[data-burst]{
+  opacity:0; transform:scale(0);
+  animation:wall-fill-shrink 1.08s linear forwards,
+            wall-fill-out    1.08s linear forwards}
+/* 渐隐不需要碎片层，伪元素保持空 —— 但要显式清掉上一条累积样式，
+   否则 ::after 上那条 inset 描边会浮在淡出的照片上。 */
+.wall-fill[data-burst]::before,
+.wall-fill[data-burst]::after{display:none}
+
+/* 两个 fill 轮换时，**收尾中的那个必须压在下面**。
+   两者同为 z-index:4，DOM 里靠后的 #wall-fill-2 天然盖住 #wall-fill；
+   而收尾中的那个可能是任意一个，靠 DOM 顺序定不住。
+   收尾动画末段几乎全透明，被压住看不出来；反过来（旧的压住新的）
+   会把新一轮刚长出来的图整个遮掉 —— 所以固定让收尾的退到 z-index:3。 */
+.wall-fill[data-burst]{z-index:3}
 /* --- 相册墙：每格一张独立小图 -----------------------------------------------
    曾经试过「24 格共切一张大拼图」：把 background-size 放大到 400%、再用
    background-position 的百分比挑出自己那一块。**那条路是错的**，别回头走 ——
@@ -312,15 +369,16 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
    缩放比、基准、落点三者只要有一处对不上，整墙就沿对角线错开、或者只取到
    比一块更小的区域再被拉大。实测在 1440 宽下反复调了 5 轮都没稳定对齐。
 
-   现在每格自己一张 520×520 的 webp（static/wall/p01..p12），
+   现在每格自己一张 520×520 的 webp（static/wall/p01..p24），
    background-size:cover + center —— 没有任何坐标要算，也就不可能算错。
-   12 张图给 24 格用，每张出现两次（错开位置，不至于挨着）。
+   **24 格用 24 张不同的图**，整面墙没有任何重复（2026-09-17 补齐）。
+   之前是 12 张循环两遍、每张出现两次，看着就是重样。
 
    放大播放靠 transform:scale 而不是换图：图片本来就是 cover 铺满的，
    放大只是把整个格子连同背景一起放大，视觉上就是「这张照片被拎了出来」。
    transform 走合成层，比动 background-size 省得多，手机上也不掉帧。 */
 /* 底图不写在 CSS 里，而是靠 JS 在滚动到附近时才挂上去（见脚本）。
-   24 格一旦写死 background-image，浏览器会在首屏就把 12 张全拉下来 ——
+   24 格一旦写死 background-image，浏览器会在首屏就把 24 张全拉下来 ——
    实测确认过。照片墙在页面第三屏，首屏根本看不见，没必要现在下载。
    属性名用 data-bg 而不是 style：保持 CSS 静态、可缓存，JS 只管时机。 */
 .album i[data-bg]{background-image:var(--wall-bg)}
@@ -332,17 +390,26 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
    亮度加一点点、外边光勾勒轮廓、translateY 抬 2px 给出「被拎起来」的暗示。
    注意这里动的是 filter/box-shadow，不影响格子的几何 —— 下面 setOrigin()
    读 offsetLeft/offsetWidth 定位起点时，读到的仍是没被 transform 污染的布局值。 */
-/* --g 是放大倍率，1.3 是那个「原地放大」。
+/* --g 是放大倍率，1.5 是那个「放大」。
    **这个数必须和脚本里的 `var GROW` 保持一致** —— 脚本用 GROW 算 fill 的起点
    几何、CSS 用 --g 决定格子放大到多大，两边对不上就会出现
    「大图从格子旁边长出来」那种错位。
-   用变量而不是写死，是为了让第 ③ 拍能把 1.3 平滑收向 1 ——
-   大图从这一格长出来的同时，格子的放大态同步让位，两者共用同一条过渡。 */
-.album i[data-pick]{--g:1.3}
+   用变量而不是写死，是为了让第 ③ 拍能把 1.5 平滑收向 1 ——
+   大图从这一格长出来的同时，格子的放大态同步让位，两者共用同一条过渡。
+
+   1.5 倍已经超过「贴边那格原地放大不出墙」的上限（左右约 1.16、上下约 1.24，
+   见脚本里 GROW 那段推导），所以放大**不是原地的**：脚本按格子在墙里的
+   行/列算出一对位移 --dx/--dy，把这张照片往墙内推 —— 右边一列向左、
+   右上角向左下，让放大后的边界仍然落在墙里。--dx/--dy 默认 0，
+   也就是墙中央那些格（4 列 × 4 行里的小半）仍然是原地放大。 */
+.album i[data-pick]{--g:1.5}
 /* [data-grow] 是"放大态留驻"：交接那一刻 data-pick 就摘掉了（否则它会盖住压暗），
-   但格子不能立刻跳回 1 倍 —— 得等 --g 过渡到 1 才落回。 */
+   但格子不能立刻跳回 1 倍 —— 得等 --g 过渡到 1 才落回。
+   translate 写在 scale 之前：先按位移把格子推到目标位置，再以它自己的
+   transform-origin(50% 50%) 为心放大 —— 反过来的话，放大量会被一起平移，
+   贴边那几张会推过头。 */
 .album i[data-pick],.album i[data-grow]{
-  transform:scale(var(--g,1));z-index:2}
+  transform:translate(var(--dx,0px),var(--dy,0px)) scale(var(--g,1));z-index:2}
 .album i[data-pick]{opacity:1;filter:brightness(1.18) saturate(1.06);
   box-shadow:0 0 0 2px rgba(255,255,255,.72),0 6px 18px rgba(0,0,0,.5)}
 /* 已经交出照片的那一格：压暗，视觉上「它被抽走了」。
@@ -356,31 +423,33 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
    否则选中和压暗会硬切。放大本身不在这里 —— 放大走的是 #wall-fill 的 transform。 */
 .album i{transition:opacity .3s ease,transform .42s cubic-bezier(.22,.61,.36,1),
   filter .32s ease,box-shadow .32s ease}
-/* 12 张底图按格分配（第 n 格用 pXXX.webp，循环两遍） */
-.album i:nth-child(1){--wall-bg:url(/static/wall/p01.webp)}
-.album i:nth-child(2){--wall-bg:url(/static/wall/p02.webp)}
-.album i:nth-child(3){--wall-bg:url(/static/wall/p03.webp)}
-.album i:nth-child(4){--wall-bg:url(/static/wall/p04.webp)}
-.album i:nth-child(5){--wall-bg:url(/static/wall/p05.webp)}
-.album i:nth-child(6){--wall-bg:url(/static/wall/p06.webp)}
-.album i:nth-child(7){--wall-bg:url(/static/wall/p07.webp)}
-.album i:nth-child(8){--wall-bg:url(/static/wall/p08.webp)}
-.album i:nth-child(9){--wall-bg:url(/static/wall/p09.webp)}
-.album i:nth-child(10){--wall-bg:url(/static/wall/p10.webp)}
-.album i:nth-child(11){--wall-bg:url(/static/wall/p11.webp)}
-.album i:nth-child(12){--wall-bg:url(/static/wall/p12.webp)}
-.album i:nth-child(13){--wall-bg:url(/static/wall/p07.webp)}
-.album i:nth-child(14){--wall-bg:url(/static/wall/p02.webp)}
-.album i:nth-child(15){--wall-bg:url(/static/wall/p11.webp)}
-.album i:nth-child(16){--wall-bg:url(/static/wall/p04.webp)}
-.album i:nth-child(17){--wall-bg:url(/static/wall/p09.webp)}
-.album i:nth-child(18){--wall-bg:url(/static/wall/p01.webp)}
-.album i:nth-child(19){--wall-bg:url(/static/wall/p06.webp)}
-.album i:nth-child(20){--wall-bg:url(/static/wall/p12.webp)}
-.album i:nth-child(21){--wall-bg:url(/static/wall/p03.webp)}
-.album i:nth-child(22){--wall-bg:url(/static/wall/p08.webp)}
-.album i:nth-child(23){--wall-bg:url(/static/wall/p05.webp)}
-.album i:nth-child(24){--wall-bg:url(/static/wall/p10.webp)}
+/* 24 张底图按格分配。**顺序刻意打散**，不是 p01..p24 顺着排 ——
+   相邻两格来自同一地点的话一眼看出是同一批素材。下面的 order 数组
+   是生成这份映射时用的排列，改图时照着改。 */
+.album i:nth-child(1){--wall-bg:url(/static/wall/p04.webp)}
+.album i:nth-child(2){--wall-bg:url(/static/wall/p17.webp)}
+.album i:nth-child(3){--wall-bg:url(/static/wall/p09.webp)}
+.album i:nth-child(4){--wall-bg:url(/static/wall/p22.webp)}
+.album i:nth-child(5){--wall-bg:url(/static/wall/p01.webp)}
+.album i:nth-child(6){--wall-bg:url(/static/wall/p13.webp)}
+.album i:nth-child(7){--wall-bg:url(/static/wall/p20.webp)}
+.album i:nth-child(8){--wall-bg:url(/static/wall/p06.webp)}
+.album i:nth-child(9){--wall-bg:url(/static/wall/p24.webp)}
+.album i:nth-child(10){--wall-bg:url(/static/wall/p11.webp)}
+.album i:nth-child(11){--wall-bg:url(/static/wall/p02.webp)}
+.album i:nth-child(12){--wall-bg:url(/static/wall/p16.webp)}
+.album i:nth-child(13){--wall-bg:url(/static/wall/p08.webp)}
+.album i:nth-child(14){--wall-bg:url(/static/wall/p19.webp)}
+.album i:nth-child(15){--wall-bg:url(/static/wall/p03.webp)}
+.album i:nth-child(16){--wall-bg:url(/static/wall/p14.webp)}
+.album i:nth-child(17){--wall-bg:url(/static/wall/p23.webp)}
+.album i:nth-child(18){--wall-bg:url(/static/wall/p07.webp)}
+.album i:nth-child(19){--wall-bg:url(/static/wall/p12.webp)}
+.album i:nth-child(20){--wall-bg:url(/static/wall/p21.webp)}
+.album i:nth-child(21){--wall-bg:url(/static/wall/p05.webp)}
+.album i:nth-child(22){--wall-bg:url(/static/wall/p18.webp)}
+.album i:nth-child(23){--wall-bg:url(/static/wall/p10.webp)}
+.album i:nth-child(24){--wall-bg:url(/static/wall/p15.webp)}
 
 /* 聊天示意 */
 /* `.chat` 这个名字在页面里被用了两次，含义完全不同，共用一个类名是历史遗留：
@@ -936,6 +1005,12 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
      用户在系统里勾了「减少动态效果」，就不该再有一格一格弹开的效果。
      真正的开关在脚本里（matchMedia），这句只是兜底。 */
   .album i{transition:none}
+  /* 收尾渐隐也是动画，一并关掉 —— 脚本里那道 matchMedia 早退已经让整段不播了，
+     这句只是兜底（比如用户中途改系统设置、而页面没刷新）。
+     关掉动画后元素停在 `.wall-fill[data-burst]` 声明的终态
+     （opacity:0 + scale(0)），仍然会被 [data-on] 的 opacity:1 盖回去，
+     所以不会出现「一张半透明的小图挂在墙上」。 */
+  .wall-fill[data-burst]{animation:none}
   /* 减少动态效果时不要逐条演：直接全部就位 */
   .a-1,.a-2,.a-3,.a-4,.a-5{animation:none;opacity:1}
   .api-live i{animation:none}
@@ -1536,8 +1611,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
            哪天不想用了，拿走就是。不做广告推荐，也不拿去训练模型。</p>
         <div class="demo-box" style="margin-top:0">
           <!-- 相册墙：24 格，每格一张独立小图（底图由上面的 :nth-child 分配）。
-               顺序刻意打散、不按 p01..p12 排：同一张照片的两格不相邻，
-               否则一眼看出是重复的。
+               顺序刻意打散、不按 p01..p24 排，相邻两格不同题材。
                #wall-fill 是「被选中那张铺满整面墙」的那一层，平时空着；
                播放时 JS 把选中格的图填进去，它从那一格的位置放大到盖住整墙。
                放在 .album 之外、.demo-box 之内，这样它铺满的是照片墙那一块，
@@ -1551,7 +1625,13 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
               <i></i><i></i><i></i><i></i>
               <i></i><i></i><i></i><i></i>
             </div>
+            <!-- 两个 fill 轮换：收尾（缩小到 0）的那一个正在跑 CSS 动画，
+                 新一轮绝不能往它身上写属性 —— 会顶掉动画，或者被 cleanupFill
+                 摘 data-burst 时当场弹回原尺寸。所以一轮收尾期间，
+                 新一轮已经在**另一个** fill 上从格子长开，两者互不干扰。
+                 脚本用 fillA/fillB + cur 轮流指。 -->
             <div class="wall-fill" id="wall-fill" aria-hidden="true"></div>
+            <div class="wall-fill" id="wall-fill-2" aria-hidden="true"></div>
           </div>
         </div>
       </div>
@@ -2344,13 +2424,23 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
    静态色块说不出这个，所以换成真照片；而真正的说服力在「它是一整面墙、能
    一张张拎出来看」—— 这正是应用里相册的用法，于是让它自己演一遍。
 
-   节奏（进和出严格对称，进 3 拍、出 3 拍，一轮 ≈ 7.6s）：
+   节奏（进和出对称：进去 3 拍、铺满 1 拍、出来 4 拍）：
      ① 整面墙静止 HOLD_STILL(1s)
      ② 随机挑一格「选中」：点亮 + 描边 + 抬起，停 HOLD_PICK(0.62s)
-     ③ 这一格原地放大到 GROW(1.3) 倍，停 HOLD_GROW(0.52s)
+     ③ 这一格放大到 GROW(1.5) 倍（贴边的往墙内让，见 growPos），停 HOLD_GROW(0.52s)
      ④ 大图从它原来的位置长开、铺满整面墙，停 DWELL_FULL(2.2s)
-     ⑤ 大图**缩回**原来那一格（不是原位消失），停 HOLD_BACK(0.42s)
-     ⑥ 格子从 1.3 倍落回 1 倍、大图同步淡出，再静止 HOLD_STILL …… 往复
+     ⑤ **墙立即恢复成完整的一整面照片** —— 源格子在阶段 3 就跟着复位了
+        （--g→1、摘 data-pick、--dx/--dy 归零），不留空缺、不压暗。
+        此后收尾只跟 #wall-fill 一个元素打交道。
+     ⑥ 铺满图停留 DWELL_FULL(2.2s)
+     ⑦ **渐隐消失**（BURST_MS=720ms）：大图柔和淡出，照片墙同时浮上来
+        （墙更早到位，免得中间露出 stage 的深色底）
+     ⑧ 渐隐的**同时** round() 选下一张，开新一轮
+
+   ⚠ 这套收尾是 2026-09-17 换掉的。旧方案是「铺满图缩回 1.5 倍位置 →
+      交接描边 → 格子归位」，需要大图(760ms)与格子(420ms)逐帧对齐、
+      还要小心内联 --g 与样式表抢优先级，改了五六轮始终有一处对不上。
+      换成渐隐之后**没有任何需要精确对齐的交接点**，整段只跟 fill 打交道。
 
    为什么是「一张铺满」而不是「同时放大几张小的」：
    前者对应应用里点开一张照片看大图，后者只是墙上多几个色块。前者才是相册的用法。
@@ -2363,10 +2453,42 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
 (function () {
   var stage = document.getElementById('wall-stage');
   var box   = document.getElementById('wall-album');
-  var fill  = document.getElementById('wall-fill');
-  if (!stage || !box || !fill) return;
+  var fillA = document.getElementById('wall-fill');
+  var fillB = document.getElementById('wall-fill-2');
+  if (!stage || !box || !fillA || !fillB) return;
+  /* cur 是本轮正在用的那一个；另一个此时正跑收尾动画（或闲置）。
+     整个脚本只通过 cur 读写 —— 收尾中的那个由 CSS 动画自己管，
+     脚本一个字都不许碰（碰了就把动画顶掉）。 */
+  var cur   = fillA;
+  var fill  = cur;        // 兼容下面所有既有引用；由 swapFill() 换掉
   var cells = Array.prototype.slice.call(box.querySelectorAll('i'));
   if (cells.length < 8) return;
+
+  /* ---- 不重复抽签：24 格全走一遍，走完再重置 --------------------------
+     用户要的是「在没有选过的图片里随机，全选过了之后重置」。
+     24 格现在各是一张不同的照片（2026-09-17 补齐到 24 张），
+     所以按格子去重 == 按照片去重，一轮内不会选中同一张。
+
+     做法是洗牌池而不是「抽完即删」：
+       · 池子空 → 把 0..n-1 填满，**洗一遍**，从尾部弹出
+       · 弹出即用，弹光了下一次调用自然重置
+     用洗牌而不是随机取下标 + splice，是因为后者 24 次 splice 的
+     数组搬移在长跑下没必要，而且分布上「最后一个总是最不容易被早抽中」。
+     洗牌用 Fisher-Yates —— `sort(() => Math.random() - .5)` 分布不均，
+     而且 V8 的排序对短数组走插入排序，偏差肉眼可见，别用。 */
+  var pool = [];
+  function pickCell() {
+    if (pool.length === 0) {
+      var i;
+      for (i = 0; i < cells.length; i++) pool.push(i);
+      /* Fisher-Yates：从后往前，每次和 [0, i] 里随机一个换。 */
+      for (i = pool.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+      }
+    }
+    return cells[pool.pop()];
+  }
 
   /* 用户在系统里勾了「减少动态效果」就完全不播：不建定时器、不挂过渡。
      比播完再用 CSS 压掉动画更彻底 —— 连跳动的可能性都不留。 */
@@ -2374,26 +2496,43 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
 
   /* 一轮五拍的节奏：静止 → 选中停 → 原地放大停 → 铺满停 → 收回静。
      时间常量集中在这里，调手感只改这几个数。 */
-  var HOLD_STILL  = 1000;  // 整面墙完全静止（上一张收回之后）
+  /* 整面墙完全静止。**只在两处用**：
+       ① 页面刚打开时的第一拍（later(round, HOLD_STILL)）
+       ② 切标签页/改窗口回来之后（later(round, 300)）
+     **不再用在轮次之间** —— 收尾和新一轮是同时起跑的（2026-09-17），
+     上一轮缩小的同时下一轮已经在长开，中间没有静止期了。
+     要调「两轮之间的呼吸」，改 DWELL_FULL，不是这个。 */
+  var HOLD_STILL  = 1000;
   var HOLD_PICK   = 620;   // 选中之后、开始放大之前的停留
   var GROW_MS     = 420;   // 原地放大 / 收回用的过渡时长，必须和上面 cell.style.transition 一致
-  /* 原地放大到几倍。**上限由「贴边那几格不出墙」决定，不是随便定的**：
-     桌面墙 1000 宽、格 161.7，距墙边最近的格子左右各留 161.7px 余量，
-     1000/161.7 ≈ 6.18 是墙宽/格宽，再倒过来看「一个格子放大后不能超过
-     它到墙边的距离」→ 上限 1 + 161.7/1000 ≈ 1.16（左右两侧）
-     或 1 + 161.7/664 ≈ 1.24（上下两侧）……取最紧的那个：约 1.16。
-     手机墙 274 宽、格 65.5，上限 1 + 65.5/274 ≈ 1.24。
-     **1.3 其实已经略微超出左右边界**（1.3 > 1.16），贴边的格子会压出墙面
-     一点点。想完全不压墙要降到 1.15 左右。这里按需求先取 1.3。 */
-  var GROW        = 1.3;
+  /* 放大到几倍。上限由「贴边那几格不出墙」决定，但**不再是硬上限**：
+     一张待在原地的格子，放大倍数受它到墙边的距离限制 —— 桌面墙 1000 宽、
+     格 161.7，左右上限 1 + 161.7/1000 ≈ 1.16；手机墙 274 宽、格 65.5，
+     上限 1 + 65.5/274 ≈ 1.24。1.5 三边都超。
+     超过的办法不是把 GROW 压下去，而是**放大时把格子往墙内推**
+     （见 growTo()）：贴边的那一列/那一行各让开一点，放大量就花在墙里。
+     只有真正位于墙中央、两边都够宽的格子才是原地放大。 */
+  var GROW        = 1.5;
+  /* 放大态那圈描边（截图里是 `.album i[data-pick]` 的 box-shadow 0 0 0 2px）
+     也要留在墙里 —— 只按格子本体算「不出墙」的话，贴边的格子本体刚好贴边，
+     那 2px 白圈就被墙沿切掉一半，看着像描边断了。
+     这里留的余量不是 2px 而是 8px：投影 0 6px 18px 的暗部往四周铺约 3px、
+     下边 9px，格子是 1.5 倍缩放的，这些都会跟着放大，
+     取 8px 让白圈和暗部的可见部分都落在墙内。
+     **改 --dx/--dy 的公式时别忘了它也吃这份余量。** */
+  var EDGE_PAD    = 8;
   var HOLD_GROW   = 520;   // 放大到 GROW 倍之后、开始铺满之前的停留
   var GROW_FULL   = 760;   // 从格子铺满整墙的过渡时长，必须和 .wall-fill 的 transition 一致
   var DWELL_FULL  = 2200;  // 铺满之后停留多久
-  var SHRINK_MS   = 760;   // 收回第一段：铺满 → 缩回原来那一格（阶段 3 的逆），对齐 .wall-fill 的 transform
-  var HOLD_BACK   = 420;   // 缩回格子之后、格子落回 1 倍之前的停留（阶段 3 停顿的镜像）
-  var REHIDE      = 520;   // 收回第二段：格子 1.5 → 1 倍 + 大图淡出，对齐 .album i 的 transform
+  /* 渐隐时长。**必须和 CSS 里 .wall-fill[data-burst] 那两条 animation
+     的 duration 相等**（wall-fill-shrink / wall-fill-out，现在都是 1.08s）。JS 需要它是因为「淡完清场」这一步
+     得在动画结束后做，不像纯 CSS 动画那样可以完全交给样式表。
+     改时长要两处一起改（这里 + CSS 那条 animation）。
+     名字保留 BURST_MS（历史叫法，炸裂方案 2026-09-17 已废弃改渐隐），
+     免得再牵动一堆 later(cleanupFill, ...) 的调用点。 */
+  var BURST_MS    = 1080;
 
-  /* 底图懒挂：照片墙在第三屏，首屏不该背这 12 张（540KB）。
+  /* 底图懒挂：照片墙在第三屏，首屏不该背这 24 张（约 1.1MB）。
      实测过 —— 把 background-image 写在 CSS 里，浏览器首屏就全下完了。
      所以底图 URL 先搁在 --wall-bg 上，等这一块快进视口时再加 data-bg
      把 --wall-bg 真正接上。rootMargin 给 300px 提前量。
@@ -2409,7 +2548,19 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
   } else { load(); }
 
   var timers = [];
-  function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
+  /* 自清理的定时器：每次 later 都往 timers 里塞一个 id，而 clearTimers 只在
+     resize/切标签页时才重置数组 —— 播起来之后这个数组只涨不减。
+     原先一轮约 7.6s、最多挂 8 个，涨得慢还看不出来；改成收尾直接递归
+     round() 之后循环快得多，不清理就是实打实的内存泄漏（长挂在首页上会一直涨）。
+     这里让每个定时器触发时把自己的 id 摘掉，数组长度恒等于「在飞的数量」。 */
+  function later(fn, ms) {
+    var id = setTimeout(function () {
+      var i = timers.indexOf(id);
+      if (i >= 0) timers.splice(i, 1);
+      fn();
+    }, ms);
+    timers.push(id);
+  }
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
 
   /* 窗口尺寸一变（手机横竖屏、桌面拖窗口），格子边长和墙的尺寸全变，
@@ -2429,16 +2580,37 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
   });
 
   function reset() {
-    fill.removeAttribute('data-on');
-    fill.removeAttribute('data-out');
-    fill.style.borderRadius = '';
-    fill.style.transition = 'none';       // 复位时不要播过渡，否则切的瞬间会闪一下
-    fill.style.transform = '';
+    /* **两个 fill 都要清。** reset 是「整段推倒重来」（resize / 切标签页），
+       此时可能正有一个在跑收尾动画 —— 只清当前那个的话，
+       另一个会挂着 data-burst 停在 scale(0)，而且动画是 once 的
+       不会自愈，从此墙上偶尔空一块。 */
+    [fillA, fillB].forEach(function (el) {
+      el.removeAttribute('data-burst');
+      el.removeAttribute('data-on');
+      el.removeAttribute('data-out');
+      el.style.borderRadius = '';
+      /* 收尾用内联 opacity 把大图「立即消失」，这条必须清掉：
+         resize / 切标签页会在停留期间触发 reset，不清的话 opacity:0 留在
+         内联样式上，下一轮大图加回 data-on 也是透明的 —— 看着就是
+         「铺满那一拍没了」，但其它拍都正常，很难查。 */
+      el.style.opacity = '';
+      el.style.transition = 'none';     // 复位时不要播过渡，否则切的瞬间会闪一下
+      el.style.transform = '';
+      el.style.backgroundImage = '';
+    });
+    /* 复位后把指针也摆回原位，让下一轮从 fillA 开始，状态可预期。 */
+    cur  = fillA;
+    fill = cur;
+    /* 池子也清空 —— reset 是「推倒重来」，留着旧池子的话
+       重置后接着断点往下抽，一轮的边界就错位了（比如刚好看过 20 格，
+       重置后只补 4 格就再洗牌，那 4 格会显得「刚看过又来」）。 */
+    pool.length = 0;
     cells.forEach(function (el) {
       el.removeAttribute('data-src');
       el.removeAttribute('data-pick');
       el.removeAttribute('data-grow');
-      el.style.removeProperty('--g');     // 清掉原地放大，别把 1.5 倍留在墙上
+      el.style.removeProperty('--g');     // 清掉放大倍率，别把 1.5 倍留在墙上
+      setGrowPos(el, null);               // 位移一起清，否则格子停在让开后的位置
       el.style.transition = '';
     });
   }
@@ -2451,31 +2623,155 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
      会从 1:1 渐变到墙的宽高比，照片在中间帧上有极轻微的拉伸，
      到铺满时完全消失。旧版反过来保等比、牺牲起点，结果起点永远差一点、
      和格子对不齐 —— 两害相权，选了不留缝的这个。 */
-  /* 变换的统一写法：和 .wall-fill 的初始 transform 完全一致，见文件头 .wall-fill 注释。 */
-  function xf(cx, cy, s) {
-    return 'translate(' + cx + 'px,' + cy + 'px) scale(' + s + ')';
+  /* 变换的统一写法：和 .wall-fill 的初始 transform 完全一致，见文件头 .wall-fill 注释。
+
+     **必须收两个 scale**（sx、sy），不能像原来那样只收一个 s：
+     格子是正方形、墙不是，两个方向的缩放比天然不等 ——
+     手机墙 274×413、格 65.5，sx=0.239 / sy=0.159，差了 1.5 倍。
+     旧签名 `xf(cx, cy, s)` 只接一个 s，而调用处一律传 (cx, cy, sx, sy)，
+     第二个 scale 被静默丢掉 —— JS 不报错，于是：
+       · 桌面墙 1000×1000 恰好是正方形，sx==sy，**完全看不出来**；
+       · 手机墙 274×413 上起点被拉成 43.5×65.5（本该 65.5×65.5），
+         大图从一个比格子窄的条形里长出来/缩回去，整条轨迹都是歪的。
+     这就是「手机上效果不对、桌面看着没事」的根因。
+     用 scale(sx, sy) 两个参数写，几何才和那一格严丝合缝。 */
+  function xf(cx, cy, sx, sy) {
+    return 'translate(' + cx + 'px,' + cy + 'px) scale(' + sx + ',' + sy + ')';
+  }
+
+  /* 放大这一格时，位移写进 --dx/--dy（CSS 的 .album i[data-pick] transform
+     读的就是它俩），而不是直接改 cell.style.transform —— 放大态必须由
+     [data-pick]/[data-grow] 驱动、属性一摘就复位，这是上面定死的规矩。
+
+     位移怎么算：放大后这一格以自己中心为心向外各长出 (GROW-1)/2 倍边长，
+     即左右各多 (GROW-1)*cw/2。它到墙左右边界的距离是 cell.offsetLeft 和
+     w - 右边界，哪边不够就往反方向推那么多 —— 推完另一边只会更宽裕，
+     所以两边各算一次、直接相减即可，不用迭代。
+     **可用空间要再减掉 EDGE_PAD**，那是留给描边和投影的：不够的话推的
+     距离就少 EDGE_PAD，白圈照样被墙切。
+     墙中间的格子两边都够，两个 max 都是 0，位移为 0，也就是原地放大。 */
+  function growPos(cell) {
+    var w = box.clientWidth, h = box.clientHeight;
+    var cw = cell.offsetWidth, ch = cell.offsetHeight;
+    /* 让位量必须和 geom() 用**同一套**格子尺寸推 —— 那边用浮点步长、
+       这边用取整后的 offsetWidth 的话，格子「放大 1.5 倍后的右边界」
+       和「大图铺满后收回的落点」会差 48px，四角最明显。
+       让位量本身仍按 offsetWidth 算：它管的是「这一格会不会顶出墙」，
+       而格子真实渲染尺寸就是 offsetWidth —— 两者只在浮点尾数上差 0.4px，
+       远小于 EDGE_PAD 的余量，不影响出不出界。 */
+    var over = (GROW - 1) / 2;
+    var l = cell.offsetLeft - EDGE_PAD, r = w - (cell.offsetLeft + cw) - EDGE_PAD;
+    var t = cell.offsetTop  - EDGE_PAD, b = h - (cell.offsetTop + ch) - EDGE_PAD;
+    return {
+      dx: Math.max(0, over * cw - l) - Math.max(0, over * cw - r),
+      dy: Math.max(0, over * ch - t) - Math.max(0, over * ch - b)
+    };
+  }
+
+  /* 挂上/摘掉位移。不传就是交回样式表的默认值 0px；
+     复位时**必须**清掉，否则偏移会留在墙上，下一轮这一格在错的位置放大。 */
+  function setGrowPos(cell, p) {
+    if (!p) {
+      cell.style.removeProperty('--dx');
+      cell.style.removeProperty('--dy');
+      return;
+    }
+    cell.style.setProperty('--dx', p.dx + 'px');
+    cell.style.setProperty('--dy', p.dy + 'px');
   }
 
   /* 算出「从这一格开始」的几个位置，但不落地。返回的对象里：
        cx/cy —— 该格中心相对墙中心的偏移
        sx/sy —— 起点缩放（格子尺寸 / 墙尺寸，各自独立）
-       mid   —— 原地放大 GROW 倍后的变换串（预留给手调，正常走格子自己的 CSS） */
+
+     **中心要算上 growPos 的位移**：大图是在第 ③ 拍、格子已经放大并让开
+     之后才长出来的，所以它的起点必须是格子「当时实际所在的位置」，
+     不是它在网格里的原始位置。少算这 48.5px 的话，贴边那几张的
+     铺满起点会偏出格子半个身位 —— 放大时大图从旁边窜出来、收回时
+     又缩到旁边的空位上去，和格子对不齐。
+     位移只作用于贴边/角上的格子，中央那些 dx=dy=0，起点本来就没变。 */
   function geom(cell) {
     var w = box.clientWidth, h = box.clientHeight;
-    var cw = cell.offsetWidth, ch = cell.offsetHeight;
-    var cx = cell.offsetLeft + cw / 2 - w / 2;
-    var cy = cell.offsetTop + ch / 2 - h / 2;
-    var sx = cw / w, sy = ch / h;
-    return { cx: cx, cy: cy, sx: sx, sy: sy,
-             mid: xf(cx, cy, sx * GROW) };
+    /* **单元尺寸不能取 offsetWidth/offsetHeight**（这一条踩了很久才找到）。
+       grid 均分出来的格子是浮点宽，offsetWidth 取整（桌面 161.67 → 161）。
+       用 161 去算 1.5 倍的 scale，格子长出来的实际尺寸是 241.5，
+       而 offsetLeft 是按浮点算的 8×((1000+6)/6)=1341.3 那一族 ——
+       于是「大图落点」和「格子实际位置」在四个角上错开整整 48.4px。
+       中央那些格子 dx=dy=0、两边都按同一个中心推，误差正好抵消，
+       所以只有贴边和角上的格子暴露出来 —— 也正是这一段动画最常用的位置。
+       这里改成用墙的实际尺寸和 gap 反推步长，浮点自洽，两边就严丝合缝了。 */
+    var gap = parseFloat(getComputedStyle(box).columnGap) || 0;
+    var cols = parseInt(getComputedStyle(box).gridTemplateColumns.split(' ').length, 10) || 1;
+    var cw = (w - gap * (cols - 1)) / cols, ch = cw;
+    var cellW = cell.offsetWidth, cellH = cell.offsetHeight;   // 格子自己的渲染尺寸
+    var col = Math.round((cell.offsetLeft - gap / 2) / (cw + gap));
+    var row = Math.round((cell.offsetTop  - gap / 2) / (ch + gap));
+    var tx = col * (cw + gap) + cw / 2;        // 这一格在墙里的绝对中心（不受任何让位影响）
+    var ty = row * (ch + gap) + ch / 2;
+    var p = growPos(cell);
+    var cx = tx + p.dx - w / 2;
+    var cy = ty + p.dy - h / 2;
+    var sx = cellW / w, sy = cellH / h;
+    /* 「格子原位」这份几何不能拿 cw/ch 拼 —— 见下面单元尺寸那段的推导：
+       用 offsetWidth 做 1.5 倍的 scale，格子会落在和 growPos 让位不一致的点上，
+       四角错开 48px。改成 tx/ty 这对「格子在墙里的绝对中心」，
+       阶段 6/7 的空档直接交给 CSS 那条 .42s 过渡去补，两端都严格对齐。 */
+    return { cx: cx, cy: cy, sx: sx, sy: sy, tx: tx, ty: ty };
   }
 
   function setTransform(str) { fill.style.transform = str; }
 
+  /* 渐隐放完之后把 fill 交还样式表。
+     摘 data-burst（动画 once，留着下一轮不会重播）、摘 data-on
+     （样式表的 `.wall-fill[data-on]{transform:none}` 会盖住下一轮写进去的
+     起点 transform，必须摘）；内联的 opacity/transform 也一并交还。
+     用 'none' 关掉过渡再清，免得清的过程本身播一段淡出。
+
+     照片墙**不参与**收尾（它一直在）。这里不用管 .album。 */
+  /* 收尾动画跑完之后，把**那一个** fill 彻底交还样式表、留着下一轮用。
+     参数 el 必须是收尾中的那个 —— **绝不能**在这里读全局 fill，
+     因为此时 fill 已经指向新一轮了（见 swapFill）。 */
+  function cleanupFill(el) {
+    el.removeAttribute('data-burst');   // 动画 once，不摘下一轮不重播
+    el.removeAttribute('data-on');
+    el.removeAttribute('data-out');
+    el.style.transition = 'none';
+    el.style.opacity = '';
+    /* transform / borderRadius 必须一起清 —— 收尾动画的终态是 scale(0)，
+       不清的话这个元素永远停在 0 大小，下一轮轮到它时就完全看不见。
+       （旧版这里是「**不能动 transform**」，那是单个 fill 时代的约束：
+       那时 transform 里存着新一轮的起点几何。现在两个 fill 分工，
+       新一轮在另一个元素上，这一个可以放干净。） */
+    el.style.transform = '';
+    el.style.borderRadius = '';
+    el.style.backgroundImage = '';
+    requestAnimationFrame(function () { el.style.transition = ''; });
+  }
+
+  /* 换到另一个 fill 上开新一轮。
+     必须在 round() 最开始调用 —— 此时上一个 fill 正在跑收尾动画。 */
+  function swapFill() {
+    cur  = (cur === fillA) ? fillB : fillA;
+    fill = cur;
+    /* 这一个可能还残留着「上上轮收尾」的痕迹（它闲置了整整一轮，
+       正常早被 cleanupFill 清干净，但别赌）。开跑前再扫一遍。 */
+    fill.removeAttribute('data-burst');
+    fill.removeAttribute('data-on');
+    fill.removeAttribute('data-out');
+    fill.style.opacity = '';
+    fill.style.transform = '';
+    fill.style.backgroundImage = '';
+    fill.style.transition = 'none';
+  }
+
   function round() {
-    /* 随机挑一格。用 Math.random 直接取下标即可 —— 只取一个，
-       不存在 sort(() => Math.random() - .5) 那种分布不均的问题。 */
-    var cell = cells[Math.floor(Math.random() * cells.length)];
+    /* 先换到另一个 fill。上一个正在跑收尾动画（缩小到 0），
+       这一轮从它身上长开、互不干扰 —— 见 swapFill 注释。 */
+    swapFill();
+    /* 抽一格 —— **不重复**：池子里的格子全抽完才重置（见 pickCell）。
+       注意抽出来只是「这一轮选中」，标记是在池子里（已经 pop 掉），
+       不依赖格子的 DOM 状态，所以两个 fill 轮换、提前起跑都不影响正确性。 */
+    var cell = pickCell();
     var bg = getComputedStyle(cell).backgroundImage;
     if (!bg || bg === 'none') { later(round, HOLD_STILL); return; }
 
@@ -2491,6 +2787,16 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
        就会从起点直接闪到铺满、丢掉整个放大过程。 */
     fill.style.transition = 'none';
     setTransform(xf(g.cx, g.cy, g.sx, g.sy));
+    /* **清掉内联 --g，让样式表的 `.album i[data-pick]{--g:1.5}` 接管。**
+       上一轮收尾（阶段 8）用 setProperty('--g','1') 把那一格收回去，
+       那条内联值会一直留着；内联优先级高于样式表，所以只要它还挂着，
+       这一格被选中时 --g 仍是 1 —— 描边加上了、格子却只有 1 倍，
+       看着就是「选中了但不放大」。上一轮刚缩回的那一格正是最可能被抽中的。
+       概率 1/24 每轮，跑久了必然撞上。所有会设内联 --g 的地方都得配对清掉。 */
+    cell.style.removeProperty('--g');
+    /* 贴边的格子放大时要往墙内让（--dx/--dy），中央那些算出是 0、仍是原地放大。
+       必须在加 data-pick **之前**写好，否则第一帧没有位移、看着是先原地弹大再挪。 */
+    setGrowPos(cell, growPos(cell));
     cell.setAttribute('data-pick', '');
 
     /* ---- 阶段 2：原地放大 GROW 倍，再停 HOLD_GROW -----------------------
@@ -2505,19 +2811,19 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
          交接的时机是「原地放大停够 HOLD_GROW 之后」而不是放大刚结束：
          用户要的是 选中→停→放大→停→铺满，两个停留缺一不可。
          fill 从起点（= 原来那一格）长出来时，格子已经放大到 1.5 倍。
-         这里必须先加 data-grow 再摘掉，两个属性**分两次赋值**：
-         同一帧里 `setAttribute('data-grow')` + `removeAttribute('data-pick')`
-         是一次样式重算，浏览器只看到「放大态 → 压暗态」这一个终态，
-         中间的 1.5 倍 → 1 倍过渡根本不会发生（实测：原地放大那一下
-         会硬切回去，看着像闪了一下）。分两次赋值才会产生两个可插值的状态。
-         `.album i[data-pick]` 的 transform 用 CSS 变量 --g 表达放大倍率，
-         fill 长开的同时把 --g 从 1.5 收向 1，两件事同一个时长、同一条缓动。 */
+
+         **格子在这一拍就开始复位**（--g→1、摘 data-pick、--dx/--dy 归零），
+         和大图长开同一个时长、同一条缓动 —— 视觉上是大图「取代」了那一格。
+         新流程（2026-09-17）不要 [data-grow] 留驻、也不要 [data-src] 压暗：
+         墙要立刻恢复成完整的一整面照片，源格子不许留空缺、也不许变暗。
+         所以这里**不能**再加 data-grow —— 那条规则自带 scale(var(--g))，
+         会给正要收到 1 的 --g 重新钉住，格子就停在 1.5 倍上不下来了。 */
       later(function () {
         fill.style.transition = '';
-        cell.setAttribute('data-grow', '');       // 留驻放大态，见 .album i[data-grow]
-        cell.removeAttribute('data-pick');
-        cell.setAttribute('data-src', '');        // 格子压暗（这条带 .3s 过渡）
+        cell.removeAttribute('data-pick');        // 描边/点亮褪掉
+        cell.removeAttribute('data-grow');        // 双保险：上一轮若残留，一并清掉
         cell.style.setProperty('--g', '1');       // 1.5 → 1，和 fill 长开同步
+        setGrowPos(cell, null);                   // 位移归零：格子滑回网格原位
         fill.setAttribute('data-on', '');         // opacity 0→1
         /* 必须把起点那个内联 transform 清掉，铺满态才会生效。
            样式表里的 `.wall-fill[data-on]{transform:none}` 盖不过内联样式 ——
@@ -2529,49 +2835,89 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
            置空之后由样式表接管，transition 就能从起点动到铺满。 */
         setTransform('');
 
-        /* ---- 阶段 4：铺满后停 DWELL_FULL，然后**倒着走一遍** ------------
-           收回不是「原地消失」，是阶段 3 反过来：大图先缩回它原来那一格，
-           停一下，格子再落回 1 倍。中间那次停留是刻意的 ——
-           少了它就退化成「一气缩到底」，放大时那两拍停顿时白给的。
-
-           所以这里**不要**把 fill 的 opacity 往下按：大图缩回格子的过程中
-           必须一直不透明，缩到格子大小、停住，最后才让格子自己收回去。
-           压暗也一样，等最后才撤 —— 中途撤掉的话，大图一边缩、
-           原来那格一边亮起来，看起来就是两张照片在打架。 */
         later(function () {
-          setTransform(xf(g.cx, g.cy, g.sx, g.sy));   // 铺满 → 格子（阶段 3 的逆）
-          fill.style.borderRadius = '6px';            // 圆角同步收，免得比格子还方
-          later(function () {
-            /* ---- 阶段 5：格子从 1.5 倍落回 1 倍 -----------------------
-               这时 fill 还盖在格子上、且和格子等大，两层是重合的。
-               先给格子留驻放大态再摘 data-pick，否则同一帧只算一次样式重算，
-               「1.5 → 1」这段过渡整个消失（就是阶段 2→3 那个坑的镜像）。
+          /* ---- 阶段 4：铺满图停 DWELL_FULL，然后渐隐消失 -------------------
+             **流程在 2026-09-17 被简化过**，之前那套「缩回格子 → 交接描边
+             → 格子归位」有太多必须逐帧对齐的环节（大图 760ms、格子 420ms、
+             内联 --g 与样式表抢优先级），改了五六轮始终有一处对不上。
+             用户改成了更简单也更耐看的收法：
+               ① 铺满图一出现，源格子**立刻**恢复正常 —— 不留空缺、不压暗
+               ② 铺满图停留 DWELL_FULL
+               ③ 渐隐消失（大图淡化，照片墙同时浮上来）
+               ④ 渐隐的**同时**选下一张，开新一轮
 
-               **这里绝不能写 setTransform('')**：置空等于删掉内联样式、
-               控制权交还样式表，浏览器会退回去匹配 `[data-on]{transform:none}`，
-               大图当场弹回铺满尺寸，然后在原地淡出 ——
-               实测桌面 fill 从 360px 一路涨回 948px 才消失。
-               内联的缩小位移必须一直留着，直到 data-on 被摘掉为止。 */
-            fill.setAttribute('data-out', '');        // 缩到位才淡出
-            cell.removeAttribute('data-src');         // 这一格重新亮回来
-            cell.setAttribute('data-grow', '');
-            cell.style.setProperty('--g', '1');       // 1.5 → 1，和 fill 淡出同步
-            later(function () {
-              /* 落回 1 倍、大图也已淡干净，这一轮才真正结束。
-                 fill 的 opacity 是 .28s，比格子的 .52s 先走完 ——
-                 所以这里等 REHIDE 是够的，不会在淡出没结束时就把下一拍挂上。 */
-              fill.removeAttribute('data-on');
-              fill.removeAttribute('data-out');
-              fill.style.borderRadius = '';
-              cell.removeAttribute('data-grow');     // 摘掉放大态，格子完全复原
-              cell.style.removeProperty('--g');
-              setTransform('');
-              later(round, REHIDE + HOLD_STILL);
-            }, REHIDE);
-          }, HOLD_BACK);
-        }, DWELL_FULL);
-      }, GROW_MS + HOLD_GROW);
-    }, HOLD_PICK);
+             好处是**没有任何需要精确对齐的交接点**：
+             源格子在阶段 3 就已经完全复位（--g→1、摘 data-pick、位移归零），
+             它从大图长开的同一帧就开始平顺缩回网格原位，
+             所以等到这里铺满时，墙上早就是完整的一整面照片。 */
+          fill.style.borderRadius = '6px';            // 圆角同步收，免得比格子还方
+            /* ---- 阶段 5（续）：停够就渐隐消失，同时开下一轮 -------------------
+
+             渐隐 = 两条同时长的 CSS 动画（见 .wall-fill[data-burst]）：
+             wall-fill-shrink 管缩放（收到 0）、wall-fill-out 管淡出 ——
+             大图**边变淡边缩到 0**，照片墙**不参与**、它一直在。
+             唯一要 JS 配合的是「放开 [data-on] 的 opacity:1」——
+             不放开的话 [data-on] 一直把 opacity 钉在 1，大图永远不淡
+             （不是「淡不了」，是压根没开始淡）。挂 data-burst 就解决了：
+             选择器权重同为 (0,2,0)，靠排在后面赢。
+             用 CSS 动画而不是在这里写 JS 逐帧，是因为这事只有一次、
+             不需要中途改参数，交给合成层跑最省。时长对齐 BURST_MS。
+
+             （历史：2026-09-17 之前这里是「炸裂」——clip-path 切两半向左右
+             让开露缝。手机上始终做不出效果，用户拍板改渐隐，那套已删。） */
+            /* **先摘再挂**：animation 是 once 的，同一个属性连着留两轮，
+               第二轮不会重新触发。每一轮都要让它经历一次「没有 → 有」。
+               摘掉之后必须强制一次样式重算（下面那个 offsetWidth），
+               否则同一帧里的 remove + add 会被浏览器合并成一次
+               「属性一直都在」，动画依然不重播。 */
+            fill.removeAttribute('data-burst');
+            void fill.offsetWidth;                    // 强制 reflow，让「摘掉」生效
+            fill.setAttribute('data-burst', '');
+
+            /* 渐隐期间**不要**动 fill 的内联 transform/opacity：
+               keyframes 动画正管着 opacity，中途写内联会把它顶掉。
+               等动画放完（BURST_MS 之后）再统一清场。 */
+
+            /* ---- 阶段 6：渐隐的**同时**选下一张，开新一轮 -----------------
+               渐隐动画 BURST_MS，新一轮的 round() 也是立刻要往 fill 上写
+               起点 transform 和新的 background-image 的 ——
+               两者不能挤在同一个同步块里，否则浏览器合并成一次重算：
+               要么渐隐的第一帧被吞掉，要么新一轮写好的起点被下一句清掉。
+
+               所以拆成两拍：
+                 · 现在（同一帧）：挂上 data-burst 让它开跑；
+                   round() 排到 rAF 之后，等渐隐先渲染出第一帧。
+                 · BURST_MS 之后：动画放完，再清场（摘 data-burst / data-on、
+                   交还内联样式），交回去给下一轮用。
+
+               ⚠ 这里**不能**把清场写在设置 data-burst 的同一个块里 ——
+                 同步块里挂完立刻摘，浏览器一帧都没渲染过 data-burst 的状态，
+                 渐隐动画永远不会播（实测：完全看不到渐隐，就是这么坏的）。
+
+               **注意传进去的是收尾中的那一个**（此刻脚本里的 fill）——
+               新一轮马上就会把全局 fill 指到另一个元素上去，
+               cleanupFill 里再读全局 fill 就会清错对象。 */
+            var ending = fill;
+            later(function () { cleanupFill(ending); }, BURST_MS);
+            /* ---- 阶段 6：缩小的**同时**选下一张，开新一轮 -----------------
+               用户要的是「缩小的同时新图片开始放大」（2026-09-17）——
+               两件事必须**同时**起跑，不能等收尾跑完。
+
+               能做到，靠的是两个 fill 分工：
+                 · 这一个（ending）在原地缩小到 0，由 CSS 动画自己跑完；
+                 · 另一个（cur 换过去之后）立刻从新格子长开。
+               两者是不同元素，样式互不干扰，所以可以真正同时。
+               旧版做不到正是因为只有一个 fill：round() 一写起点 transform
+               就把缩小动画顶掉了。
+
+               和旧版一样，不能在同一个同步块里直接调 round() ——
+               浏览器会把「挂 data-burst」和「round 写的起点」合并成一次重算，
+               缩小的第一帧会被吞掉。所以排到 rAF 之后，只隔一帧，
+               视觉上就是同时起步。 */
+            requestAnimationFrame(function () { round(); });
+          }, GROW_FULL + DWELL_FULL);
+        }, GROW_MS + HOLD_GROW);
+      }, HOLD_PICK);
   }
 
   later(round, HOLD_STILL);
