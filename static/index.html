@@ -90,15 +90,41 @@
         </button>
         <button id="btn-trip-next" class="trip-nav-arrow" aria-label="下一个行程">›</button>
       </div>
-      <button id="btn-new-trip" class="btn topbtn">＋ 新行程</button>
-      <button id="btn-edit-trip" class="btn topbtn" title="编辑当前行程">✎</button>
-      <button id="btn-recalc" class="btn topbtn" title="强制重新计算路线曲线（正常无需使用，路线会自动缓存）">🔄</button>
-      <button id="btn-share-trip" class="btn topbtn" title="分享当前行程（只读链接）">🔗</button>
-      <button id="btn-export-trip" class="btn topbtn" title="导出行程为纯文本（便于手工编辑）">⬇️</button>
-      <button id="btn-import-trip" class="btn topbtn" title="从纯文本导入行程">⬆️</button>
-      <a id="btn-console" class="btn topbtn" title="开发者控制台（API Key 管理）" href="/console" target="_blank" rel="noopener">🧑💻</a>
-      <button id="btn-logout" class="btn topbtn" title="退出登录">⏻</button>
-      <button id="btn-more" class="btn more-btn" title="更多操作">⋯</button>
+      <!-- 顶栏图标：Feather（MIT）线条几何内联成 SVG，**跟底部「更多」菜单里那套
+           是同一份几何**（见 app.js 的 ICON），两处并排看才是一套东西。
+           以前这里是 ＋ ✎ 🔄 🔗 ⬇️ ⬆️ 🧑💻 ⏻ ⋯ 一串 emoji/生僻字形：
+           emoji 在各家系统上长相差异大、偏卡通，⏻(U+23FB) 更是很多字体里
+           根本没有，会掉成豆腐块；而这几个动作（编辑/重算/分享/导入导出）
+           恰恰都是"有通行画法"的，用线条图标一眼就认得。
+           每个按钮都补 aria-label —— 只剩图形之后，读屏得靠它。 -->
+      <button id="btn-new-trip" class="btn topbtn">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>新行程</span>
+      </button>
+      <button id="btn-edit-trip" class="btn topbtn btn-icon" title="编辑当前行程" aria-label="编辑当前行程">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+      </button>
+      <button id="btn-recalc" class="btn topbtn btn-icon" title="强制重新计算路线曲线（正常无需使用，路线会自动缓存）" aria-label="重新计算路线">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+      <button id="btn-share-trip" class="btn topbtn btn-icon" title="分享当前行程（只读链接）" aria-label="分享当前行程">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+      </button>
+      <button id="btn-export-trip" class="btn topbtn btn-icon" title="导出行程为纯文本（便于手工编辑）" aria-label="导出行程">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button id="btn-import-trip" class="btn topbtn btn-icon" title="从纯文本导入行程" aria-label="导入行程">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </button>
+      <a id="btn-console" class="btn topbtn btn-icon" title="开发者控制台（API Key 管理）" aria-label="开发者控制台" href="/console" target="_blank" rel="noopener">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      </a>
+      <button id="btn-logout" class="btn topbtn btn-icon" title="退出登录" aria-label="退出登录">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+      <button id="btn-more" class="btn more-btn btn-icon" title="更多操作" aria-label="更多操作">
+        <svg class="tbi" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
     </header>
     <div class="userbar">
       <span id="current-user" class="current-user"></span>
@@ -121,7 +147,7 @@
         <button id="btn-map-fullscreen" class="map-fab fab-fullscreen" title="地图全屏" aria-label="地图全屏">⛶</button>
         <button id="btn-fit-view" class="map-fab fab-fit" title="全览：把整个行程收进视野" aria-label="全览整个行程">⤢</button>
         <button id="btn-locate" class="map-fab fab-locate" title="定位到我的位置" aria-label="定位到我的位置"></button>
-        <button id="btn-panel-open" class="map-fab hidden" title="展开详情" aria-label="展开详情">☰</button>
+        <button id="btn-panel-open" class="map-fab hidden mobile-only" title="展开详情" aria-label="展开详情">☰</button>
         <!-- 手机端：顶栏（logo 那行）和账号/统计条可以整体收起，把高度让给地图和列表。
              这枚小把手吊在地图上沿，收起后仍在原处，点一下再唤出来。 -->
         <button id="btn-chrome-toggle" class="chrome-toggle" type="button"
@@ -144,12 +170,25 @@
         <button id="btn-panel-toggle" class="panel-toggle" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 8 12 13 17 8"/><line x1="5" y1="17.5" x2="19" y2="17.5"/></svg></button>
       </div>
 
+      <!-- 宽屏：面板右边缘上半部铺一条竖条，点它展开面板。
+           和控制栏里那枚「收起」按钮同处右上角一带 —— 在哪点没的，就在哪点回来。
+           竖条高 58vh 而不是整条右边缘，是为了不挡住右下角那堆地图浮动按钮。 -->
+      <div id="panel-edge" class="panel-edge hidden" role="button" tabindex="-1"
+           title="展开面板" aria-label="展开面板">
+        <button class="panel-edge-btn" title="展开面板" aria-label="展开面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="12 8 7 13 12 18"/><line x1="19" y1="5" x2="19" y2="19"/></svg></button>
+      </div>
+
       <aside class="panel">
         <div class="tabs">
           <button class="tab active" data-tab="points">轨迹点</button>
           <button class="tab" data-tab="detail">点详情</button>
           <button class="tab" data-tab="albums">相册</button>
-          <button id="btn-panel-toggle-wide" class="panel-toggle wide-only" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 7 13 12 8 17"/><line x1="17.5" y1="5" x2="17.5" y2="19"/></svg></button>
+          <!-- 宽屏面板右上角这一簇：收起面板 / 一键铺满 / 一键还原。
+               收起后原地换成 #panel-edge 那条展开竖条，位置对得上。 -->
+          <div class="panel-ops wide-only">
+            <button id="btn-panel-vis" class="panel-toggle panel-op" title="面板铺满整个窗口" aria-label="面板铺满整个窗口"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><line x1="9.5" y1="4.5" x2="9.5" y2="19.5"/></svg></button>
+            <button id="btn-panel-toggle-wide" class="panel-toggle panel-op" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 7 13 12 8 17"/><line x1="17.5" y1="5" x2="17.5" y2="19"/></svg></button>
+          </div>
           <span class="tab-indicator" aria-hidden="true"></span>
         </div>
 
@@ -188,6 +227,7 @@
                 <button class="seg-btn" data-filter="video">视频</button>
               </div>
               <span id="photo-count" class="photo-count"></span>
+              <span class="photo-hint">滚轮缩放</span>
               <div class="photo-tools">
                 <button id="btn-photo-sort" class="icon-btn" title="切换时间排序">↓ 新→旧</button>
                 <button id="btn-photo-zoom-out" class="icon-btn" title="缩小（每行更多）">－</button>

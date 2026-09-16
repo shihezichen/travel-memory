@@ -46,7 +46,7 @@
         <button id="btn-map-fullscreen" class="map-fab fab-fullscreen" title="地图全屏" aria-label="地图全屏">⛶</button>
         <button id="btn-fit-view" class="map-fab fab-fit" title="全览：把整个行程收进视野" aria-label="全览整个行程">⤢</button>
         <button id="btn-locate" class="map-fab fab-locate" title="定位到我的位置" aria-label="定位到我的位置"></button>
-        <button id="btn-panel-open" class="map-fab hidden" title="展开详情" aria-label="展开详情">☰</button>
+        <button id="btn-panel-open" class="map-fab hidden mobile-only" title="展开详情" aria-label="展开详情">☰</button>
         <button id="replay-launch" class="replay-launch hidden" title="轨迹回放：沿路线播放旅程动画" aria-label="轨迹回放">▶</button>
         <div id="replay-bar" class="replay-bar hidden">
           <button id="replay-toggle" class="replay-btn" title="轨迹回放：播放中点击=暂停，暂停中点击=继续，播完点击=重播">▶</button>
@@ -63,12 +63,25 @@
         <button id="btn-panel-toggle" class="panel-toggle" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 8 12 13 17 8"/><line x1="5" y1="17.5" x2="19" y2="17.5"/></svg></button>
       </div>
 
+      <!-- 宽屏：面板右边缘上半部铺一条竖条，点它展开面板。
+           和控制栏里那枚「收起」按钮同处右上角一带 —— 在哪点没的，就在哪点回来。
+           竖条高 58vh 而不是整条右边缘，是为了不挡住右下角那堆地图浮动按钮。 -->
+      <div id="panel-edge" class="panel-edge hidden" role="button" tabindex="-1"
+           title="展开面板" aria-label="展开面板">
+        <button class="panel-edge-btn" title="展开面板" aria-label="展开面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="12 8 7 13 12 18"/><line x1="19" y1="5" x2="19" y2="19"/></svg></button>
+      </div>
+
       <aside class="panel">
         <div class="tabs">
           <button class="tab active" data-tab="points">轨迹点</button>
           <button class="tab" data-tab="detail">点详情</button>
         <button class="tab" data-tab="albums">相册</button>
-          <button id="btn-panel-toggle-wide" class="panel-toggle wide-only" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 7 13 12 8 17"/><line x1="17.5" y1="5" x2="17.5" y2="19"/></svg></button>
+          <!-- 宽屏面板右上角这一簇：收起面板 / 一键铺满 / 一键还原。
+               收起后原地换成 #panel-edge 那条展开竖条，位置对得上。 -->
+          <div class="panel-ops wide-only">
+            <button id="btn-panel-vis" class="panel-toggle panel-op" title="面板铺满整个窗口" aria-label="面板铺满整个窗口"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><line x1="9.5" y1="4.5" x2="9.5" y2="19.5"/></svg></button>
+            <button id="btn-panel-toggle-wide" class="panel-toggle panel-op" title="收起面板" aria-label="收起面板"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 7 13 12 8 17"/><line x1="17.5" y1="5" x2="17.5" y2="19"/></svg></button>
+          </div>
           <span class="tab-indicator" aria-hidden="true"></span>
         </div>
 

@@ -180,13 +180,51 @@ body {
 .trip-sheet-tag.traveling { background: #ffedd5; color: #c2410c; }
 .trip-sheet-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .trip-sheet-check { flex: none; color: var(--primary); font-size: 15px; }
-.more-btn { display: none; }  /* 桌面端不显示「更多」按钮，操作按钮直接平铺在顶栏 */
+/* 顶栏的线条图标。尺寸和描边跟底部「更多」菜单里的同一套（.more-sheet-item .ico svg
+   是 21px），并排看才像一套东西。vertical-align 让 svg 跟按钮里的文字对齐，
+   不设的话 baseline 会把按钮顶高几像素。 */
+/* 选择器要能压过后面的 .btn 简写：`.btn` 是单类(0,1,0)，这里每段都带两个类
+   或"标签+类"(0,2,0) 以上，写在前面也压得住 —— 不受源码顺序影响。 */
+.topbtn.btn-icon .tbi, .more-btn .tbi, a.topbtn.btn-icon .tbi {
+  width: 17px; height: 17px; flex: none; vertical-align: -3px; }
+/* 纯图标按钮（除「新行程」外都是）收成等宽方形，一行排开才不会参差不齐 */
+.topbar .topbtn.btn-icon { padding: 9px 10px; line-height: 0; }
+.topbtn > span { margin-left: 5px; }
+/* 「新行程」是顶栏唯一带文字的按钮，它的 svg 也是 .tbi，但上面那条
+   `.topbtn.btn-icon .tbi` 它匹配不上（它没有 .btn-icon，不需要收成方形）。
+   这里补一条，否则 svg 没有尺寸约束、退回固有比例撑到 51px，把顶栏顶高到 115px。 */
+.topbtn > .tbi { width: 17px; height: 17px; flex: none; vertical-align: -3px; }
+/* 桌面端不显示「更多」按钮：操作按钮直接平铺在顶栏。
+   写成 `.btn.more-btn`(0,2,0) 而不是 `.more-btn`(0,1,0) —— 同一份样式表里
+   后面还有一条 `.btn{display:inline-block}`，同优先级下后写的赢，光写
+   `.more-btn` 会被它盖掉，桌面上就冒出个多余的「…」（实测踩到）。 */
+.btn.more-btn { display: none; }
 .share-title { flex: 1; font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 主布局 */
 .layout { flex: 1; display: flex; overflow: hidden; position: relative; }
 .map { flex: 1; min-width: 0; position: relative; }
 .panel { width: 360px; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; position: relative; }
+
+/* 「面板铺满整个窗口」：面板 fixed 铺满，外框里的地图/控制栏一起被盖住。
+   不用 display:none —— 那会触发高德 0×0 重置视野、地图位置全丢。
+   外层 .layout 直接 flex:none width:0，面板就不再受 flex 约束。 */
+.layout.panel-maximized { flex: none; width: 0; }
+/* left/top/right/bottom 逐个写，不用 inset 简写：老内核（微信内置/部分鸿蒙）
+   不认 inset，整条声明作废，面板就会停在「width:auto + 父级 width:0」的
+   187px 上 —— 看起来就是「点了一键铺满，面板反而变窄了」。
+   width/height 也必须显式写死，否则 fixed 元素在 width:auto 下仍按内容收缩。 */
+.panel.panel-maximized {
+  position: fixed; left: 0; top: 0; right: 0; bottom: 0;
+  width: 100vw; height: 100vh; z-index: 180;
+  border-left: none;
+  box-shadow: 0 0 0 100vmax rgba(15, 23, 42, .18);
+}
+@media (max-width: 768px) {
+  /* 手机端面板本来就在底部，这个按钮不出现，规则也不该生效 */
+  .layout.panel-maximized { flex: 1; width: auto; }
+  .panel.panel-maximized { position: static; inset: auto; width: 100%; box-shadow: none; }
+}
 
 /* 面板收起/展开（移动端地图最大化） */
 .panel-toggle {
@@ -202,6 +240,49 @@ body {
 /* 收起按钮有两处：手机端在面板顶部的拖拽手柄行里（见移动端媒体查询），
    宽屏端手柄不显示，仍留在 tab 行。两者各自只在对应断点出现。 */
 .wide-only { display: inline-flex; }
+
+/* 宽屏面板右上角那一簇按钮：铺满 / 收起 */
+.panel-ops {
+  margin-left: auto; flex: none;
+  display: inline-flex; align-items: center; gap: 2px;
+}
+.panel-ops .panel-op { margin-left: 0; padding: 0 9px; }
+.panel-ops .panel-op svg { width: 17px; height: 17px; }
+
+/* 收起状态下面板右边缘的「展开」竖条：收起按钮原本就在右上角，展开也回到那儿。
+   热区宽 20px（好点），视觉上只有 5px 一条，不抢地图。 */
+.panel-edge {
+  position: absolute; right: 0; top: 0; height: 58vh; width: 20px;
+  z-index: 130; cursor: pointer;
+  display: flex; align-items: center; justify-content: flex-end;
+  -webkit-tap-highlight-color: transparent;
+  /* 竖条自己不该拦指针：热区要留给面板重新变宽那条边，只让里面的按钮吃点击 */
+  touch-action: none;
+}
+.panel-edge.hidden { display: none; }
+.panel-edge::before {
+  content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 5px;
+  background: var(--panel); border: 1px solid var(--border); border-right: none;
+  border-radius: 8px 0 0 8px;
+  transition: width .18s ease;
+}
+.panel-edge:hover::before { width: 8px; }
+.panel-edge .panel-edge-btn {
+  position: relative; z-index: 1;
+  /* 它带着 .panel-toggle 类（为了一样的图标样式），但绝不能继承那条规则里的
+     margin-left:auto 和 flex:0 0 auto —— 那会把按钮推出视口左边，整条竖条
+     只剩一个点不到的空壳。这里全部显式覆盖回来。 */
+  margin: 0 auto 0 0; padding: 0; flex: none; font-size: inherit;
+  width: 34px; height: 40px; border-radius: 10px 0 0 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel); border: 1px solid var(--border); border-right: none;
+  color: var(--muted); cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.10);
+  margin-right: 2px;
+}
+.panel-edge .panel-edge-btn svg { width: 16px; height: 16px; }
+.panel-edge .panel-edge-btn:hover { color: var(--primary); }
+.panel-edge:not(.hidden) { animation: panel-fab-pop .26s cubic-bezier(.22, .61, .36, 1); }
 .map-fab {
   position: absolute; right: 12px; bottom: 12px; z-index: 120;
   padding: 9px 16px; border-radius: 20px; border: 1px solid var(--border);
@@ -330,6 +411,31 @@ body.map-fullscreen-on { overflow: hidden; }
 
 /* 面板拖拽手柄（仅移动端生效）：地图与面板之间的分隔条，可上下拖动调整面板高度 */
 .panel-resizer { display: none; }
+
+/* 宽屏：右侧栏宽度可拖（16px 热区，骑在面板左边框上），双击手柄 = 一键铺满 / 还原。
+   最少 280px（再窄照片墙就挤成一条了）；上限交给 JS 按视口算到 92vw，
+   拖到底就自动落成「铺满」那一档，和顶栏按钮等价。 */
+.panel-resizer-wide { display: none; }
+
+@media (min-width: 769px) {
+  .panel-resizer-wide {
+    display: flex; align-items: center; justify-content: center;
+    flex: none; width: 16px; margin-left: -8px; margin-right: -8px;
+    cursor: col-resize; z-index: 121; position: relative;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+    background: none; border: none; padding: 0;
+  }
+  .panel-resizer-wide::before {
+    content: ''; width: 2px; height: 100%; background: transparent;
+    transition: background .15s ease;
+  }
+  .panel-resizer-wide:hover::before,
+  .panel-resizer-wide.dragging::before { background: var(--primary); }
+  /* 拖拽时别让选区和光标乱跳 */
+  body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user-select: none !important; }
+  /* 铺满态下手柄没意义，藏掉 */
+  .layout.panel-maximized .panel-resizer-wide { display: none; }
+}
 
 /* 标签页 */
 .tabs { display: flex; border-bottom: 1px solid var(--border); position: relative; }
@@ -553,21 +659,25 @@ body.map-fullscreen-on { overflow: hidden; }
 .marker-label {
   position: absolute; left: 50%; top: 32px;
   transform: translateX(-50%);
-  display: flex; align-items: center; gap: 3px;
   white-space: nowrap;
   pointer-events: none;
-}
-/* 地名和海拔各自一个小胶囊，而不是共用一个底。
-   这样任意一个被藏起来时（低缩放收地名、海拔还没查回来），剩下的那个照样好看，
-   也不会留下一个空的圆角块——用 :has() 判空在老内核（微信 webview）上不生效。 */
-.marker-name, .marker-elev {
+  /* 地名和海拔合成一个胶囊、上下两行 —— 原来是并排两个胶囊，
+     一排开就有 100+px 宽，点密的地方（然乌/八宿那种）会互相压住。
+     竖排之后宽度只看最长的那个名字，横向省掉一半。
+     字号/颜色/底色整体放在这一层，两个 span 不再各自带底，
+     所以任何一行空着（海拔还没查回来）都不会留下半个空心胶囊。 */
+  display: inline-flex; flex-direction: column; align-items: center; gap: 0;
   padding: 1px 6px; border-radius: 9px;
   background: rgba(28, 32, 38, .72); color: #fff;
-  font-size: 10px; line-height: 1.6; font-weight: 600;
+  font-size: 10px; line-height: 1.5; font-weight: 600;
   forced-color-adjust: none;
 }
+.marker-name, .marker-elev {
+  background: none; padding: 0; border-radius: 0;
+  color: inherit; font-size: inherit; line-height: inherit; font-weight: inherit;
+}
 .marker-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
-.marker-elev { font-variant-numeric: tabular-nums; }
+.marker-elev { font-variant-numeric: tabular-nums; opacity: .82; }
 .marker-elev:empty { display: none; }                    /* 还没查到海拔就不占位 */
 /* 缩得太小时只收海拔，地名一直留着 —— 缩到全国/洲际视野时，地名正是唯一能说明
    「这条线经过哪儿」的东西，连它一起藏就只剩一条光秃秃的线了。 */
@@ -877,6 +987,8 @@ body.map-fullscreen-on { overflow: hidden; }
     display: flex; align-items: center;
     font-size: 16px;
   }
+  /* 宽屏那条竖条在手机端不出现（.mobile-only 只管 ☰ 按钮） */
+  .panel-edge { display: none !important; }
   .panel-resizer::before {
     content: ''; width: 44px; height: 4px; border-radius: 2px;
     background: var(--border); opacity: .9;
@@ -888,7 +1000,9 @@ body.map-fullscreen-on { overflow: hidden; }
 
   /* 相册的 － / ＋ 缩放按钮在手机上没必要：双指捏合就能缩放，按钮只是占地方。
      元素保留在 DOM 里（JS 里 syncPhotoToolbar 还会读写它们的 disabled），只是不显示。 */
+  /* 手机上这个位置腾出来给 PC 的滚轮缩放提示（见 .photo-hint） */
   #btn-photo-zoom-out, #btn-photo-zoom-in { display: none; }
+  .photo-hint { display: none; }
 
   /* 顶栏：仅保留品牌 + 行程选择 + 「更多」菜单，其余操作按钮收纳进底部菜单 */
   .topbar { gap: 8px; padding: 8px 10px; overflow: hidden; }
@@ -897,12 +1011,15 @@ body.map-fullscreen-on { overflow: hidden; }
   .trip-select { display: none; }
   .trip-nav { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
   .topbtn { display: none; }            /* 收纳所有顶栏操作按钮 */
-  .more-btn {
+  /* 手机端唯一露出来的顶栏按钮：固定 38×38 的方形，图标居中。
+     font-size/line-height 是给以前的 `⋯` 字形撑高度用的，换成 SVG 之后
+     只会把 svg 顶偏，去掉。 */
+  .btn.more-btn {
     display: inline-flex; align-items: center; justify-content: center;
     flex-shrink: 0; width: 38px; height: 38px; padding: 0;
-    font-size: 20px; font-weight: 700; line-height: 1;
     border-radius: 9px;
   }
+  .more-btn .tbi { width: 20px; height: 20px; vertical-align: 0; }
 
   /* 表单双列字段在窄屏改为纵向堆叠，避免日期输入框溢出 */
   .field-row { flex-direction: column; gap: 0; }
@@ -995,6 +1112,48 @@ body.map-fullscreen-on { overflow: hidden; }
   .more-sheet-item .lbl { font-size: 10px; }
   .more-sheet-item .ico { width: 42px; height: 42px; }
   .more-sheet-item .ico svg { width: 19px; height: 19px; }
+}
+
+/* ---------- PC：同一个「更多」菜单，改成从按钮下面弹出来的下拉 ----------
+   移动端那个底部抽屉在桌面上是很怪的：`...` 在右上角、菜单却从屏幕**底部**
+   升起来，视线要横跨整个屏幕，而且那本来就是触屏的交互范式。
+   这里**复用同一份 DOM**（.more-sheet 和它的条目样式原样不动），只换外层
+   容器的定位和进入动画：mask 改成贴右上角对齐、背景透明（桌面不需要压暗
+   整页），sheet 变成贴在按钮下沿的浮层，宫格改成 1 列文字菜单 —— 这是桌面
+   下拉菜单的通行形态，一列文字比 4 列图标更好扫。
+   不新增第二套菜单 HTML：条目、图标、点击逻辑只有一份，改一处两边都变。 */
+@media (min-width: 769px) {
+  .more-sheet-mask {
+    background: transparent;
+    align-items: flex-start; justify-content: flex-end;
+    padding: 56px 14px 0 0;   /* 让浮层从顶栏下沿探出来 */
+  }
+  .more-sheet {
+    width: 220px; max-height: calc(100vh - 80px);
+    border-radius: 12px; padding: 6px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08);
+    animation: menuDown .16s ease;
+  }
+  @keyframes menuDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  /* 下拉里没有「抓手」—— 那是底部抽屉的提示，出现在浮层顶部很突兀 */
+  .more-sheet-handle { display: none; }
+  .more-sheet-title { padding: 6px 8px 4px; }
+  .more-sheet-grid { grid-template-columns: 1fr; gap: 1px; padding: 2px 0; }
+  .more-sheet-item {
+    flex-direction: row; justify-content: flex-start; gap: 10px;
+    padding: 8px 10px; border-radius: 8px; text-align: left;
+  }
+  .more-sheet-item:hover { background: #f3f4f6; }
+  /* 圆底图标在 1 列菜单里是多余的装饰，收成纯线条 */
+  .more-sheet-item .ico {
+    width: 18px; height: 18px; border-radius: 0;
+    background: transparent; color: var(--muted);
+  }
+  .more-sheet-item .ico svg { width: 18px; height: 18px; }
+  .more-sheet-item .lbl { font-size: 13.5px; text-align: left; }
+  .more-sheet-item:hover .ico { color: var(--text); }
+  .more-sheet-item.danger .ico { background: transparent; }
+  .more-sheet-ver { text-align: left; padding: 6px 10px 2px; }
 }
 
 /* ---------- 行程状态：分段按钮 ---------- */
@@ -1240,6 +1399,42 @@ body.map-fullscreen-on { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .auth-tab::after { transition: none; } }
 .auth-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: 6px; }
 
+/* ---------- 行程详情弹窗：PC 排成左右两栏 ----------
+   手机上它是根竖长条（左栏汇总在上、右栏各点明细在下），一屏放不下的往下滚 ——
+   窄屏没有别的选择。桌面上再这么排就没道理了：420px 宽、内容一长还得上下滚，
+   而屏幕左右两侧空着大片。
+   这里把 .stat-col 在宽屏下变成两列 grid：左栏「行程信息 + 汇总」、右栏
+   「各点明细」，弹窗加宽到能并排放下。两栏各自撑高，谁长谁短一眼看得出。
+   手机端 .stat-col 是 display:contents（见上），包装层不生成盒子，
+   排版跟改造前逐像素一致，所以这段只写在 min-width 里。 */
+/* 手机上两栏包装层是透明的：内容照旧是一根竖流，跟加包装层之前逐像素一致。
+   这条**必须写在下面那个 @media 之前**：宽屏那段要把它翻成 display:block，
+   两处同优先级，靠的就是"后写的赢"。写反了两栏排法会被这条整个盖掉。 */
+.stat-col { display: contents; }
+
+@media (min-width: 900px) {
+  #stats-modal .modal-box { max-width: 860px; padding: 24px 26px; }
+  #stats-modal .modal-box h2 { font-size: 20px; margin-bottom: 18px; }
+  /* 两栏不等宽：左栏是"标签—值"的短行，右栏是"序号 名称 — 日期·里程"的长行 */
+  .stat-body {
+    max-height: 68vh;
+    display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 0 32px; align-items: start;
+  }
+  /* 每栏自己滚，不用整块滚 —— 滚动位置互不影响。
+     **必须显式写 display:block**：基础样式里 `.stat-col{display:contents}`
+     在文件更后面，同优先级下后写的赢，光写 max-height 是盖不住的
+     —— 那样包装层仍是 contents，两栏的边框和独立滚动都不会生效。 */
+  .stat-col { display: block; max-height: 68vh; overflow-y: auto; }
+  /* 右栏顶上的「各点明细」标题必须跟左栏的「行程信息」在同一水平线上，
+     否则两栏的行会互相错开半格。两栏的第一个 .stat-sub 统一上边距。 */
+  .stat-col > .stat-sub:first-child { margin-top: 0; }
+  /* 两栏之间拉一条分隔线，边界更清楚；只加在右栏左侧 */
+  .stat-col + .stat-col { border-left: 1px solid var(--border); padding-left: 32px; }
+  .stat-row { padding: 9px 2px; }
+  .stat-point b { white-space: nowrap; }
+}
+
 /* ---------- 两个面板等高 ---------- */
 /* 切「登录 / 注册」时对话框不能跳大小 —— 登录有 2 个输入框 + 体验账号按钮，
    注册有 3 个输入框，高度本来就不同，直接切显隐会让整个弹窗一抖。
@@ -1311,6 +1506,7 @@ body.map-fullscreen-on { overflow: hidden; }
 .stat-desc { align-items: flex-start; }
 .stat-desc span { flex-shrink: 0; }
 .stat-desc b { white-space: normal; text-align: right; max-width: 72%; line-height: 1.5; }
+
 
 /* 地图序号点 */
 .marker-dot {
@@ -2241,8 +2437,11 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
   padding: 8px 10px; border-bottom: 1px solid var(--border);
   background: var(--panel); position: sticky; top: 0; z-index: 2;
 }
-.photo-tools { margin-left: auto; display: flex; gap: 6px; }
+.photo-tools { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 .photo-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+/* PC：面板上滚轮直接缩放照片墙（跟 ＋/－ 等效），这里把操作提示摆出来。
+   手机上捏合就够用了，按钮和提示都不出现（见 @media 里的 display:none）。 */
+.photo-hint { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 
 /* 分段控件：全部 / 照片 / 视频 */
 .seg {

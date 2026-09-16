@@ -586,6 +586,20 @@ async function loadPoints() {
   renderMap(points);
   restoreUiState(points);
   fillElevations(currentTripId);   // 异步补海拔，回来了只改 marker 上的小标
+
+  // 相册也得跟着换。相册是在切到「相册」tab 时才惰性加载的（见 switchTab），
+  // 于是"停在相册 tab 上直接切行程"就露馅了：currentTripId 已经变了，可
+  // photoItems 还是上一个行程的、格子也没重画，右边面板纹丝不动地停在旧行程上。
+  //
+  // 这里**只在相册正在被看的时候**重取：media 接口每行程一次请求，没在看的人
+  // 不该为它付流量；没在看的场景由 switchTab 的惰性加载兜住，不会漏。
+  // 先清 photoItems 再拉：拉到一半失败时留下的是"空相册 + 报错"，
+  // 而不是"新行程的标题下面顶着上个行程的照片"。
+  if (currentTab === 'albums') {
+    photoItems = [];
+    renderPhotoGrid();
+    await loadAlbums();
+  }
 }
 
 // 计算行程总里程（米）：真实路线就绪优先，规划失败的段用直线距离兜底
@@ -671,10 +685,15 @@ function openStatsModal() {
     `<div class="stat-row stat-point"><span>${p.no}. ${esc(p.name)}${p.waypoint ? '（途经）' : ''}</span><b>${esc(p.date)}${p.distFromPrev ? ' · 距上点 ' + esc(p.distFromPrev) : ''}</b></div>`
   ).join('');
   $('#stats-modal-title').textContent = d.name || '行程统计';
+  // 左右两栏包一层，是为了让 PC 上能排成"左汇总 / 右明细"。
+  // 手机上这两栏（见 CSS 的 @media）display:contents，包装层不产生盒子，
+  // 内容仍是原来那根竖流 —— 一份 DOM 两种排法，不用按设备写两套结构。
+  const summaryCol = tripHtml + `<div class="stat-sub">汇总</div>` + rowsHtml;
+  const pointsCol = d.points.length
+    ? `<div class="stat-sub">各点明细（${d.points.length}）</div>` + ptsHtml : '';
   $('#stats-modal-body').innerHTML =
-    tripHtml +
-    `<div class="stat-sub">汇总</div>` + rowsHtml +
-    (d.points.length ? `<div class="stat-sub">各点明细（${d.points.length}）</div>` + ptsHtml : '');
+    `<div class="stat-col">${summaryCol}</div>`
+    + (pointsCol ? `<div class="stat-col">${pointsCol}</div>` : '');
   $('#stats-modal').classList.remove('hidden');
 }
 $('#top-stats').onclick = openStatsModal;
@@ -4264,9 +4283,30 @@ albumsView.addEventListener('touchmove', e => {
 albumsView.addEventListener('touchend', () => { pinchStart = 0; }, { passive: true });
 albumsView.addEventListener('touchcancel', () => { pinchStart = 0; }, { passive: true });
 
-// Ctrl/⌘ + 滚轮缩放（桌面），与浏览器自身缩放区分开
+// ---------- 滚轮缩放（桌面） ----------
+// PC 上把滚轮直接接到缩放上，跟点 ＋ / － 完全等效。
+//
+// 代价是**牺牲了相册里的纵向滚动**：一屏放不下时，缩放手感是"滚不动"。
+// 这个取舍是想清楚才做的 —— 相册是一堵图墙，找图靠扫视不靠滚动，
+// 而缩放是这屏最高频的动作（还专门给它配了 ＋/－ 和捏合两条路）。
+// 手机上不存在这个矛盾：捏合归缩放，单指滚动照常，所以下面的判据**只管
+// (hover:hover) and (pointer:fine)**，触屏设备一个字都不改。
+const wheelZoomMedia = window.matchMedia
+  ? window.matchMedia('(hover:hover) and (pointer:fine)')
+  : null;
 albumsView.addEventListener('wheel', e => {
-  if (!e.ctrlKey && !e.metaKey) return;
+  // Ctrl/⌘ + 滚轮是浏览器自己的缩放，让给浏览器，不抢
+  if (e.ctrlKey || e.metaKey) return;
+  // 触屏（含带鼠标的触屏本按它的当前模式）不动
+  if (wheelZoomMedia && !wheelZoomMedia.matches) return;
+  // 工具条吸顶在网格上方，在那里滚轮不该改缩放 —— 用户多半是想滚页面
+  if (e.target.closest && e.target.closest('.photo-toolbar')) return;
+  // 横向滚轮（老鼠标的拨轮）不当缩放用，认得出来就放过
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  // 已经缩到两头了：别再 preventDefault，把滚动还给页面
+  const atMin = photoView.zoom <= 0 && e.deltaY > 0;
+  const atMax = photoView.zoom >= PHOTO_COLS.length - 1 && e.deltaY < 0;
+  if (atMin || atMax) return;
   e.preventDefault();
   setPhotoZoom(e.deltaY < 0 ? 1 : -1);
 }, { passive: false });
@@ -5143,14 +5183,156 @@ function restoredMapHeight(full) {
 }
 // 把最终状态一次性落到 DOM 上（不含动画）
 function applyPanelCollapsed(collapsed) {
+  const wasCollapsed = $('.panel').classList.contains('collapsed');
   $('.panel').classList.toggle('collapsed', collapsed);
   $('.layout').classList.toggle('panel-collapsed', collapsed);
+  // 手机端的 ☰（右下角）和宽屏右边缘那条「展开」竖条，各管各的断点
   $('#btn-panel-open').classList.toggle('hidden', !collapsed);
+  const edge = document.getElementById('panel-edge');
+  if (edge) edge.classList.toggle('hidden', !collapsed);
+  // 收起时面板既然是 display:none，占位宽度没必要再随视口漂着，回默认值即可
+  if (collapsed && !isMobileLayout()) applyPanelWidth(panelDefaultWidth());
   if (!collapsed) setTimeout(syncTabIndicator, 20);
+  else if (collapsed !== wasCollapsed) syncTabIndicator();
   syncAddPointBar();
   if (map && typeof map.resize === "function") setTimeout(() => map.resize(), 80);
   try { sessionStorage.setItem('tm_panel_collapsed', collapsed ? '1' : '0'); } catch (e) {}
 }
+
+// ---------- 宽屏：面板宽度拖拽 / 一键铺满 ----------
+// 手机端这套全部不生效（宽度是 100%，上限也是 0），入口都藏在 CSS 的断点里。
+const PANEL_WIDTH_KEY = 'tm_panel_width';
+const PANEL_WIDTH_PREV_KEY = 'tm_panel_width_prev';
+const PANEL_MIN_W = 280;
+const panelWide = () => !isMobileLayout();
+// 拖拽上限跟着视口走：窗口越宽能拖得越宽，打满就是铺满整个窗口
+function panelMaxWidth() { return Math.max(PANEL_MIN_W, Math.round(window.innerWidth * 0.92)); }
+function panelStoredWidth(key) {
+  try {
+    const n = Number(String(localStorage.getItem(key) || '').replace('px', ''));
+    return (n > 0) ? n : 0;
+  } catch (e) { return 0; }
+}
+function panelDefaultWidth() { return panelStoredWidth(PANEL_WIDTH_KEY) || 360; }
+const panelIsMaxed = () => $('.layout').classList.contains('panel-maximized');
+
+function applyPanelWidth(w, persist) {
+  const panel = $('.panel'), layout = $('.layout');
+  if (!panel || !layout) return;
+  const maxW = panelMaxWidth();
+  const width = Math.max(PANEL_MIN_W, Math.min(maxW, Math.round(w)));
+  // 普通模式下才用手动宽度；铺满模式由 .panel-maximized 的固定样式接管
+  if (!panelIsMaxed()) panel.style.width = panelWide() ? width + 'px' : '';
+  // 拖到 95% 以上就算铺满：底图和控制栏一起收掉，视觉上等价于一键铺满
+  const eff = panel.getBoundingClientRect().width || width;
+  if (persist !== false && !panelIsMaxed()) try { localStorage.setItem(PANEL_WIDTH_KEY, width + 'px'); } catch (e) {}
+  if (map && typeof map.resize === 'function') map.resize();
+  return width;
+}
+
+// 一键铺满 / 一键还原：记住铺满前那一档宽度，还原时回到"当前位置"
+function setPanelMaximized(on, widthBeforeDrag) {
+  const layout = $('.layout'), panel = $('.panel');
+  if (!layout || !panel) return;
+  const btn = document.getElementById('btn-panel-vis');
+  if (on) {
+    // 优先用「拖之前那一档」；点按钮进来时没有这个值，才回退到当前宽度
+    const cur = (widthBeforeDrag > 0) ? widthBeforeDrag : panel.getBoundingClientRect().width;
+    if (cur > 0) try { localStorage.setItem(PANEL_WIDTH_PREV_KEY, Math.round(cur) + 'px'); } catch (e) {}
+    layout.classList.add('panel-maximized');
+    panel.classList.add('panel-maximized');
+    panel.style.width = '';
+    try { localStorage.setItem('tm_panel_maximized', '1'); } catch (e) {}
+    if (btn) {
+      btn.title = '还原面板宽度'; btn.setAttribute('aria-label', '还原面板宽度');
+      btn.classList.add('active');
+    }
+  } else {
+    layout.classList.remove('panel-maximized');
+    panel.classList.remove('panel-maximized');
+    try { localStorage.setItem('tm_panel_maximized', '0'); } catch (e) {}
+    const back = panelStoredWidth(PANEL_WIDTH_PREV_KEY) || panelDefaultWidth();
+    panel.style.width = panelWide() ? back + 'px' : '';
+    if (btn) {
+      btn.title = '面板铺满整个窗口'; btn.setAttribute('aria-label', '面板铺满整个窗口');
+      btn.classList.remove('active');
+    }
+    try { localStorage.setItem(PANEL_WIDTH_KEY, back + 'px'); } catch (e) {}
+  }
+  syncTabIndicator();
+  if (map && typeof map.resize === 'function') {
+    map.resize();
+    [80, 220].forEach(t => setTimeout(() => { try { map.resize(); } catch (e) {} }, t));
+  }
+}
+function togglePanelMaximized() { setPanelMaximized(!panelIsMaxed()); }
+
+(function initPanelWidthResizer() {
+  const resizer = document.createElement('div');
+  resizer.className = 'panel-resizer-wide';
+  resizer.setAttribute('role', 'separator');
+  resizer.setAttribute('aria-orientation', 'vertical');
+  resizer.setAttribute('title', '拖拽调整面板宽度（双击=铺满/还原）');
+  resizer.setAttribute('aria-label', '拖拽调整面板宽度');
+  const panel = $('.panel');
+  if (!panel) return;
+  panel.parentNode.insertBefore(resizer, panel);
+
+  let moved = false;
+
+  function startDrag(clientX) {
+    const rect = panel.getBoundingClientRect();
+    moved = false;
+    // 记下起手时的宽度：如果这一拖最后落成「铺满」，还原要回到的是**拖之前**
+    // 那一档，而不是拖到一半的临时宽度（否则还原会停在一个几乎铺满的宽度上）。
+    const widthBeforeDrag = Math.round(rect.width);
+    // 拖拽过程中先退出铺满，否则面板是 fixed 定位，宽度算不明白
+    if (panelIsMaxed()) setPanelMaximized(false);
+    const startW = rect.width, startX = clientX;
+    resizer.classList.add('dragging');
+    document.body.classList.add('panel-resizing');
+    const onMove = (ev) => {
+      const x = (ev.touches && ev.touches[0]) ? ev.touches[0].clientX : ev.clientX;
+      if (Math.abs(x - startX) > 3) moved = true;
+      if (ev.cancelable) ev.preventDefault();
+      applyPanelWidth(startW + (startX - x));    // 往左拖 = 变宽
+    };
+    const onUp = () => {
+      resizer.classList.remove('dragging');
+      document.body.classList.remove('panel-resizing');
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onUp);
+      // 松手时若已经铺到几乎整屏，直接落成「一键铺满」这一档，别停在 92% 这种半吊子
+      if (moved && panelWide() && panel.getBoundingClientRect().width >= panelMaxWidth() - 8) {
+        setPanelMaximized(true, widthBeforeDrag);
+      } else if (moved) {
+        applyPanelWidth(panel.getBoundingClientRect().width);
+      }
+    };
+    document.addEventListener('pointermove', onMove, { passive: false });
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+    document.addEventListener('touchcancel', onUp);
+  }
+
+  resizer.addEventListener('pointerdown', (e) => {
+    if (!panelWide()) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.isPrimary === false) return;
+    startDrag(e.clientX);
+  });
+  resizer.addEventListener('touchstart', (e) => {
+    if (!panelWide() || !e.touches || e.touches.length !== 1) return;
+    startDrag(e.touches[0].clientX);
+  }, { passive: true });
+  resizer.addEventListener('dblclick', () => { if (panelWide()) togglePanelMaximized(); });
+  resizer.addEventListener('contextmenu', (e) => e.preventDefault());
+})();
 
 function setPanelCollapsed(collapsed, animate) {
   const layout = $('.layout'), panel = $('.panel');
@@ -5231,11 +5413,58 @@ function setPanelCollapsed(collapsed, animate) {
 }
 
 // 收起按钮有两个（手机端在手柄行、宽屏端在 tab 行），统一按类绑定
-document.querySelectorAll('.panel-toggle').forEach(b =>
+// **必须排除 #btn-panel-vis**：它带着 .panel-toggle 只为共用图标样式，
+// 真实行为是「铺满/还原」。不排除的话点铺满会先被绑成收起，面板宽度归零、
+// 铺满态直接错乱。（注意：不能改成排除整个 .panel-op，那会把「收起」本身也排掉。）
+document.querySelectorAll('.panel-toggle:not(#btn-panel-vis)').forEach(b =>
   b.addEventListener('click', () => setPanelCollapsed(true)));
 $('#btn-panel-open').addEventListener('click', () => setPanelCollapsed(false));
+// 宽屏：右边缘那条竖条（和收起按钮同一个位置）点一下把面板拉回来
+(function initPanelEdge() {
+  const edge = document.getElementById('panel-edge');
+  if (!edge) return;
+  const open = () => { if (!isMobileLayout()) setPanelCollapsed(false); };
+  edge.addEventListener('click', open);
+  const btn = edge.querySelector('.panel-edge-btn');
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); open(); });
+})();
+// 一键铺满 / 一键还原
+(function initPanelVisBtn() {
+  const btn = document.getElementById('btn-panel-vis');
+  if (!btn) return;
+  btn.addEventListener('click', () => { if (panelWide()) togglePanelMaximized(); });
+})();
+window.addEventListener('resize', () => {
+  // 窗口被缩成手机宽度时，把铺满/极宽这些宽屏专属状态清干净，免得切回来一团乱
+  if (panelWide()) { applyPanelWidth(panelIsMaxed() ? panelMaxWidth() : panelDefaultWidth()); return; }
+  if (panelIsMaxed()) setPanelMaximized(false);
+});
+
+// 宽度恢复单独一步、放在 initMap() 之后：地图已经按「面板占位前的完整区域」
+// 建好实例和 canvas，这时再收紧/撑开面板，只要 resize 一下就能正确重排。
+function restorePanelWidth() {
+  if (!panelWide()) return;
+  const panel = $('.panel');
+  if (!panel || panelIsMaxed()) return;
+  const w = panelDefaultWidth();
+  panel.style.width = w + 'px';
+  applyPanelWidth(w);
+  if (map && typeof map.resize === 'function') {
+    map.resize();
+    [60, 200].forEach(t => setTimeout(() => { try { map.resize(); } catch (e) {} }, t));
+  }
+}
+
 function restorePanelState() {
   try {
+    // 这里**只恢复折叠状态，不恢复宽度**。
+    // 宽度必须等 initMap() 跑完（地图已经按完整区域建好 canvas）之后再套上去。
+    // 否则顺序是反的：先给面板撑到 1300px，地图容器只剩 140px，
+    // 高德按 140px 建实例 —— 之后 map.resize() 也叫不回来，页面上一张瓦片都没有，
+    // 表现就是「PC 端整个地图看不见」。折叠状态没有这个问题（收起只是 flex 让位）。
+    if (panelWide() && panelStoredWidth(PANEL_WIDTH_PREV_KEY) && localStorage.getItem('tm_panel_maximized') === '1') {
+      setPanelMaximized(true);
+    }
     // 首屏恢复不做动画：页面刚出来就滑一下反而像卡了一下
     if (sessionStorage.getItem('tm_panel_collapsed') === '1') setPanelCollapsed(true, false);
   } catch (e) {}
@@ -5447,7 +5676,7 @@ $('#btn-fit-view').addEventListener('click', fitWholeTrip);
   }
   // 注意：start 阶段不 preventDefault（鸿蒙/部分定制内核会因此抑制后续 move 事件派发）
   // 起手点落在收起按钮上时不启动拖拽，也不触发「单击手柄=切换高度」
-  const onToggle = (e) => !!(e.target && e.target.closest && e.target.closest('.panel-toggle'));
+  const onToggle = (e) => !!(e.target && e.target.closest && e.target.closest('.panel-toggle:not(#btn-panel-vis)'));
   resizer.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (e.isPrimary === false) return;          // 双指的第二根手指，不当成拖拽
@@ -6500,7 +6729,9 @@ function closeTopLayer() {
 // ---------- 启动 ----------
 initMap();
 initLayerControls();
+// 顺序要紧：先 initMap() 建好地图，再套宽度（见 restorePanelWidth 的注释）
 restorePanelState();
+restorePanelWidth();
 loadPlacesDict();
 $('#points-view').addEventListener('scroll', savePointListScroll, { passive: true });
 positionViews(currentTab);   // 首屏先把三页在轨道上摆好（不带过渡）
