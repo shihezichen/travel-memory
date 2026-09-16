@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""首页轮播的图片加工：一张原图 -> PC(16:9) + 手机(4:3) 两个版本。
+"""首页轮播的图片加工：一张原图 -> PC / 手机 两个尺寸的 WebP。
 
-为什么非要出两个版本
+原则：**只缩放，绝不裁切。**
 --------------------
-首页轮播的容器比例是**跟着断点变的**：
-  - 桌面 / 平板宽屏（>=641px）：.stage 是 16/9
-  - 手机（<=640px）：.stage 被压成 4/3
+轮播容器的比例是跟着断点变的（桌面 16/9、手机 4/3），原图的比例跟它俩都对不上。
+以前用 object-fit:cover 填容器，多出来的部分就被裁掉了 —— 原图比例和容器差得越远
+切得越狠，P3（比例 1.91）在手机 4:3 上左右各切 15%，照片墙两头整列直接没了。
 
-同一个 img 用 object-fit:cover 填这两种容器，比例不符时必然要裁掉一边：
-一张 16:9 的图进 4:3 的容器，左右各切掉 25%（图上的人、二维码、文字标签直接没）；
-反过来 4:3 进 16:9，上下各切 25%（标题、导航栏被切掉）。
-以前手机上"只能看到图片上半部分"就是这么来的。
+现在页面上改成 object-fit:contain：图完整放进去，比例不符的地方留边，
+留边用容器同色，看起来是画面自带留白。既然不裁了，这边就只需要把像素缩到位。
 
-所以每屏都出两份，HTML 里用 .only-pc / .only-m 按断点各显示一张。
+各屏原图比例和留边量（留边是比例的差，不是这张图的毛病）：
+    P2 1.610 -> PC 左右各留 4.7% / 手机 上下各留 8.6%
+    P3 1.907 -> PC 上下各留 3.4% / 手机 上下各留 15.1%
+    P4 1.461 -> PC 左右各留 8.9% / 手机 上下各留 4.3%
+
+两档尺寸是给不同屏幕的像素密度用的，不是为了适配比例 ——
+比例现在由 contain 自己处理，两张图内容完全一样。
 
 用法
 ----
@@ -31,45 +35,42 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC = os.path.join(ROOT, "static")
 OUT = os.path.join(STATIC, "promo")
 
-# (原图, 输出的基准名, 裁切时纵向锚点)
-# 锚点 0=贴顶 0.5=居中 1=贴底。截图类的图（顶部有工具栏）居中就好；
-# 纯内容的照片墙想让最上面那排完整，可以调成偏上。
+# (原图, 输出的基准名)
 JOBS = [
-    ("P2.png", "slide-route", 0.5),   # 第 2 屏：地图轨迹
-    ("P3.png", "slide-wall", 0.5),    # 第 3 屏：照片墙
-    ("P4.png", "slide-share", 0.5),   # 第 4 屏：分享页
+    ("P2.png", "slide-route"),   # 第 2 屏：地图轨迹
+    ("P3.png", "slide-wall"),    # 第 3 屏：照片墙
+    ("P4.png", "slide-share"),   # 第 4 屏：分享页
 ]
 
 # (后缀, 宽, 高)。跟 landing.html 里 .stage 的断点严格对应，改一边要改两边。
+# (后缀, 缩放后长边像素)。不是容器尺寸 —— 比例交给页面上的 contain 处理，
+# 这里只管给不同像素密度的屏幕备好够用的分辨率。
 VARIANTS = [
-    ("pc", 1920, 1080),   # 16:9，桌面
-    ("m", 1000, 750),     # 4:3，手机
+    ("pc", 1920),   # 桌面宽屏
+    ("m", 1000),    # 手机（2x/3x 屏也够）
 ]
 
 QUALITY = 82
 
 
-def cover(im, tw, th, ay=0.5):
-    """先按目标比例做一次"封面裁剪"再缩放。
+def fit(im, long_edge):
+    """等比缩放到长边 = long_edge，**不裁切**。
 
-    直接 resize 会把图拉变形；只交给浏览器 object-fit 又要多下一份大图。
-    在这里裁到位、缩到位，浏览器那边几乎不用再算。
+    这里刻意不裁：原图的比例和轮播容器的比例对不上，裁一刀必然丢内容
+    （P3 在手机上左右各切 15%，照片墙两头整列没了）。页面上用 object-fit:contain
+    完整显示，留边交给容器底色 —— 所以这边只需要把像素缩到位。
     """
     w, h = im.size
-    target = tw / th
-    if w / h > target:                    # 比目标更宽 -> 裁左右，居中
-        nw, nh = int(round(h * target)), h
-        x, y = int(round((w - nw) * 0.5)), 0
-    else:                                 # 比目标更高 -> 裁上下，按锚点
-        nw, nh = w, int(round(w / target))
-        x, y = 0, int(round((h - nh) * ay))
-    return im.crop((x, y, x + nw, y + nh)).resize((tw, th), Image.LANCZOS)
+    scale = long_edge / max(w, h)
+    if scale >= 1:                        # 本来就比目标小，别放大
+        return im
+    return im.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
     missing = False
-    for src, base, ay in JOBS:
+    for src, base in JOBS:
         path = os.path.join(STATIC, src)
         if not os.path.exists(path):
             print(f"缺图：{path}", file=sys.stderr)
@@ -77,11 +78,13 @@ def main():
             continue
         with Image.open(path) as raw:
             im = raw.convert("RGB")
-        for tag, tw, th in VARIANTS:
+        for tag, long_edge in VARIANTS:
+            out = fit(im, long_edge)
             dst = os.path.join(OUT, f"{base}-{tag}.webp")
-            cover(im, tw, th, ay).save(dst, "WEBP", quality=QUALITY, method=6)
+            out.save(dst, "WEBP", quality=QUALITY, method=6)
             print(f"{dst}  {os.path.getsize(dst) // 1024} KB  "
-                  f"({im.size[0]}x{im.size[1]} -> {tw}x{th})")
+                  f"({im.size[0]}x{im.size[1]} -> {out.size[0]}x{out.size[1]})"
+                  f"  比例 {out.size[0] / out.size[1]:.3f}（不裁切）")
     return 1 if missing else 0
 
 

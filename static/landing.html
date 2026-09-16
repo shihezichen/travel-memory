@@ -487,9 +487,22 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
    **比例必须跟着 .stage 走，不能写死 16/9。** 手机上 .stage 被压成 4/3，
    这里再写 16/9 会让图片比容器高，多出来的部分被 overflow:hidden 切掉 ——
    表现就是"只显示图片上半部分"。现在两边都用 16/9 / 4/3，各出一个版本的图。 */
-.shot-img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;
-  border-radius:4px;background:#0b0d12}
-.stage-shot{position:relative;width:100%;font-size:0}
+/* object-fit 用 contain 而不是 cover：cover 为了填满容器会把多出来的部分
+   **裁掉**，原图比例和容器差得越多切得越狠（P3 在手机上左右各切 15%，
+   照片墙两头整列没了）。这里要的是"完整显示"，宁可留边也不切。
+   留边的颜色用容器同色 #0b0d12，看起来是画面本身有留白，不是"没铺满"。
+
+   **宽高都要写死 100%**（跟 .stage-map 一个道理，见上面那条注释）：
+   img 是替换元素，只给 width:100% 的话高度会退回它自己的固有比例 ——
+   HTML 里 width/height 属性 + 图片固有比例会直接算出盒高，把 aspect-ratio
+   顶掉，盒子就比容器高（实测手机上图 621px vs 容器 280px），图片被顶出画面外。
+   写死 height:100% 让盒子等于容器，contain 再在盒子里居中留边。 */
+.shot-img{display:block;width:100%;height:100%;object-fit:contain;
+  object-position:center;border-radius:4px;background:#0b0d12}
+/* 盒子跟着容器走：.stage 是 16/9（手机 4/3），图片在里面 contain 居中。
+   高度必须显式给 —— img 是 height:100%，父级没有确定高度的话它退回 auto，
+   又变回图片自己的比例。 */
+.stage-shot{position:relative;width:100%;height:100%;font-size:0}
 .stage-shot::after{content:"";position:absolute;inset:0;pointer-events:none;
   border-radius:4px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),
     inset 0 0 90px rgba(4,6,10,.35)}
@@ -905,10 +918,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <div class="stage carousel-slide" data-slide="1" data-promo-open tabindex="0"
              role="button" aria-label="旅行轨迹：地图上把整条路线串成一条线，点开看演示">
           <div class="stage-shot">
-            <img class="shot-img only-pc" loading="lazy" width="1920" height="1080"
+            <img class="shot-img only-pc" loading="lazy" width="1920" height="1192"
                  src="/static/promo/slide-route-pc.webp"
                  alt="旅行记忆地图：滇藏线上 9 个落脚点按顺序连成一条轨迹，每段标着里程和国道编号">
-            <img class="shot-img only-m" loading="lazy" width="1000" height="750"
+            <img class="shot-img only-m" loading="lazy" width="1000" height="621"
                  src="/static/promo/slide-route-m.webp"
                  alt="旅行记忆地图：滇藏线轨迹与沿途落脚点">
           </div>
@@ -920,10 +933,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <div class="stage carousel-slide" data-slide="2" data-promo-open tabindex="0"
              role="button" aria-label="照片墙：整趟旅行的照片视频聚成一面墙，点开看演示">
           <div class="stage-shot">
-            <img class="shot-img only-pc" loading="lazy" width="1920" height="1080"
+            <img class="shot-img only-pc" loading="lazy" width="1920" height="1007"
                  src="/static/promo/slide-wall-pc.webp"
                  alt="旅行记忆相册页：整趟行程的照片墙，缩略图按时间排列并标出视频">
-            <img class="shot-img only-m" loading="lazy" width="1000" height="750"
+            <img class="shot-img only-m" loading="lazy" width="1000" height="524"
                  src="/static/promo/slide-wall-m.webp"
                  alt="旅行记忆相册页：按时间排列的照片墙">
           </div>
@@ -935,10 +948,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <div class="stage carousel-slide" data-slide="3" data-promo-open tabindex="0"
              role="button" aria-label="分享旅程：生成分享链接和二维码卡片，点开看演示">
           <div class="stage-shot">
-            <img class="shot-img only-pc" loading="lazy" width="1920" height="1080"
+            <img class="shot-img only-pc" loading="lazy" width="1455" height="996"
                  src="/static/promo/slide-share-pc.webp"
                  alt="旅行记忆分享页：左边设有效期和访问密码，右边是分享链接、二维码和行程缩略图">
-            <img class="shot-img only-m" loading="lazy" width="1000" height="750"
+            <img class="shot-img only-m" loading="lazy" width="1000" height="685"
                  src="/static/promo/slide-share-m.webp"
                  alt="旅行记忆分享页：分享设置与二维码卡片">
           </div>
