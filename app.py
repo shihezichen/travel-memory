@@ -6,6 +6,7 @@ import datetime
 import logging
 import base64
 import json
+import secrets
 import time
 import shutil
 import threading
@@ -212,8 +213,12 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     # 门禁（方案 A：访问口令）。未启用（无 gate_hash.txt）时跳过。
-    if GATE_HASH and request.cookies.get(GATE_COOKIE) != GATE_HASH:
-        return JSONResponse({"error": "gate_required"}, status_code=401)
+    # compare_digest 而非 !=：这里比的是口令哈希，同样不该给时序侧信道。
+    # 两边都是十六进制串，类型一致，不会踩 compare_digest 对非 ASCII str 抛错的坑。
+    if GATE_HASH:
+        gate = request.cookies.get(GATE_COOKIE) or ""
+        if not secrets.compare_digest(gate, GATE_HASH):
+            return JSONResponse({"error": "gate_required"}, status_code=401)
 
     token = request.cookies.get(COOKIE_NAME)
     # 中间件本身是 async 的，跑在事件循环线程上。get_session_user 是同步 SQLite
@@ -345,7 +350,8 @@ def _startup_resume_backfill():
 def gate_status(request: Request):
     if not GATE_HASH:
         return {"enabled": False}
-    if request.cookies.get(GATE_COOKIE) == GATE_HASH:
+    gate = request.cookies.get(GATE_COOKIE) or ""
+    if secrets.compare_digest(gate, GATE_HASH):
         return {"enabled": True, "ok": True}
     return JSONResponse({"error": "gate_required"}, status_code=401)
 
@@ -378,8 +384,11 @@ def api_login(request: Request,
               username: str = Form(""),
               password: str = Form(""),
               token: str = Form("")):
-    # 管理员令牌直登
-    if ADMIN_TOKEN and token and token == ADMIN_TOKEN:
+    # 管理员令牌直登。
+    # 用 compare_digest 而不是 ==：字符串比较会在第一个不同的字符上短路返回，
+    # 攻击者能靠响应时间的细微差别逐字节试出令牌。compare_digest 是定长的，
+    # 不给这条时序侧信道。（GATE_HASH 那个 cookie 比较是同一类问题，见 auth_middleware。）
+    if ADMIN_TOKEN and token and secrets.compare_digest(token, ADMIN_TOKEN):
         admin = db.get_or_create_admin()
         sess = db.create_session(admin["id"])
         resp = JSONResponse({"ok": True, "user": _public_user(admin)})

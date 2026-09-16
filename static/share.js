@@ -162,6 +162,77 @@ function shareInitMap() {
   map.on('zoomend', syncElevLabelsVisibility);
 }
 
+// ---------- 媒体签名过期后的自愈 ----------
+// 服务端返回的媒体 URL 是带 Expires 的临时签名（默认 2 小时，见 config.MEDIA_URL_TTL）。
+// 分享链接本身不过期（share token 的 expires_at 可以是 NULL），所以「发到群里过两周
+// 还有人点」这个场景是成立的 —— 但前提是那会儿页面拿到的是**新鲜签名**。
+//
+// 页面开着不动超过 TTL 之后再滚到下面的照片，或者手机从后台切回来，用的就是过期签名，
+// 表现是整片裂图。这里做一层自愈：
+//   - markSignaturesFresh()：每次成功拉到数据就记个时间戳
+//   - 图片 onerror 时，若签名可能已过期，重新拉一次分享数据换新签名，再重试这张图
+//
+// 节流是必须的：一个行程几十张图，签名过期后它们会**同时**报错，不节流就是几十个并发
+// 刷新请求打同一个后端。同一波里只让第一个真正去刷新，其余等它。
+const MEDIA_SIG_TTL_MS = 2 * 60 * 60 * 1000;   // 与后端 TRAVEL_MEDIA_URL_TTL 默认值一致
+const SIG_REFRESH_MARGIN_MS = 5 * 60 * 1000;   // 留 5 分钟余量，别卡在边界上
+let _sigFetchedAt = 0;
+let _sigRefreshing = null;                     // 刷新中的 Promise，用来合并并发
+
+function markSignaturesFresh() {
+  _sigFetchedAt = Date.now();
+}
+
+function signaturesMaybeStale() {
+  return Date.now() - _sigFetchedAt > MEDIA_SIG_TTL_MS - SIG_REFRESH_MARGIN_MS;
+}
+
+async function refreshSignatures() {
+  if (_sigRefreshing) return _sigRefreshing;
+  const token = getToken();
+  const pwd = sessionStorage.getItem('share_pwd_' + token) || '';
+  let url = '/api/share/' + token;
+  if (pwd) url += '?password=' + encodeURIComponent(pwd);
+  _sigRefreshing = (async () => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return false;
+      const fresh = await res.json();
+      // 只换媒体链接，不动别的渲染 —— 重新渲染一遍会把用户的滚动位置、
+      // 展开状态、地图视野全部重置，那比裂图还烦人。
+      const byId = new Map((fresh.points || []).flatMap(p =>
+        (p.media || []).map(m => [m.id, m])));
+      for (const p of (shareData.points || [])) {
+        for (const m of (p.media || [])) {
+          const n = byId.get(m.id);
+          if (n) { m.url = n.url; m.thumb_url = n.thumb_url; }
+        }
+      }
+      markSignaturesFresh();
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      _sigRefreshing = null;
+    }
+  })();
+  return _sigRefreshing;
+}
+
+// 给一个媒体元素挂上「签名过期就换新的再重试」的错误处理。
+// 只重试一次：retry 标记防住「换了签名还是 404」时的无限循环。
+function handleMediaError(elm, m, applySrc) {
+  if (!elm || !m) return;
+  if (elm.dataset.sigRetried) return;
+  elm.dataset.sigRetried = '1';
+  if (!signaturesMaybeStale()) return;
+  refreshSignatures().then(ok => {
+    if (!ok) return;
+    applySrc(m);
+    if (elm.tagName === 'VIDEO') { try { elm.load(); } catch (e) {} }
+  });
+}
+
 // ---------- 数据加载 ----------
 async function loadShare() {
   const token = getToken();
@@ -186,6 +257,7 @@ async function fetchShare(token, password, wasWrong) {
       return;
     }
     shareData = await res.json();
+    markSignaturesFresh();
     renderHeader();
     shareRenderStats();
     shareRenderPointList();
@@ -1047,6 +1119,8 @@ function shareRenderMedia(media) {
     img.classList.add('thumb-loading');
     img.onload = () => img.classList.remove('thumb-loading');
     mediaFallbackToLocal(img, '/uploads/thumbs/' + m.thumb_filename);
+    // 签名过期后 thumb_url 也一起失效，这里补一层自愈（见 handleMediaError）。
+    img.onerror = () => handleMediaError(img, m, (mm) => { img.src = mediaSrc(mm, 'thumb'); });
     img.loading = 'lazy';
     img.onclick = () => shareOpenLightbox(idx);
     item.appendChild(img);
@@ -1564,7 +1638,14 @@ function shareRenderPhotoGrid() {
       img.src = m.thumb_url || m.url;
       img.loading = 'lazy';
       img.decoding = 'async';
-      img.onerror = () => { if (img.src !== location.origin + m.url) img.src = m.url; };
+      img.onerror = () => {
+        // 先试缩略图 -> 原图（老逻辑）；两个都不行再考虑签名过期。
+        if (m.url && img.src !== location.origin + m.url && img.src !== m.url) {
+          img.src = m.url;
+          return;
+        }
+        handleMediaError(img, m, (mm) => { img.src = mm.thumb_url || mm.url; });
+      };
       cell.appendChild(img);
     } else {
       cell.appendChild(el('div', 'photo-cell-blank', '🎬'));
@@ -1931,8 +2012,12 @@ function shareToggleLayerPhotos(on, silent) {
       for (let i = stackN - 1; i >= 0; i--) {
         const rot = (i - (stackN - 1)) * 7;    // 最上层 0deg，越往下越斜
         const off = (i - (stackN - 1)) * -9;   // 向下堆叠偏移
-        const thumb = media[i].thumb_filename || media[i].filename;
-        inner += '<img src="' + mediaUrl('/uploads/thumbs/' + thumb) + '" ' +
+        const mm = media[i];
+        // 用服务端给好的签名 URL，别自己拼 —— 自己拼出来的是裸链，
+        // Bucket 转私有之后这里会直接裂（见 share.js 顶部签名那段说明）。
+        const src = mm.thumb_url || mm.url;
+        if (!src) continue;
+        inner += '<img src="' + esc(src) + '" ' +
                  'style="transform: translate(' + off + 'px,' + (-off) + 'px) rotate(' + rot + 'deg); z-index:' + (10 + i) + ';">';
       }
       const badge = media.length > 1

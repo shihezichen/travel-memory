@@ -29,7 +29,24 @@ def _reload(monkeypatch, value):
     # 故意不用 delenv：删掉环境变量后 config.py 会回落去读仓库里的
     # media_base.txt（生产配置，指向 OSS），测试就不再自洽了。
     monkeypatch.setenv("TRAVEL_MEDIA_BASE_URL", value)
-    return importlib.reload(config)
+    c = importlib.reload(config)
+    # 这个文件测的是「前缀怎么拼」这条老逻辑，所以要把签名那条分支按下去。
+    # 不管的话，跑测试的机器只要装了 ossutil 配置（oss.conf().ok 为真），
+    # media_url 就会去问 OSS 要签名 —— 于是断言里的期望值变成一串带
+    # Signature= 的 URL，跟基准前缀对不上（实测 2026-09-16 挂了三条）。
+    #
+    # 用替换 **_synced_to_oss** 之外最干净的办法：直接把 oss.conf 打桩成不可用。
+    # 这个文件不 import oss，所以在 sys.modules 里放一个假的即可。
+    import sys
+    import types
+    fake = types.ModuleType("oss")
+
+    class _Conf:
+        ok = False          # <-- 关键：让 media_url 走裸链分支
+
+    fake.conf = lambda: _Conf()
+    monkeypatch.setitem(sys.modules, "oss", fake)
+    return c
 
 
 def test_empty_base_keeps_local_path(monkeypatch):
@@ -60,6 +77,89 @@ def test_module_left_clean(monkeypatch):
     """别把 CDN 前缀泄漏给后面的测试。"""
     c = _reload(monkeypatch, "")
     assert c.MEDIA_BASE_URL == ""
+
+
+# ---------- 签名模式：Bucket 关掉公共读之后的唯一通路 ----------
+# 背景：Bucket 原本是 public-read，谁拿到 URL 谁能永久下载，且无法吊销。
+# 2026-09-16 起改成私有 + 全走签名 URL。这一组钉住「签名可用时一定走签名」。
+
+def _with_signing(monkeypatch, tmp_path, base, can_sign, ttl=None):
+    """和 _with_watermark 一样搭好环境，但把 oss.conf().ok 按 can_sign 打桩。
+
+    media_url 走的是 `import oss; oss.conf().ok`，所以在 sys.modules 里塞假模块
+    即可 —— 比 monkeypatch config.media_url 可靠（那个会被 `from config import`
+    抢跑，实测踩过）。
+    """
+    c = _with_watermark(monkeypatch, tmp_path, base, wm=3000,
+                        files={"old.jpg": 2000})
+    if ttl is not None:
+        monkeypatch.setattr(c, "MEDIA_URL_TTL", ttl)
+
+    import sys
+    import types
+    fake = types.ModuleType("oss")
+
+    class _Conf:
+        ok = can_sign
+
+    fake.conf = lambda: _Conf()
+    # 签名函数回一个能一眼认出来的串，免得测试去解析真实签名格式
+    def _sign(method, key, params=None, content_type="", expires_in=0):
+        return f"{base}/{key}?Expires={expires_in}&Signature=FAKE"
+    fake.sign_url = _sign
+    monkeypatch.setitem(sys.modules, "oss", fake)
+    return c
+
+
+def test_signed_when_oss_available(monkeypatch, tmp_path):
+    """签名可用 -> 返回签名 URL，而不是裸链。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com", can_sign=True)
+    out = c.media_url("/uploads/old.jpg")
+    assert "Signature=FAKE" in out, out
+    assert out.startswith("https://cdn.example.com/uploads/old.jpg?")
+
+
+def test_signed_url_uses_configured_ttl(monkeypatch, tmp_path):
+    """TTL 走 TRAVEL_MEDIA_URL_TTL，默认 2 小时（网页场景够用且泄露窗口小）。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
+                      can_sign=True, ttl=1234)
+    assert "Expires=1234" in c.media_url("/uploads/old.jpg")
+
+
+def test_falls_back_to_bare_link_when_signing_unavailable(monkeypatch, tmp_path):
+    """签不出来就回裸链 —— 没关公共读的部署 / 本地开发不能被这条改动搞挂。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com", can_sign=False)
+    assert c.media_url("/uploads/old.jpg") == \
+        "https://cdn.example.com/uploads/old.jpg"
+
+
+def test_unsynced_file_never_signed(monkeypatch, tmp_path):
+    """还没同步到 OSS 的文件签了也是 404，必须先回本机路径。"""
+    c = _with_watermark(monkeypatch, tmp_path, "https://cdn.example.com",
+                        wm=1000, files={"new.jpg": 2000})
+    import sys
+    import types
+    fake = types.ModuleType("oss")
+
+    class _Conf:
+        ok = True
+    fake.conf = lambda: _Conf()
+    fake.sign_url = lambda *a, **k: "SHOULD-NOT-BE-CALLED"
+    monkeypatch.setitem(sys.modules, "oss", fake)
+    assert c.media_url("/uploads/new.jpg") == "/uploads/new.jpg"
+
+
+def test_signing_exception_degrades_not_crashes(monkeypatch, tmp_path):
+    """签名抛异常时降级回裸链，不能把整个媒体链打挂。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com", can_sign=True)
+    import sys
+    fake = sys.modules["oss"]
+
+    def _boom(*a, **k):
+        raise RuntimeError("oss 挂了")
+    fake.sign_url = _boom
+    assert c.media_url("/uploads/old.jpg") == \
+        "https://cdn.example.com/uploads/old.jpg"
 
 
 # ---------- 同步水位：刚上传、还没推到 OSS 的文件必须走本机 ----------

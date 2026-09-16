@@ -47,6 +47,19 @@ if _media_base_file.exists():
     MEDIA_BASE_URL = _media_base_file.read_text(encoding="utf-8").strip()
 MEDIA_BASE_URL = os.environ.get("TRAVEL_MEDIA_BASE_URL", MEDIA_BASE_URL).rstrip("/")
 
+# 网页媒体签名 URL 的有效期。
+#
+# 取 2 小时，比 Agent 链的 24 小时短得多 —— 两者场景不同：
+#   - Agent 拿到链接后要**自己去下载**，中间可能搁很久，短了会半路 403；
+#   - 网页只是**渲染时当场加载**，2 小时对一次浏览绰绰有余。
+# 短一点的好处是泄露窗口小：分享页的 URL 是给匿名访客的，签得太久等于
+# 把裸链的毛病原样搬过来。
+#
+# 过期不破坏分享链接：share token 本身没有固定过期（db.get_share 里
+# expires_at 可以为 NULL），前端在媒体 403 时会拿 token 重新拉一次数据
+# 换一批新签名，所以「发群里过两周还能点」这个场景不受影响。
+MEDIA_URL_TTL = int(os.environ.get("TRAVEL_MEDIA_URL_TTL", "7200"))
+
 
 # 同步水位：ops/sync-oss.sh 每跑完一趟，就把「本趟开始的时刻」写进这个文件。
 # 含义是「mtime 早于这个时刻的本地文件，都已经在 OSS 上了」——
@@ -93,7 +106,7 @@ def _synced_to_oss(path: str) -> bool:
         return True
 
 
-def media_url(path: str) -> str:
+def media_url(path: str, ttl: int | None = None) -> str:
     """把站内 /uploads/ 路径转成对外 URL。
 
     只认 /uploads/ 前缀 —— /static/ 是应用自己的 JS/CSS，必须跟着代码版本走，
@@ -104,9 +117,36 @@ def media_url(path: str) -> str:
     原来这里无条件拼 OSS 前缀，于是刚传完的照片/视频封面全是裂图，
     要等下一趟同步才自己好。走本机那一下虽然占隧道带宽，但只是这几分钟内
     刚传的那几个文件，同步完就自动切回 OSS。
+
+    ---
+
+    **签名模式（2026-09-16 起）**：Bucket 关掉公共读之后，上面那条
+    `MEDIA_BASE_URL + path` 拼出来的裸链会 403。这时改签带 Expires 的临时 URL
+    （见 oss.sign_url）。签不出来（OSS 没配 / 还没同步上去）就退回本机路径 ——
+    和「没同步」那条分支同一个出口，前端本来就能吃本机路径。
+
+    为什么不在这里直接 `import oss`：config 是被所有人 import 的最底层模块
+    （oss.py 自己也 import config 拿 MEDIA_BASE_URL），在模块顶层互相 import
+    会成环。改成函数内 import，且 oss 只在真正要签名时才被拉进来。
+
+    签不出来**不当故障处理**：Bucket 还是公共读的部署（以及本地开发）走的就是
+    裸链那条分支，不能因为签名不可用就让整个媒体链挂掉。
     """
-    if MEDIA_BASE_URL and path.startswith("/uploads/"):
-        if not _synced_to_oss(path):
-            return path
-        return MEDIA_BASE_URL + path
-    return path
+    if not (MEDIA_BASE_URL and path.startswith("/uploads/")):
+        return path
+    if not _synced_to_oss(path):
+        return path
+
+    # 签名可用就用签名（这是关掉公共读之后的唯一通路）
+    try:
+        import oss
+        if oss.conf().ok:
+            key = path.lstrip("/")
+            signed = oss.sign_url("GET", key, expires_in=ttl or MEDIA_URL_TTL)
+            if signed:
+                return signed
+    except Exception:                                     # noqa: BLE001
+        # 降级不是故障：签不出来就回裸链，跟公共读时代行为一致。
+        pass
+
+    return MEDIA_BASE_URL + path

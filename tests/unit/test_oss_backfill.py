@@ -122,6 +122,23 @@ def test_回源的文件一律算作已同步到_oss(media_row, fake_oss, monkey
     monkeypatch.setattr(config, "UPLOAD_ROOT", oss_backfill.UPLOAD_DIR)
     monkeypatch.setattr(config, "_wm_cache", {"at": 0.0, "value": None})
     monkeypatch.setattr(config, "_oss_watermark", lambda: wm)
+    # 这条用例关心的是「水位判断对不对」，不是「链接怎么签」。把签名挡住，
+    # 否则装了 ossutil 配置的机器会拿到带 Signature= 的 URL，跟基准串对不上。
+    # 签名本身在 test_media_url.py 里单独钉。
+    #
+    # 注意不能 monkeypatch config.media_url —— 上面这行是
+    # `from config import media_url`，早在 patch 之前就把原函数对象绑进本模块的
+    # 全局了，改 config 上的属性对它没有影响（第一次就是这么写错的）。
+    # 打桩 oss.conf 才是釜底抽薪：不管 media_url 从哪儿拿到，签名分支都进不去。
+    import sys
+    import types
+    _fake = types.ModuleType("oss")
+
+    class _Conf:
+        ok = False
+
+    _fake.conf = lambda: _Conf()
+    monkeypatch.setitem(sys.modules, "oss", _fake)
     assert media_url("/uploads/abc123.jpg") == \
         "https://b.oss-cn-qingdao.aliyuncs.com/uploads/abc123.jpg"
 
