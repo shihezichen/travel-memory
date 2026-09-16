@@ -29,33 +29,48 @@
   <div id="login-overlay" class="login-overlay hidden">
     <div class="login-box">
       <h2 class="login-brand"><img src="/static/icon.svg?v=20260911v6" alt="" width="44" height="44"><span>旅行记忆</span></h2>
-      <div class="auth-tabs">
-        <button class="auth-tab active" data-auth="login" type="button">登录</button>
-        <button class="auth-tab" data-auth="register" type="button">注册</button>
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" data-auth="login" type="button"
+                role="tab" aria-selected="true">登录</button>
+        <button class="auth-tab" data-auth="register" type="button"
+                role="tab" aria-selected="false">注册</button>
       </div>
 
-      <!-- 登录 -->
-      <form id="login-form">
-        <input type="text" id="login-username" class="login-input" placeholder="用户名" autocomplete="username">
-        <input type="password" id="login-password" class="login-input" placeholder="密码" autocomplete="current-password">
-        <button type="submit" class="btn btn-primary btn-block">登录</button>
-      </form>
+      <!-- 两个面板等高：切 tab 时对话框不能跳大小（见 .auth-pane 的注释）。
+           所以这里不直接切 form 的显隐，而是把每个 form 包进一个等高容器。 -->
+      <div class="auth-panes">
 
-      <!-- 体验账号：账号密码写死在前端，点一下直接进，不用输任何东西 -->
-      <div class="demo-login">
-        <button type="button" id="btn-demo-login" class="btn btn-block demo-btn">
-          体验账号一键登录
-        </button>
+        <div class="auth-pane" id="pane-login">
+          <form id="login-form">
+            <input type="text" id="login-username" class="login-input" placeholder="用户名" autocomplete="username">
+            <input type="password" id="login-password" class="login-input" placeholder="密码" autocomplete="current-password">
+            <button type="submit" class="btn btn-primary btn-block">登录</button>
+          </form>
+
+          <!-- 体验账号：账号密码写死在前端，点一下直接进，不用输任何东西。
+               **只在登录 tab 出现** —— 注册 tab 上摆一个「一键登录体验账号」
+               是自相矛盾的：人都要点注册了，还劝他先去逛演示。 -->
+          <div class="demo-login">
+            <button type="button" id="btn-demo-login" class="btn btn-block demo-btn">
+              体验账号一键登录
+            </button>
+          </div>
+        </div>
+
+        <div class="auth-pane hidden" id="pane-register">
+          <form id="register-form">
+            <!-- 注册只要两样：用户名 + 密码。
+                 昵称字段删掉了（2026-09-16）：注册是上手成本最高的一步，
+                 任何一项都可能让人放弃。昵称进去以后再改不迟，后端本来就
+                支持空 display_name（不给就回落成 username）。 -->
+            <input type="text" id="reg-username" class="login-input" placeholder="用户名（登录用）" autocomplete="off">
+            <input type="password" id="reg-password" class="login-input" placeholder="密码（至少 6 位）" autocomplete="new-password">
+            <input type="password" id="reg-password2" class="login-input" placeholder="确认密码" autocomplete="new-password">
+            <button type="submit" class="btn btn-primary btn-block">注册并进入</button>
+          </form>
+        </div>
+
       </div>
-
-      <!-- 注册 -->
-      <form id="register-form" class="hidden">
-        <input type="text" id="reg-username" class="login-input" placeholder="用户名（登录用）" autocomplete="off">
-        <input type="text" id="reg-display" class="login-input" placeholder="昵称（可选）" autocomplete="off">
-        <input type="password" id="reg-password" class="login-input" placeholder="密码（至少 6 位）" autocomplete="new-password">
-        <input type="password" id="reg-password2" class="login-input" placeholder="确认密码" autocomplete="new-password">
-        <button type="submit" class="btn btn-primary btn-block">注册并进入</button>
-      </form>
 
       <p id="login-error" class="login-error hidden"></p>
       __ICP_FOOTER__

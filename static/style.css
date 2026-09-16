@@ -1209,10 +1209,57 @@ body.map-fullscreen-on { overflow: hidden; }
 }
 .login-error { margin: 12px 0 0; font-size: 13px; color: #dc2626; }
 
-/* 认证 tab */
-.auth-tabs { display: flex; margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.auth-tab { flex: 1; padding: 9px; border: none; background: #f3f4f6; font-size: 14px; cursor: pointer; color: var(--muted); }
-.auth-tab.active { background: var(--primary); color: #fff; font-weight: 600; }
+/* ---------- 认证 tab ---------- */
+/* 原来是「整块填充 + 选中项染成主色」的 segmented control，看上去跟下面那个
+   实心的「登录」按钮一模一样 —— 一屏里两个看着都能点的蓝色块，谁都会犹豫
+   一下。改成**下划线式 tab**：只有文字、选中加粗 + 一条主色下划线。
+   这是导航，不是提交按钮，视觉上就该跟按钮分得开。 */
+.auth-tabs {
+  display: flex; gap: 4px; margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.auth-tab {
+  flex: 1; position: relative;
+  padding: 8px 4px 10px;
+  border: none; background: none;
+  font-size: 15px; font-family: inherit; cursor: pointer;
+  color: var(--muted); font-weight: 500;
+  transition: color .15s ease;
+}
+.auth-tab:hover { color: var(--fg); }
+.auth-tab.active { color: var(--primary); font-weight: 700; }
+/* 下划线。用 ::after 而不是 border-bottom，是为了让它压在 .auth-tabs
+   的那条底线上面（-1px）合成一条，而不是并排两条。 */
+.auth-tab::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+  height: 2px; border-radius: 2px;
+  background: var(--primary);
+  transform: scaleX(0); transition: transform .18s ease;
+}
+.auth-tab.active::after { transform: scaleX(1); }
+@media (prefers-reduced-motion: reduce) { .auth-tab::after { transition: none; } }
+.auth-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: 6px; }
+
+/* ---------- 两个面板等高 ---------- */
+/* 切「登录 / 注册」时对话框不能跳大小 —— 登录有 2 个输入框 + 体验账号按钮，
+   注册有 3 个输入框，高度本来就不同，直接切显隐会让整个弹窗一抖。
+   做法：两个面板都留在文档流里（不是 display:none），叠在同一个 grid 单元，
+   容器高度取两者最大值，两边都不会动。
+   用 grid 叠放而不是显隐，是因为 display:none 的元素不参与尺寸计算，
+   量不到它的高度 —— 那样还是得给容器写死一个像素高度，内容一改就错位。 */
+.auth-panes { display: grid; }
+.auth-panes > .auth-pane { grid-area: 1 / 1; }
+/* 收起的那一面要**保留占位**，做法是覆盖全局的 `.hidden`。
+   全局那条是 `.hidden { display: none !important; }`（380 行）——
+   **没有 !important 的声明永远赢不了 !important 的，跟选择器多具体无关**。
+   所以这里也必须带 !important，否则面板被抽掉、容器塌回去，切 tab 照样跳
+   高度（实测差 26px，查了半天才发现是这个）。
+   从「不显示」改成「显示但看不见」：布局盒还在，grid 才量得到它的高度。
+   容器高度 = 两面的最大值 ⇒ 两个 tab 下对话框尺寸恒定。 */
+.auth-panes > .auth-pane.hidden { display: block !important; visibility: hidden; }
+/* 收起的那一面不能被点到，也不该被读屏念出来 */
+.auth-pane.hidden { pointer-events: none; }
+.auth-pane.hidden :is(input, button) { visibility: hidden; }
 .btn-link {
   display: block; margin: 12px auto 0; background: none; border: none;
   color: var(--muted); font-size: 13px; cursor: pointer; text-decoration: underline;

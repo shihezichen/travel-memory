@@ -353,16 +353,34 @@ async function loadCurrentUser() {
   } catch (e) { /* 忽略 */ }
 }
 
-// 认证 tab 切换
+// 认证 tab 切换。
+// 注意切的是 **.auth-pane 容器**（不是 form 本身）：两个 pane 叠在同一个
+// grid 单元里，收起的一面只是 visibility:hidden、仍然占位，所以对话框高度
+// 是两者的最大值，切换时不会跳大小。见 style.css 的 .auth-panes。
 document.querySelectorAll('.auth-tab').forEach(t => {
   t.onclick = () => {
-    document.querySelectorAll('.auth-tab').forEach(x =>
-      x.classList.toggle('active', x === t));
+    document.querySelectorAll('.auth-tab').forEach(x => {
+      const on = x === t;
+      x.classList.toggle('active', on);
+      x.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
     const mode = t.dataset.auth;
-    $('#login-form').classList.toggle('hidden', mode !== 'login');
-    $('#register-form').classList.toggle('hidden', mode !== 'register');
+    $('#pane-login').classList.toggle('hidden', mode !== 'login');
+    $('#pane-register').classList.toggle('hidden', mode !== 'register');
     setLoginError('');
   };
+});
+// 收起的面板里的控件不能被 Tab 键聚焦（visibility 已经挡了大部分，但显式
+// 关掉 tabindex 更稳妥 —— Safari 对 visibility:hidden 的按钮仍可能聚焦）
+document.querySelectorAll('.auth-pane').forEach(p => {
+  const ctl = p.querySelectorAll('input, button, a');
+  const sync = () => {
+    const off = p.classList.contains('hidden');
+    ctl.forEach(el => { if (off) el.setAttribute('tabindex', '-1');
+                        else el.removeAttribute('tabindex'); });
+  };
+  sync();
+  new MutationObserver(sync).observe(p, { attributes: true, attributeFilter: ['class'] });
 });
 
 // 体验账号一键登录：凭据写死在这里，用户不需要（也无法）输入或修改
@@ -406,11 +424,12 @@ $('#login-form').addEventListener('submit', async (e) => {
   }
 });
 
-// 注册
+// 注册。
+// 表单里已经不收昵称了（注册步骤越少越好），所以这里不再发 display_name；
+// 后端本来就允许不传（空则回落成 username），接口没动。
 $('#register-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const username = $('#reg-username').value.trim();
-  const display = $('#reg-display').value.trim();
   const password = $('#reg-password').value;
   const password2 = $('#reg-password2').value;
   if (!username) { setLoginError('请输入用户名'); return; }
@@ -419,7 +438,6 @@ $('#register-form').addEventListener('submit', async (e) => {
   const fd = new FormData();
   fd.append('username', username);
   fd.append('password', password);
-  fd.append('display_name', display);
   const res = await fetch('/api/register', { method: 'POST', body: fd });
   if (res.ok) {
     onLoggedIn();
