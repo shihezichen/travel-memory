@@ -568,7 +568,17 @@ def render_landing(cacheable: bool) -> HTMLResponse:
     # /uploads/promo/...，跟别的媒体同一个出口，照样能播。
     # 只签 promo 这一处：__MEDIA_BASE__ 在 index/share 里是给前端 JS 拼路径用的
     # 前缀，不是完整 URL，不能整个换掉。
-    for name in ("travel-memory-promo.mp4", "travel-memory-promo.jpg"):
+    #
+    # **长的排前面**：`travel-memory-promo.mp4` 是 `…-720p.mp4` 的前缀吗？不是，
+    # 但 `…-1080p` / `…-720p` / `…-480p` 互相之间以及跟无后缀那个一旦顺序错了，
+    # 短名会先把长名的前缀替换掉、留下半截后缀。按长度倒序替换，从根上避免。
+    for name in sorted((
+        "travel-memory-promo.mp4",
+        "travel-memory-promo.jpg",
+        "travel-memory-promo-1080p.mp4",
+        "travel-memory-promo-720p.mp4",
+        "travel-memory-promo-480p.mp4",
+    ), key=len, reverse=True):
         html = html.replace("__MEDIA_BASE__/uploads/promo/" + name,
                             media_url("/uploads/promo/" + name))
     cc = "public, max-age=300" if cacheable else "no-cache, no-store, must-revalidate"
