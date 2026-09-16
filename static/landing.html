@@ -422,12 +422,48 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   align-items:center;justify-content:center;padding:24px;
   background:rgba(6,10,18,.88);backdrop-filter:blur(10px)}
 .promo-modal[open]{display:flex}
-.promo-modal video{width:min(100%,1120px);max-height:82vh;border-radius:14px;
+/* display:block 是必须的：默认 display:inline 时，外层 .promo-stage 的
+   fit-content 算不准（inline 内容的固有宽度算不出视频的真实宽度），
+   实测容器被撑到 1574px 而视频只有 1120px，菜单就飘到右边的黑边上了。 */
+.promo-modal video{display:block;width:min(100%,1120px);max-height:82vh;border-radius:14px;
   background:#000;box-shadow:0 24px 80px rgba(0,0,0,.6);outline:none}
 .promo-close{position:absolute;top:18px;right:20px;width:42px;height:42px;border-radius:50%;
   border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.1);color:#fff;
   font-size:20px;line-height:1;cursor:pointer}
 .promo-close:hover{background:rgba(255,255,255,.2)}
+/* 清晰度菜单。样式跟站内用户视频那套（common.js 的 .qual-*）保持一致的观感，
+   但宣传页是自包含的，所以这里独立写一份。 */
+/* 视频外面包一层定位容器，菜单贴它的右下角 = 贴视频的右下角。
+   **宽度必须跟 video 用同一个表达式 min(100%,1120px)**，不能用 fit-content：
+   弹层是 flex 容器，子项会 stretch，而 video 的 max-height:82vh 把高度压矮后
+   宽度也小于容器，fit-content 会因「百分比宽度解析回容器」的循环解不出来
+   （实测容器 1574px、视频 1120px），菜单就浮到右侧黑边上。
+   align-self:center 保证窄屏下不被拉伸。
+   底边留 52px：<video controls> 自带的那条控制栏在最底部，压上去会盖住进度条。 */
+.promo-stage{position:relative;align-self:center;line-height:0;
+  width:min(100%,1120px)}
+.promo-qual{position:absolute;bottom:52px;right:14px;z-index:2}
+.promo-qual-btn{display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:9px;
+  border:1px solid rgba(255,255,255,.28);background:rgba(12,18,32,.72);color:#fff;
+  font-size:13px;font-family:inherit;cursor:pointer;backdrop-filter:blur(6px)}
+.promo-qual-btn:hover{background:rgba(12,18,32,.9)}
+.promo-qual-btn .caret{font-size:9px;opacity:.75}
+.promo-qual-menu{position:absolute;bottom:calc(100% + 8px);right:0;min-width:132px;
+  padding:5px;border-radius:11px;border:1px solid rgba(255,255,255,.16);
+  background:rgba(10,15,26,.95);backdrop-filter:blur(10px);
+  box-shadow:0 12px 36px rgba(0,0,0,.5)}
+.promo-qual-menu.hidden{display:none}
+.promo-qual-menu button{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  width:100%;padding:8px 10px;border:0;border-radius:7px;background:transparent;
+  color:rgba(255,255,255,.86);font-size:13px;font-family:inherit;cursor:pointer;text-align:left}
+.promo-qual-menu button:hover{background:rgba(255,255,255,.1)}
+.promo-qual-menu button[aria-checked="true"]{color:#4C9AFF;font-weight:600}
+.promo-qual-menu button[aria-checked="true"]::after{content:"✓";font-size:12px}
+.promo-qual-menu .tier-note{color:rgba(255,255,255,.45);font-size:11px;font-weight:400}
+@media (max-width:640px){
+  .promo-qual{bottom:14px;right:12px}
+  .promo-qual-menu button{padding:9px 10px}
+}
 @media (max-width:640px){
   .promo-play .ring{width:60px;height:60px}
   .promo-modal{padding:12px}
@@ -819,13 +855,24 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
      源文件同名不同档，用后缀区分；签名在 render_landing 里逐档生成。 -->
 <div class="promo-modal" id="promo-modal" role="dialog" aria-modal="true" aria-label="产品演示视频">
   <button class="promo-close" id="promo-close" type="button" aria-label="关闭">×</button>
-  <video id="promo-video" controls playsinline preload="none"
-         poster="__MEDIA_BASE__/uploads/promo/travel-memory-promo.jpg"
-         data-src-1080p="__MEDIA_BASE__/uploads/promo/travel-memory-promo-1080p.mp4"
-         data-src-720p="__MEDIA_BASE__/uploads/promo/travel-memory-promo-720p.mp4"
-         data-src-480p="__MEDIA_BASE__/uploads/promo/travel-memory-promo-480p.mp4">
-    你的浏览器不支持内嵌视频，<a href="__MEDIA_BASE__/uploads/promo/travel-memory-promo.mp4">直接下载观看</a>。
-  </video>
+  <div class="promo-stage">
+    <video id="promo-video" controls playsinline preload="none"
+           poster="__MEDIA_BASE__/uploads/promo/travel-memory-promo.jpg"
+           data-src-1080p="__MEDIA_BASE__/uploads/promo/travel-memory-promo-1080p.mp4"
+           data-src-720p="__MEDIA_BASE__/uploads/promo/travel-memory-promo-720p.mp4"
+           data-src-480p="__MEDIA_BASE__/uploads/promo/travel-memory-promo-480p.mp4">
+      你的浏览器不支持内嵌视频，<a href="__MEDIA_BASE__/uploads/promo/travel-memory-promo.mp4">直接下载观看</a>。
+    </video>
+    <!-- 清晰度菜单。默认由脚本按网络挑（默认 1080p），这里让用户能手动锁一档。
+         不写死选项：档位来自 video 上的 data-src-*，脚本渲染时才建。 -->
+    <div class="promo-qual" id="promo-qual" hidden>
+      <button class="promo-qual-btn" id="promo-qual-btn" type="button"
+              aria-haspopup="true" aria-expanded="false">
+        <span id="promo-qual-label">1080P</span><span class="caret">▼</span>
+      </button>
+      <div class="promo-qual-menu hidden" id="promo-qual-menu" role="menu"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -842,67 +889,170 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   // 跟 common.js 的 tmQualityBudget() 同一套判据。宣传页刻意自包含
   // （不引 common.js，见页面顶部注释），所以这里抄一份精简版；改网络判据时
   // 两处要一起改。想知道为什么这么判，看 common.js 那边的注释。
-  function promoBudget() {
-    // **跟 common.js 不同的一处：拿不到 connection API 时不要压 720。**
-    // 桌面浏览器基本没有这个 API（Chrome 只对部分平台暴露，有线的 PC
-    // 通常拿不到），照抄 common.js 的 720 兜底会让「1920×1080 的有线桌面」
-    // 也只拿到 720p —— 既没省流量顾虑、屏幕又够大，没道理不给 1080p。
-    // 所以未知网络按「不设限」处理，交给下面的屏幕预算去卡（屏幕小自然降）。
-    // 手机上同样安全：移动端普遍有 connection API，真没有时屏幕也小，
-    // 屏幕预算会把档位压下去。
-    var netCap = 1080;
+  // 网络够不够扛 1080p。**默认给 1080p，只有明确知道网不行才降。**
+  // 现在手机带宽普遍够（4G/5G 拉 19MB 就几秒），默认降档反而让大多数人
+  // 看糊的 —— 所以判据反过来了：从「算个预算去卡」改成「默认最高档，
+  // 只在 saveData / 2G / 3G / 实测弱网时往下让」。
+  // 屏幕那侧同理：1080p 是给大屏准备的，小屏拿了也是白给像素，才降。
+  var PROMO_TIERS = ['1080p', '720p', '480p'];
+  var PROMO_SIDE = { '1080p': 1080, '720p': 720, '480p': 480 };
+
+  function promoTierOrder() {
+    // 按「用户实际的网络和屏幕」把档位重排一次，返回从优到劣的顺序。
+    var netCap = 1080, forcedLow = false;
     try {
       var c = navigator.connection || navigator.mozConnection
               || navigator.webkitConnection;
       if (c) {
         if (c.saveData) {
-          netCap = 480;                                  // 省流量，尊重它
+          netCap = 480; forcedLow = true;             // 省流量，明确尊重
         } else if (c.effectiveType === 'slow-2g' || c.effectiveType === '2g'
                    || c.effectiveType === '3g') {
-          netCap = 480;
+          netCap = 480; forcedLow = true;
         } else if (typeof c.downlink === 'number' && c.downlink > 0) {
-          netCap = c.downlink < 1.5 ? 480 : (c.downlink < 4 ? 720 : 1080);
-        } else if (c.effectiveType === '4g') {
-          netCap = 1080;
+          // downlink 是 Mbps 估计值。放宽了阈值：1080p 实测约 3Mbps，
+          // 拉到 2.5 倍余量，别把「能用」的网错判成弱网。
+          netCap = c.downlink < 1.0 ? 480 : (c.downlink < 2.5 ? 720 : 1080);
         }
       }
     } catch (e) {}
-    // 屏幕预算：**这里跟 common.js 不同，别照抄。**
-    // common.js 那套算的是灯箱 —— 视频铺满整个视口，所以取「视口短边 × DPR」。
-    // 宣传片是个 16:9 的盒子，宽度上限 1120px（见 .promo-modal video），
-    // 高度由宽高比反推、不是瓶颈：有没有用得上某一档，取决于**宽度**。
-    // 用短边会把 1280×800 的桌面误判成 800 → 白白降到 720p，而 1080p 在那块
-    // 屏幕上其实还有得赚（1120 > 800）。
-    var scrCap = 1080;
+
+    // 屏幕**不参与挑档** —— 这一条是刚哥明确要求的：
+    // 「默认应该是 1080P，不行了再让用户降级，因为现在手机带宽都很高」。
+    // 该由**带宽**决定给哪档；屏幕小不是拒绝高码率的理由 —— 手机真要
+    // 省流量，有 saveData 那条路，也有菜单可以自己往下选。
+    //
+    // 之前照 common.js 拿「视口短边 × DPR」当硬上限，结果是 390px 的
+    // 5G 手机被压到 480p —— 正是这次要修掉的行为。DPR 截到 2 那条
+    // （3x 屏上 3 倍分辨率收益极小）在灯箱里成立，在这里更不该拦。
+    //
+    // 唯一的例外是**极小屏**：≤360px 的视口即便网络好也不上 1080p ——
+    // 那不是省流量，是纯浪费解码。只压上限、不抬下限。
+    var cap = netCap;
     try {
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
-      // 1120 = .promo-modal video 的 max-width；48 = 弹层的左右 padding(24×2)
-      var boxW = Math.min((window.innerWidth || 360) - 48, 1120);
-      scrCap = Math.round(boxW * dpr);
+      if ((window.innerWidth || 360) <= 360 && cap > 480) cap = 480;
     } catch (e) {}
-    return Math.min(netCap, scrCap);
+
+    // forcedLow（省流量 / 2G / 3G）：用户已明确表态，直接给最低档，
+    // 别再拿「网还行」当理由往上推。
+    if (forcedLow) return PROMO_TIERS.slice().reverse();
+
+    var ok = PROMO_TIERS.filter(function (t) { return PROMO_SIDE[t] <= cap; });
+    return ok.length ? ok : [PROMO_TIERS[PROMO_TIERS.length - 1]];
   }
 
-  // 按预算挑档，挑不到就往下退，最终一定能落在一档上（480p 是底线）。
-  function pickPromoSrc() {
-    var budget = promoBudget();
-    var tiers = [
-      { label: '1080p', side: 1080, url: video.getAttribute('data-src-1080p') },
-      { label: '720p',  side: 720,  url: video.getAttribute('data-src-720p') },
-      { label: '480p',  side: 480,  url: video.getAttribute('data-src-480p') }
-    ].filter(function (t) { return t.url; });
-    for (var i = 0; i < tiers.length; i++) {
-      if (tiers[i].side <= budget) return tiers[i].url;
+  // 用户手动选过的档位。选过就固定用那一档，不再跟着网络变。
+  var PROMO_PREF_KEY = 'tm.promo.quality';
+  function loadPromoPref() {
+    try {
+      var v = localStorage.getItem(PROMO_PREF_KEY);
+      return PROMO_TIERS.indexOf(v) >= 0 ? v : null;
+    } catch (e) { return null; }
+  }
+  function savePromoPref(label) {
+    try { localStorage.setItem(PROMO_PREF_KEY, label); } catch (e) {}
+  }
+
+  function promoSrcFor(label) {
+    return video.getAttribute('data-src-' + label) || '';
+  }
+
+  // 当前该用哪一档：手动选过优先，否则取重排后的第一档（默认 1080p）。
+  function pickPromoTier() {
+    var pref = loadPromoPref();
+    if (pref && promoSrcFor(pref)) return pref;
+    var order = promoTierOrder();
+    for (var i = 0; i < order.length; i++) {
+      if (promoSrcFor(order[i])) return order[i];
     }
-    return tiers.length ? tiers[tiers.length - 1].url : '';
+    return null;
   }
 
-  var srcChosen = false;
+  var currentTier = null;
+  // 切档：保留播放进度和播放状态。跟 common.js 的 tmSwitchQuality 同一套做法
+  // （换 src 会把 currentTime 清零，所以先记下来、等新源元数据到了再 seek 回去）。
+  function setPromoTier(label, opts) {
+    var url = promoSrcFor(label);
+    if (!url) return;
+    opts = opts || {};
+    if (label === currentTier && !opts.force) return;
+    var at = video.currentTime || 0;
+    var wasPlaying = !video.paused && !video.ended;
+    if (opts.force) at = 0;                     // 首次挂源：从头开始
+    var onReady = function () {
+      video.removeEventListener('loadedmetadata', onReady);
+      try { video.currentTime = opts.force ? 0 : at; } catch (e) {}
+      if (wasPlaying || opts.force) {
+        var p = video.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+    };
+    video.addEventListener('loadedmetadata', onReady);
+    currentTier = label;
+    video.src = url;
+    renderPromoMenu();
+  }
+
   function ensureSrc() {
-    if (srcChosen) return;
-    srcChosen = true;
-    var url = pickPromoSrc();
-    if (url) video.src = url;
+    if (currentTier) return;
+    var label = pickPromoTier();
+    if (label) setPromoTier(label, { force: true });
+  }
+
+  // ---- 清晰度菜单 ----
+  var qualBox = document.getElementById('promo-qual');
+  var qualBtn = document.getElementById('promo-qual-btn');
+  var qualMenu = document.getElementById('promo-qual-menu');
+  var qualLabel = document.getElementById('promo-qual-label');
+  var TIER_NAME = { '1080p': '1080P', '720p': '720P', '480p': '480P' };
+  var TIER_MB = { '1080p': '19MB', '720p': '11MB', '480p': '6MB' };
+
+  function renderPromoMenu() {
+    if (!qualBox || !qualMenu) return;
+    // 只有一档可用就不必给菜单 —— 没得选，摆着是噪音
+    var avail = PROMO_TIERS.filter(function (t) { return promoSrcFor(t); });
+    if (avail.length < 2) { qualBox.hidden = true; return; }
+    qualBox.hidden = false;
+    qualLabel.textContent = TIER_NAME[currentTier] || '清晰度';
+    qualMenu.innerHTML = '';
+    avail.forEach(function (t) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'menuitemradio');
+      b.setAttribute('aria-checked', t === currentTier ? 'true' : 'false');
+      var name = document.createElement('span');
+      name.textContent = TIER_NAME[t];
+      var note = document.createElement('span');
+      note.className = 'tier-note';
+      note.textContent = TIER_MB[t] || '';
+      b.appendChild(name);
+      b.appendChild(note);
+      b.addEventListener('click', function () {
+        savePromoPref(t);                 // 手动选过就固定，不再跟网络变
+        setPromoTier(t);
+        hideMenu();
+      });
+      qualMenu.appendChild(b);
+    });
+  }
+
+  function showMenu() {
+    qualMenu.classList.remove('hidden');
+    qualBtn.setAttribute('aria-expanded', 'true');
+  }
+  function hideMenu() {
+    qualMenu.classList.add('hidden');
+    qualBtn.setAttribute('aria-expanded', 'false');
+  }
+  if (qualBtn) {
+    qualBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (qualMenu.classList.contains('hidden')) showMenu(); else hideMenu();
+    });
+    // 点别处收起
+    document.addEventListener('click', function (e) {
+      if (!qualBox.contains(e.target)) hideMenu();
+    });
   }
 
   function open() {
@@ -922,6 +1072,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     video.pause();
     // 归零：下次点开从头看，而不是接着上次的进度
     try { video.currentTime = 0; } catch (e) {}
+    hideMenu();                          // 菜单别留着，下次点开是干净状态
     if (lastFocus) lastFocus.focus();
   }
 
