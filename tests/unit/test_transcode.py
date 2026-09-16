@@ -569,7 +569,7 @@ def test_build_quality_list_original_always_first_and_playable():
     out = transcode.build_quality_list({"filename": "v.mp4"}, [])
     assert len(out) == 1
     assert out[0]["label"] == "original" and out[0]["status"] == "done"
-    assert out[0]["url"] == "/uploads/v.mp4?v=1"
+    assert out[0]["url"] == "/uploads/v.mp4"      # 不带 ?v=1，见 variant_url 注释
 
 
 def test_build_quality_list_orders_high_to_low():
@@ -583,7 +583,7 @@ def test_build_quality_list_orders_high_to_low():
     ]
     out = transcode.build_quality_list({"filename": "v.mp4"}, variants)
     assert [q["label"] for q in out] == ["original", "1080p", "720p", "480p"]
-    assert out[2]["url"] == "/uploads/variants/v_720p.mp4?v=1"
+    assert out[2]["url"] == "/uploads/variants/v_720p.mp4"
     assert out[2]["short_side"] == 720
 
 
@@ -647,9 +647,15 @@ def test_attach_qualities_single_query_for_many_videos(video_media, isolated_env
     assert len(calls[0]) == 13
 
 
-def test_variant_url_is_versioned():
-    """带 v= 才能命中 immutable 长缓存分支（档位文件内容永不改变）。"""
-    assert transcode.variant_url("v_720p.mp4") == "/uploads/variants/v_720p.mp4?v=1"
+def test_variant_url_has_no_query_string():
+    """档位 URL **不能**带 ?v=1。
+
+    原来带它是为了命中本机 CacheHeaderStaticFiles 的 immutable 分支，但媒体迁到
+    OSS 之后那个分支根本不执行；而 media_url 改签名之后，`?v=1` 会被当成 OSS
+    对象 key 的一部分编码成 %3Fv%3D1，签出来的链接指向不存在的对象 ——
+    视频档位全 404。这条用例就是钉住这个回归。
+    """
+    assert transcode.variant_url("v_720p.mp4") == "/uploads/variants/v_720p.mp4"
 
 
 # ------------------------------------------------ 一遍解码多档编码（快路）

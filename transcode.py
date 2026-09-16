@@ -668,9 +668,18 @@ def retry_failed(media_id: int, src_path):
 
 
 def variant_url(filename: str) -> str:
-    """档位文件的访问 URL。带 v= 是为了命中 CacheHeaderStaticFiles 的
-    immutable 长缓存分支 —— 档位文件内容永不改变，重复播放不该再回源。"""
-    return media_url(f"/uploads/variants/{filename}?v=1")
+    """档位文件的访问 URL。
+
+    **不要带 `?v=1`**。原来带它是为了命中 CacheHeaderStaticFiles 的 immutable
+    长缓存分支，但那个分支只在媒体走本机 /uploads/ 时才会执行 —— 媒体迁到 OSS
+    之后这段逻辑已经不生效了。更要命的是它是**错的**：media_url 现在会拿这个
+    字符串去算 OSS 签名，`?v=1` 被当成对象 key 的一部分编码成 `%3Fv%3D1`，
+    签出来的 URL 指向一个不存在的对象 —— 视频档位全 404（2026-09-16 实测）。
+
+    档位文件的缓存由 OSS 侧控制（内容永不改变，本来就适合长缓存），
+    不需要在 URL 上带这个东西。
+    """
+    return media_url(f"/uploads/variants/{filename}")
 
 
 def attach_qualities(media_list):
@@ -704,7 +713,8 @@ def build_quality_list(media_row, variants) -> list:
     out = [{
         "label": ORIGINAL_LABEL,
         "name": "原画",
-        "url": media_url(f"/uploads/{media_row['filename']}?v=1"),
+        # 同样不能带 ?v=1（见 variant_url 的注释：会被签进 OSS 对象 key 里）。
+        "url": media_url(f"/uploads/{media_row['filename']}"),
         "status": "done",
         "width": None, "height": None, "bitrate": None, "filesize": None,
         "short_side": None,

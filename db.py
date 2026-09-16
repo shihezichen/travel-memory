@@ -7,6 +7,10 @@ import secrets
 import sqlite3
 from pathlib import Path
 
+# config 只 import os / pathlib，不反向依赖 db，所以这里顶层 import 不会成环。
+# 用它算对外媒体地址（签名 / 同步水位都在 config.media_url 里）。
+from config import media_url
+
 DB_PATH = Path(__file__).parent / "data.db"
 
 SCHEMA = """
@@ -862,7 +866,12 @@ def list_photo_points(user, trip_id=None):
     trip_id 给了就只取这一个行程——地图上正在看哪个行程，就只该看到哪个行程的照片。
     不给则回落到全量（admin 全库、普通用户只看自己的）。仅取有坐标且有缩略图的点。
     照片和视频都算：视频用首帧缩略图，前端在角上打 ▶ 标识。
-    返回 [{point_id, name, lng, lat, photos: [{media_id, thumb, type}]}, ...]
+    返回 [{point_id, name, lng, lat, photos: [{media_id, thumb, type, thumb_url}]}, ...]
+
+    thumb_url 是**服务端算好的对外地址**（走 config.media_url，签名/水位都在里面）。
+    原来这里只给文件名 `thumb`，前端只好自己拼 /uploads/thumbs/xxx —— Bucket 转
+    私有之后拼出来的裸链是 403，地图上照片堆整片空白（2026-09-16 实测到的 bug）。
+    凡是前端要显示的媒体地址都该由服务端给，别让前端拼。
     """
     conn = get_conn()
     base = (
@@ -897,7 +906,9 @@ def list_photo_points(user, trip_id=None):
             "lng": first["lng"],
             "lat": first["lat"],
             "photos": [{"media_id": m["mid"], "thumb": m["thumb_filename"],
-                        "type": m["mtype"]} for m in ms],
+                        "type": m["mtype"],
+                        "thumb_url": media_url("/uploads/thumbs/" + m["thumb_filename"])}
+                       for m in ms],
         })
     return result
 

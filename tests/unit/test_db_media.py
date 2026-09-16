@@ -141,3 +141,19 @@ def test_list_photo_points_scoping_and_shape(point, make_user):
 def test_list_photo_points_skips_media_without_thumbnail(point):
     db.add_media(point["point_id"], "photo", "a.jpg", None)
     assert db.list_photo_points(point["user"], point["trip_id"]) == []
+
+
+def test_list_photo_points_gives_thumb_url(point):
+    """每条 photo 必须带 thumb_url（服务端算好的对外地址）。
+
+    回归用例：原来只给文件名 `thumb`，前端只好自己拼 /uploads/thumbs/xxx。
+    Bucket 转私有之后那条裸链是 403 —— 地图上照片堆整片空白，而接口本身
+    200、日志干净，只有图是白的（2026-09-16 实测到的 bug）。
+    """
+    db.add_media(point["point_id"], "photo", "a.jpg", "a_t.jpg")
+    out = db.list_photo_points(point["user"], point["trip_id"])
+    ph = out[0]["photos"][0]
+    assert ph["thumb"] == "a_t.jpg"
+    assert ph["thumb_url"], "thumb_url 不能为空 —— 前端没有它就只能拼裸链"
+    # 地址必须指向缩略图本身，不能是原图（缩略图小，图层里几十张直接用原图会拖垮加载）
+    assert "a_t.jpg" in ph["thumb_url"]

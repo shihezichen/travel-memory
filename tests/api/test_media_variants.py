@@ -81,8 +81,8 @@ def test_variants_endpoint_returns_ladder(auth_client, seeded_trip):
     assert body["transcoding"] is False
     q = body["qualities"]
     assert [x["label"] for x in q] == ["original", "720p", "480p"]
-    assert q[0]["url"] == "/uploads/v.mp4?v=1"
-    assert q[1]["url"] == "/uploads/variants/v_720p.mp4?v=1"
+    assert q[0]["url"] == "/uploads/v.mp4"          # 不带 ?v=1：会被签进 OSS key
+    assert q[1]["url"] == "/uploads/variants/v_720p.mp4"
     assert q[1]["width"] == 720 and q[1]["height"] == 958 and q[1]["bitrate"] == 931
 
 
