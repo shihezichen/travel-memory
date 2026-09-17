@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>旅行记忆 — 把一趟旅行，变成能重新走一遍的记忆</title>
-<meta name="description" content="地图轨迹、照片视频、路线回放、只读分享，还有一个对 AI 开放的记忆接口。行程随时整份导出，不做广告推荐。">
+<meta name="description" content="地图轨迹、照片视频、路线回放、只读分享，还有一个对 AI 开放的记忆接口。行程随时整份导出，单张照片也能按原图存回手机。">
 <meta property="og:title" content="旅行记忆 · Travel Memory">
 <meta property="og:description" content="把一趟旅行，变成能重新走一遍的记忆。">
 <meta property="og:type" content="website">
@@ -641,6 +641,35 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     padding:14px 0 30px;background:none;
     background:linear-gradient(0deg,rgba(6,8,12,0),rgba(6,8,12,.72) 40%,rgba(6,8,12,.92))}
   [data-slide="0"] .slide-cap::before{display:none}
+
+  /* 第 2/3/4 屏跟着第 1 屏走：文字一律挪到画面**上方**，底色由 .stage-shot
+     那层压暗渐变提供（翻过来，厚的一端在上）。
+     这里**不给 .slide-cap 自己加底色** —— 它在手机上是 left/right 各缩 16px 的，
+     自带背景会在浅色截图上露出两条竖边；交给通屏的那层去托，边缘才干净。 */
+  .stage-shot ~ .slide-cap{top:0;bottom:auto;padding:14px 0 26px;background:none}
+  .stage-shot ~ .slide-cap::before{display:none}
+  /* 180deg = 从上往下，0% 那一端是**画面顶部**。
+     文字条（含底 padding）实测占顶上 35.8%，正文最后一行落在 26% 处。
+     这一段是**一块均匀的墨**，不做自上而下的渐变 —— 之前那版从 .97 一路推到 0，
+     顶边近乎纯黑、越往下越淡，看着压抑，也把截图顶部（导航/最完整的那排照片）
+     整个盖死了。现在统一 .50，背后的图看得见，白字也还压得住。
+     **平色段必须盖过 26%**：第一版收在 24%，副标题正好掉进渐变里，
+     在第 4 屏那张近乎全白的分享页截图上直接糊掉。现在 28% 才开始收，
+     到 36% 收干净 —— 那 8% 只是收边，不是"顶部区域的渐变"。
+     通屏那层薄墨同步从 .26 降到 .22，整体再透一点。 */
+  /* **必须写 `.stage .stage-shot::before`**（0,2,0）而不是裸的
+     `.stage-shot::before`（0,1,0）：基础那条躺在这个 @media **后面**，
+     同优先级下后写的赢，裸写等于白写 —— 和文件里 `.only-pc` 那处一个坑。 */
+  .stage .stage-shot::before{
+    background:
+      linear-gradient(180deg,rgba(5,7,12,.50) 0,rgba(5,7,12,.50) 28%,
+        rgba(5,7,12,0) 36%),
+      linear-gradient(180deg,rgba(5,7,12,.22),rgba(5,7,12,.22));
+  }
+  /* 墨压薄了，副标题就得自己扛一点对比度：白度从 .72 提到 .86，
+     再补一圈实心暗描边。第 4 屏底下是全白的分享页，只靠那层薄墨托不住。 */
+  .stage-shot ~ .slide-cap small{color:rgba(255,255,255,.86);
+    text-shadow:0 1px 3px rgba(0,0,0,.85),0 0 10px rgba(0,0,0,.7)}
   /* 构图重心上移，避开顶部的文字条 */
   [data-slide="0"] .stack{width:50px;height:38px}
   [data-slide="0"] .stat-float{display:none}
@@ -798,7 +827,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 
    比例对不上时被裁掉多少（顶端对齐，所以损失全在下边）：
        P2 1.610 -> 桌面切下 9.4% / 手机切左右各 8.6%（宽度方向没得选）
-       P3 1.907 -> 桌面切左右各 3.4% / 手机切左右各 15.0%
+       P3 2.009 -> 桌面切左右各 5.7% / 手机切左右各 25.1%
        P4 1.461 -> 桌面切下 17.8% / 手机切左右各 4.4%
    横向裁剪（原图比容器宽）没有"上对齐"这回事，只能居中；纵向才有。
 
@@ -815,6 +844,24 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 .stage-shot::after{content:"";position:absolute;inset:0;pointer-events:none;
   border-radius:4px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),
     inset 0 0 90px rgba(4,6,10,.35)}
+
+/* 第 2/3/4 屏的统一压暗层。
+   为什么要有它：第 1 / 第 5 屏是自绘的深色插画，白字压上去天然读得出来；而这
+   三屏是**真实页面截图**，底色是白的地图和浅色面板 —— 同一套白字上去就糊了
+   （第 4 屏的分享页几乎全白，标题基本看不见）。这一层把三屏拉回同一个
+   「深色底 + 浅色前景」的家族：通屏一层薄墨，文字那一侧再叠一条厚渐变。
+
+   用 ::before 而不是 ::after —— ::after 已经被画框的内阴影占了。
+   **必须给 z-index**：伪元素的绘制顺序是 ::before → 子节点 → ::after，
+   不写的话这层会被 <img> 盖在下面，等于没有。
+   只挂在 .stage-shot 上，所以天然只作用于有截图的那三屏，不用写屏号。 */
+.stage-shot::before{
+  content:"";position:absolute;inset:0;z-index:1;pointer-events:none;border-radius:4px;
+  background:
+    linear-gradient(180deg,rgba(5,7,12,0) 30%,rgba(5,7,12,.42) 62%,
+      rgba(5,7,12,.80) 84%,rgba(5,7,12,.92) 100%),
+    linear-gradient(180deg,rgba(5,7,12,.24),rgba(5,7,12,.24));
+}
 
 /* 第 2/3/4 屏各挂 PC 版和手机版两张图，按断点只显示一张 ——
    同一张 16:9 的图 cover 进手机的 4:3 容器会左右各切掉 25%，
@@ -1232,9 +1279,8 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 <!-- ========== HERO ========== -->
 <section class="hero">
   <div class="wrap">
-    <span class="eyebrow"><span class="dot"></span
-      ><span class="only-pc">数据随时导出 · 不做广告推荐 · MCP 就绪</span
-      ><span class="only-m">数据随时导出 · MCP 就绪</span></span>
+    <!-- 去掉「不做广告推荐」之后，宽窄两版文案一模一样，合成一条即可 -->
+    <span class="eyebrow"><span class="dot"></span><span>数据随时导出 · MCP 就绪</span></span>
     <h1>把一趟旅行，<br>变成<span class="grad">能重新走一遍</span>的记忆</h1>
     <p class="sub">
       <span class="only-pc">地图上的真实路线、每个落脚点的照片与心情、一键回放的那一天 ——
@@ -1360,7 +1406,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
                  src="/static/promo/slide-route-m.webp"
                  alt="旅行记忆地图：滇藏线轨迹与沿途落脚点">
           </div>
-          <p class="slide-cap">旅行轨迹，串成一条记忆珍珠的项链
+          <p class="slide-cap">陆行轨迹，串成记忆珍珠的项链
             <small>每一段路、每一个落脚点，按顺序串在一条线上</small></p>
         </div>
 
@@ -1608,7 +1654,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 5h9v9H4z"/><path d="M9 9l11-4M15 9v6a3 3 0 01-3 3H9"/></svg></div>
         <h3>不只是在这儿能看，随时整份带走</h3>
         <p style="margin-bottom:18px">每趟行程都能导出成一个文件，照片和文字一起 ——
-           哪天不想用了，拿走就是。不做广告推荐，也不拿去训练模型。</p>
+           哪天不想用了，拿走就是。</p>
         <div class="demo-box" style="margin-top:0">
           <!-- 相册墙：24 格，每格一张独立小图（底图由上面的 :nth-child 分配）。
                顺序刻意打散、不按 p01..p24 排，相邻两格不同题材。
@@ -1645,10 +1691,15 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <h3>照片堆在地图上</h3>
         <p>照片按地点聚成一堆，跟着缩放变大小 —— 哪儿拍得最多，一眼就看出来。</p>
       </div>
+      <!-- 「存回手机」原来在页尾隐私带里单独占一张卡。它和这张讲的是同一件事的两个粒度 ——
+           整趟打包 / 单张取用 —— 拆成两处等于让人在两个区之间自己拼。并到这儿之后，
+           「回看」这一节从「在站内重新走一遍」一路交代到「拿走之后照样能看」，
+           读下来是一条完整的线；页尾也不必再为半句话留一整条带。
+           图标换成「下载」那一支（原来的折线图是热力图的，两张卡撞了）。 -->
       <div class="card c-2 reveal">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 17l4-9 5 5 4-8 5 12z"/></svg></div>
-        <h3>整趟带走</h3>
-        <p>一趟行程导出成一个文件，照片和文字都在里面 —— 下载、备份、换台设备接着看都行。</p>
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5M4 20h16"/></svg></div>
+        <h3>整趟带走，单张也能存回手机</h3>
+        <p>一趟行程导出成一个文件，照片和文字都在里面；只想要某几张，就按原图下载、视频可选清晰度，文件名自动按「日期 + 地点 + 序号」拼好。</p>
       </div>
     </div>
   </div>
@@ -1748,27 +1799,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   </div>
 </section>
 
-<!-- ========== 隐私 ========== -->
-<section>
-  <div class="wrap">
-    <!-- 这一条带原来有三张卡。「随时整份带走」并进了 02/回看，「删了就是删了」
-         并进了 03/分享（两处都见那边的注释），只剩下面这两张 —— 它们讲的是
-         站在站内、面向所有行程的一条底线，跟某趟行程或某条链接无关，
-         留在页尾才合适。删两张后 .c-2 的栅格仍然成立，不用改 CSS。 -->
-    <div class="bento">
-      <div class="card c-2 reveal">
-        <div class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
-        <h3>不做广告，不训模型</h3>
-        <p>你的行程只用来给你自己看，不拿去推荐、不拿去训练，也不卖给谁。</p>
-      </div>
-      <div class="card c-2 reveal">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5M4 20h16"/></svg></div>
-        <h3>存回手机</h3>
-        <p>照片按原图下载，视频可选清晰度，文件名自动按「日期 + 地点 + 序号」拼好。</p>
-      </div>
-    </div>
-  </div>
-</section>
+<!-- 页尾原来还有一条「隐私」带。三张卡陆续各归其位：「随时整份带走」→ 02/回看，
+     「删了就是删了」→ 03/分享，「存回手机」→ 02/回看的「整趟带走」那张（见那边的注释）。
+     剩下的「不做广告，不训模型」整张删掉 —— 这是最基本的操守，写出来反倒像在邀功。
+     整条带因此空了，一并去掉。 -->
 
 <!-- ========== 结尾 CTA ========== -->
 <section style="padding-top:20px">

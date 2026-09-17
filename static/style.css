@@ -589,6 +589,14 @@ body.map-fullscreen-on { overflow: hidden; }
 #btn-edit-point { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M17%203a2.83%202.83%200%201%201%204%204L7.5%2020.5%202%2022l1.5-5.5z%27%2F%3E%3C%2Fsvg%3E"); }
 #btn-del-point  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%232c3138%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M3%206h18M8%206V4a1%201%200%200%201%201-1h6a1%201%200%200%201%201%201v2%27%2F%3E%3Cpath%20d%3D%27M19%206l-1%2014a2%202%200%200%201-2%202H8a2%202%200%200%201-2-2L5%206%27%2F%3E%3Cpath%20d%3D%27M10%2011v6M14%2011v6%27%2F%3E%3C%2Fsvg%3E"); }
 #btn-del-point:hover, #btn-del-point:active { background-color: rgba(220, 38, 38, .1); }
+/* 点详情的「相片墙自动播放」入口。和相册工具栏那颗是同一套逻辑（见 PW_TARGETS），
+   但这里是圆形图标按钮，所以图标走背景图、播放中换成 ■ 并高亮 —— 不写文字。 */
+#btn-detail-play { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27%232c3138%27%3E%3Cpath%20d%3D%27M8%205v14l11-7z%27%2F%3E%3C%2Fsvg%3E"); }
+/* 播放中：底色不动（还是透明），只把 ■ 涂成醒目的红，和相册那颗一个意思。 */
+#btn-detail-play.pw-playing {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27%23dc2626%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%2712%27%20height%3D%2712%27%20rx%3D%271.5%27%2F%3E%3C%2Fsvg%3E");
+  opacity: 1;
+}
 @media (max-width: 768px) {
   /* 手机上热区放大到 36，图标本身不变 */
   .detail-act { width: 36px; height: 36px; }
@@ -2486,6 +2494,168 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
   .photo-cell.flipping, .media-item.flipping { transition: none; }
 }
 .photo-cell:active img { opacity: .7; }
+
+/* ---------- 相册墙：自动播放（与首页照片墙同一套五拍动画） ----------
+   点工具栏上那枚 ▶，随机挑一格「选中 → 放大 → 铺满 → 渐隐」，如此往复；
+   再点一下（或按 Esc、点到别的照片、切走 tab）就停下并立刻复位。
+
+   ⚠ 与首页那套的关键差别：**这里每格是 <img>，不是 CSS 背景图**。
+   铺满层要的是「这张图的地址」，读的是完整分辨率那张，不是 200px 的缩略图 ——
+   在手机上把缩略图拉满整屏会糊成一片。所以 URL 由 JS 直接告诉这里，
+   不再走首页那条 `getComputedStyle(cell).backgroundImage` 的路子。
+
+   铺满层的定位：`inset:0` 是相对**最近的已定位祖先**（CSS 的包含块规则，
+   不只是 position 决定的）。.photo-cell 是 position:relative，
+   所以铺满层若放在格子里，inset:0 只会铺满那一格、而不是整面墙。
+   因此它必须放在 #photo-grid 的直接子层（见 share.html / 脚本 wallEnsureLayer）。 */
+.photo-grid { position: relative; }
+/* 点详情的媒体网格用同一套墙（见 common.js 的 PW_TARGETS）。
+   铺满层是 inset:0 的绝对定位，没有这一行它会铺到更外层的 .view 上去。 */
+.media-grid { position: relative; }
+.pw-fill { position: absolute; inset: 0; pointer-events: none; z-index: 4;
+  border-radius: 2px; background-size: cover; background-position: center;
+  opacity: 0; transform-origin: 50% 50%;
+  will-change: transform, opacity;
+  transition: transform .76s cubic-bezier(.22,.61,.36,1), opacity .28s ease }
+/* 铺满态。必须**显式**写 transform:none：脚本后半段会把内联 transform 置空、
+   把控制权交还样式表，这一行不写的话内联值一撤就退回初始 transform，
+   大图当场弹回原尺寸。 */
+.pw-fill[data-on] { opacity: 1; transform: none }
+/* 收尾：匀速缩到 0 并淡出。两条 animation 的时长必须和脚本里的 PW_BURST 相等，
+   三处（这里两条 + JS 常量）一起改 —— 对不上的话 JS 会在动画跑完前清场。 */
+@keyframes pw-fill-shrink { 0% { transform: scale(1) } 100% { transform: scale(0) } }
+@keyframes pw-fill-out    { 0% { opacity: 1 }    100% { opacity: 0 } }
+.pw-fill[data-burst] {
+  opacity: 0; transform: scale(0);
+  animation: pw-fill-shrink 1.08s linear forwards,
+             pw-fill-out    1.08s linear forwards }
+/* 收尾中的那一个退到下一层：两个 fill 同为 z-index:4 时靠 DOM 顺序定胜负，
+   而正在收尾的可能是任意一个。压住新一轮刚长出来的图会很难看，压住收尾的看不出来。 */
+.pw-fill[data-burst] { z-index: 3 }
+
+/* 被选中那一格：亮起来 + 外圈描边。放大倍率走 --g（见下），
+   这样脚本能在交接时把 1.5 平滑收向 1，而不是硬切。
+   **只会同时存在一格**：抽签池保证一轮内不重复，且必先 restoreCell 再选下一个。 */
+.photo-cell[data-pw-pick],
+.media-item[data-pw-pick] {
+  --pw-g: 1.5;
+  transform: translate(var(--pw-dx, 0px), var(--pw-dy, 0px)) scale(var(--pw-g, 1));
+  z-index: 2;
+  /* 两圈描边：里圈纯白把照片和背景切开，外圈主色让它在任何底色的照片上都跳出来。
+     **外径 6px 必须和 common.js 的 PW_RING 相等** —— 那个数就是 wallGrowPos 的
+     让位余量，靠它描边的外沿才正好压在墙边上。改厚度就要两处一起改。 */
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 6px var(--primary),
+    0 10px 28px rgba(0, 0, 0, .55) }
+/* 只动 transform 的过渡。**不要**在这里写 opacity 过渡 ——
+   .photo-cell img 上没有 opacity 过渡，突然加上会让 :active 那下压暗变成慢慢淡，
+   反而看得更清楚。 */
+.photo-cell[data-pw-pick],
+.media-item[data-pw-pick] { transition: transform .42s cubic-bezier(.22, .61, .36, 1) }
+/* 放大那一拍别让格子上的删除 / ✎ / 日期角标跟着一起放大喧宾夺主 */
+.media-item[data-pw-pick] .del,
+.media-item[data-pw-pick] .media-cap,
+.media-item[data-pw-pick] .media-date { opacity: 0; transition: opacity .2s ease }
+/* 铺满层长开的那一拍，格子同步缩回 1 倍并滑回网格原位 —— 两者共用一条缓动，
+   视觉上就是「大图取代了那一格」。 */
+.photo-cell[data-pw-settle],
+.media-item[data-pw-settle] {
+  transform: translate(0px, 0px) scale(1);
+  transition: transform .76s cubic-bezier(.22, .61, .36, 1) }
+
+/* 铺满层上的视频。抽到视频不再跳过 —— 铺满到位就在这一层里起播，
+   播完（ended）才进渐隐（见 common.js pwPlayFillVideo）。
+   object-fit: cover 和背景图那条路保持一致：铺满整面墙、按需裁边。 */
+/* 唯一一处把 pointer-events 收回来的地方：铺满层整体是 none（不能挡住底下的
+   格子），但视频这一格必须能接住手指 —— 轻触亮控制条、再点就是暂停/拖进度。
+   原来这里是 none，手指其实穿透打在底下的 .photo-cell 上，那个 onclick 第一句
+   就是 pwStop()，于是「碰一下视频整面墙就停了」。子元素可以覆盖父层的 none，
+   所以这一行够了，不用动 .pw-fill 本身。 */
+.pw-fill-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; background: #000; pointer-events: auto;
+}
+/* 正在渐隐收尾的那一层别再抢手指：它已经在缩小/淡出，点它没有意义，
+   而且会挡住新一轮刚长出来的那张。 */
+.pw-fill[data-burst] .pw-fill-video { pointer-events: none }
+
+/* ---------- 铺满层视频的全屏钮 ----------
+   轻触视频亮出原生控制条时，这个钮跟着一起出现（见 .pw-fill[data-ctl]）。
+   为什么要自己做一个：各端原生控制条上的全屏钮有没有、在哪，实现之间差得很远
+   （iOS 内联播放器、安卓各家 webview、微信内置浏览器都不一样），做一个自己的
+   才能保证「一定有、一定在同一个位置」。图标用顶栏那套 Feather 几何的
+   maximize / minimize，白色描边（底下是视频，深色居多）。
+   **必须 pointer-events:auto**：父层 .pw-fill 是 none，不写这行按钮点不动。 */
+/* 位置：**视口**右下角，不是铺满层的右下角。
+   铺满层盖的是整个相册网格，网格通常比可视区高一大截（实测手机上 838px 对
+   305px 的可视段）—— 按铺满层定位的话，右下角直接落到屏幕外面，按钮就"不见了"。
+   所以这个钮挂在 body 上走 fixed，永远钉在拇指够得到的那个角。
+   进全屏时脚本会把它移进铺满层（见 fsSync），那时 fill 就是整个视口，
+   下面那条 `.pw-fill .pw-fill-fs` 接手，改回 absolute。 */
+.pw-fill-fs {
+  /* bottom 抬高一个身位（40px 钮身 + 8px 间隙）：贴 18px 时这个钮的下缘会和
+     右下角那排按钮擦上，手指落点也容易打架。抬到 66px 正好空出一整格。 */
+  position: fixed; right: 14px; bottom: calc(66px + env(safe-area-inset-bottom));
+  z-index: 1200;                       /* 高于底部抽屉(500) 和 ICP(400)，低于灯箱(2000) */
+  width: 40px; height: 40px; padding: 0;
+  border: 1px solid rgba(255, 255, 255, .4); border-radius: 10px;
+  background: rgba(0, 0, 0, .45) no-repeat center / 20px 20px;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M8%203H5a2%202%200%200%200-2%202v3M16%203h3a2%202%200%200%201%202%202v3M8%2021H5a2%202%200%200%201-2-2v-3M16%2021h3a2%202%200%200%200%202-2v-3%27%2F%3E%3C%2Fsvg%3E");
+  pointer-events: auto; cursor: pointer;
+  opacity: 0; visibility: hidden;
+  transition: opacity .18s ease, visibility .18s ease, transform .12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+/* 全屏中：按钮被移进了铺满层，而铺满层此刻就是整个视口，按 absolute 摆就行。
+   bottom 留 70px 是给原生控制条让位 —— 它贴着底边通栏一条，摆太低会重叠，
+   点"全屏"就变成点进度条。 */
+.pw-fill .pw-fill-fs { position: absolute; right: 14px; bottom: 70px; z-index: 2 }
+/* 显隐挂在按钮自己身上（原来挂 .pw-fill[data-ctl]）：按钮平时并不在铺满层里，
+   祖先选择器够不着它。 */
+.pw-fill-fs[data-on] { opacity: 1; visibility: visible }
+.pw-fill-fs:active { transform: scale(.93) }
+.pw-fill-fs.active { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%3E%3Cpath%20d%3D%27M8%203v3a2%202%200%200%201-2%202H3M21%208h-3a2%202%200%200%201-2-2V3M3%2016h3a2%202%200%200%201%202%202v3M16%2021v-3a2%202%200%200%201%202-2h3%27%2F%3E%3C%2Fsvg%3E") }
+/* 收尾中的那一层不该再有按钮（脚本里已经拆了，这条是兜底） */
+.pw-fill[data-burst] .pw-fill-fs { display: none }
+
+/* ---------- 全屏态 ----------
+   全屏的是 .pw-fill **整层**而不是 <video>：全屏钮是 video 的兄弟节点，
+   全屏 video 的话按钮不在渲染子树里，CSS 兜底那条路就没法退出来了。
+   全屏里把 cover 换成 contain + 纯黑底 —— cover 在整块屏幕上会裁掉一大块画面。
+   ⚠ 三个选择器**必须分成三条规则**：选择器列表里只要有一个浏览器不认识的
+   （Firefox 不认 :-webkit-full-screen），**整条规则**都会被丢掉。 */
+.pw-fill:fullscreen { background-color: #000; background-image: none; border-radius: 0 }
+.pw-fill:-webkit-full-screen { background-color: #000; background-image: none; border-radius: 0 }
+.pw-fill:fullscreen .pw-fill-video { object-fit: contain }
+.pw-fill:-webkit-full-screen .pw-fill-video { object-fit: contain }
+/* 连 webkitEnterFullscreen 都没有的内置浏览器：自己 fixed 铺满视口。
+   和地图全屏一个兜底思路（见 share.js 的 initMapFullscreen）。
+   transform 要压掉：这一层平时挂着长开/收尾的 transform，不压就不是满屏。 */
+.pw-fill[data-fscss] {
+  position: fixed; inset: 0; z-index: 9999; border-radius: 0;
+  background-color: #000; background-image: none;
+  transform: none !important; opacity: 1 !important; transition: none;
+}
+.pw-fill[data-fscss] .pw-fill-video { object-fit: contain }
+
+/* 播放按钮。两种状态共用一个位置：播放中换成 ■。
+   **底色保持不变**，只把图标换成醒目的红 —— 反色（白字蓝底）那一版在手机上
+   会和相邻按钮的形状搅在一起，而且 ■ 本来就是「按一下就停」的意思，红色最直白。
+   **必须把 :hover 那一支一起写上**：`.icon-btn:hover:not(:disabled)` 是 (0,3,0)，
+   比单写 `.icon-btn.pw-playing` 的 (0,2,0) 高，而手机上点一下之后 hover 态会一直粘着 ——
+   不压住的话底色会被它改掉，正是之前「图标和白底糊成一片」的来源。 */
+.icon-btn.pw-playing,
+.icon-btn.pw-playing:hover:not(:disabled),
+.icon-btn.pw-playing:active {
+  background: var(--panel); color: var(--danger); border-color: var(--danger);
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .photo-cell[data-pw-pick], .photo-cell[data-pw-settle],
+  .media-item[data-pw-pick], .media-item[data-pw-settle] { transition: none }
+  .pw-fill { transition: none }
+}
 .photo-cell-blank {
   width: 100%; height: 100%; display: flex; align-items: center;
   justify-content: center; font-size: 20px; opacity: .45;
@@ -2530,6 +2700,11 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
   border-radius: 10px;
 }
 .icp-footer a:hover { text-decoration: underline; }
+/* 照片墙自动播放时藏起来：铺满层会盖住整个网格，备案号浮在最底下正好压在
+   照片上。停播就回来（body 上那个类由 pwSetButton 统一开关，见 common.js）。
+   工信部要求的是**首页**底部展示备案号 —— 首页 landing.html 那份不受影响，
+   这里动的只是登录后的主界面。 */
+body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: opacity .3s ease }
 
 /* 登录框内的那份：跟随内容流，不固定 */
 .login-box .icp-footer {

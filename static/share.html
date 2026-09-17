@@ -8,12 +8,12 @@
        结果就是浅色地图上出现浅色图标。声明后浏览器不再自动变暗。 -->
   <meta name="color-scheme" content="light">
   <title>旅行记忆 · 分享</title>
-  <link rel="icon" href="/static/icon.svg?v=20260911v6" type="image/svg+xml">
-  <link rel="icon" href="/static/favicon-32.png?v=20260911v6" sizes="32x32">
-  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260911v6">
-  <link rel="manifest" href="/static/site.webmanifest?v=20260911v6">
+  <link rel="icon" href="/static/icon.svg?v=20260917v8" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png?v=20260917v8" sizes="32x32">
+  <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260917v8">
+  <link rel="manifest" href="/static/site.webmanifest?v=20260917v8">
   <meta name="theme-color" content="#FF8A00">
-  <link rel="stylesheet" href="/static/style.css?v=20260911v6">
+  <link rel="stylesheet" href="/static/style.css?v=20260917v8">
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
     window.MEDIA_BASE = "__MEDIA_BASE__";
@@ -23,7 +23,7 @@
 <body class="share-page">
   <div class="app">
     <header class="topbar">
-      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260911v6" alt="" width="22" height="22"><span>旅行记忆</span></div>
+      <div class="brand"><img class="brand-logo" src="/static/icon.svg?v=20260917v8" alt="" width="22" height="22"><span>旅行记忆</span></div>
       <div class="share-title" id="share-title">载入中…</div>
     </header>
     <div class="userbar">
@@ -100,6 +100,7 @@
               <div class="detail-head">
                 <h3 id="detail-name"></h3>
                 <span id="detail-date" class="detail-date"></span>
+                <button id="btn-detail-play" class="detail-act" data-pw-icon="css" title="自动播放：随机选一张放大铺满，再换下一张" aria-label="自动播放这个地点的相片墙" aria-pressed="false"></button>
               </div>
               <p id="detail-desc" class="detail-desc"></p>
               <div id="media-grid" class="media-grid"></div>
@@ -116,6 +117,7 @@
               </div>
               <span id="photo-count" class="photo-count"></span>
               <div class="photo-tools">
+                <button id="btn-photo-play" class="icon-btn" title="自动播放：随机选一张放大铺满，再换下一张" aria-label="自动播放照片墙" aria-pressed="false">▶</button>
                 <button id="btn-photo-sort" class="icon-btn" title="切换时间排序">↓ 新→旧</button>
                 <button id="btn-photo-zoom-out" class="icon-btn" title="缩小（每行更多）">－</button>
                 <button id="btn-photo-zoom-in" class="icon-btn" title="放大（每行更少）">＋</button>
@@ -160,7 +162,7 @@
     <div class="lightbox-counter" id="lightbox-counter"></div>
   </div>
 
-  <script src="/static/common.js?v=20260911v6"></script>
-  <script src="/static/share.js?v=20260911v6"></script>
+  <script src="/static/common.js?v=20260917v8"></script>
+  <script src="/static/share.js?v=20260917v8"></script>
 </body>
 </html>

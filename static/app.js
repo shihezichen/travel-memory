@@ -848,8 +848,10 @@ function restoreMapView() {
 // 恢复界面状态：面板高度 / 选中点 / tab（内容已刷新，这里只恢复位置与选中状态）
 function restoreUiState(points) {
   const st = getTripState();
-  // 面板高度（px）
-  if (st.panelHeight) {
+  // 面板高度（px）。**必须判 null 而不是真值**：面板拖到最顶时地图高度正好是 0，
+  // 写成 if (st.panelHeight) 的话这一档会被当成「没存过」跳掉 ——
+  // 表现就是「其它位置刷新都记得，唯独拖到最上面那一档记不住」。
+  if (st.panelHeight != null && Number(st.panelHeight) >= 0) {
     const mapEl = document.getElementById('map');
     if (mapEl) {
       mapEl.style.height = st.panelHeight + 'px';
@@ -2019,6 +2021,9 @@ let cancelTabSwipe = function () {};
 
 function renderMedia(media) {
   const grid = $('#media-grid');
+  // 这面网格也是一面「相片墙」（见 common.js PW_TARGETS.detail）：
+  // 重建会把铺满层一起冲掉，正在播的那一轮等于被抽了遮挡层，先停。
+  if (typeof pwReset === 'function' && pwOn && pwTargetKey === 'detail') pwReset();
   grid.innerHTML = '';
   applyMediaCols();      // 重建后把当前缩放档位重新落到网格上
   // 服务端列表 + 刚传完但这份快照里还没有的（见 mergeRecentUploads）
@@ -2035,6 +2040,19 @@ function renderMedia(media) {
   if (!pt || !pt.is_waypoint) grid.appendChild(buildMediaAddCell());
   // 上次没传完的（刷新/换设备回来）：异步拉一次，插「未完成的上传」占位格
   if (!pt || !pt.is_waypoint) refreshResumableCells(currentPointId);
+  wallForgetDetached();        // 上一轮的格子已经随 innerHTML='' 脱离文档
+  syncDetailPlayBtn();
+  // 换点/删图之后接着放（没在播就是个空操作）
+  if (typeof pwRestart === 'function' && pwTargetKey === 'detail') pwRestart();
+}
+
+/* 点详情的自动播放入口：这个点一张媒体都没有就没什么可播的，藏起来别占位置。 */
+function syncDetailPlayBtn() {
+  const b = document.getElementById('btn-detail-play');
+  if (!b) return;
+  const n = (detailMedia || []).filter(m => m && (m.type === 'video' || m.type === 'photo')).length;
+  b.classList.toggle('hidden', n === 0);
+  if (typeof pwSetButton === 'function') pwSetButton();
 }
 
 function buildMediaItem(m) {
@@ -2110,6 +2128,9 @@ function buildMediaItem(m) {
     }
   };
   item.appendChild(del);
+  // 自动播放要用它拿原图/视频地址，存一份备查（见 common.js cellWallByCell）。
+  // 只登记真正的媒体格 —— 「＋」和上传中的占位格不进表，自然就不会被抽中。
+  cellWallByCell.set(item, m);
   return item;
 }
 
@@ -3592,6 +3613,9 @@ function setMediaZoom(delta) {
   try { localStorage.setItem(MEDIA_ZOOM_KEY, String(next)); } catch (e) {}
   const grid = document.getElementById('media-grid');
   flipGrid(grid, applyMediaCols);
+  // 列数变了 = 格子边长和整面墙的尺寸都变了，起点几何当场作废。
+  // 不停播，从新几何重起一拍（见 common.js pwRestart）。
+  if (typeof pwRestart === 'function') pwRestart();
 }
 (function initMediaGridZoom() {
   // 同相册：手势绑在**整个 tab 页**上。网格只到最后一行缩略图为止，
@@ -3640,9 +3664,12 @@ async function openPointPhotos(pointId) {
 function hideDetail() {
   unhighlightMapPoints();
   unhighlightSegments();
+  // 网格连同铺满层一起被清空，正在播的那一轮必须先停，否则大图会留在一个空网格上
+  if (typeof pwStop === 'function' && pwOn && pwTargetKey === 'detail') pwStop();
   $('#detail-empty').classList.remove('hidden');
   $('#detail-body').classList.add('hidden');
   $('#media-grid').innerHTML = '';
+  wallForgetDetached();
 }
 
 // ---------- 轨迹回放动画 ----------
@@ -4183,7 +4210,14 @@ function renderPhotoGrid() {
   const total = photoItems.length;
   // 写明范围：这里是「整个行程」的全部媒体，不是某个轨迹点的
   $('#photo-count').textContent = total === 0 ? ''
-    : (n === total ? `本行程 · ${total} 项` : `本行程 · ${n} / ${total} 项`);
+    : (n === total ? `${total} 项` : `${n} / ${total} 项`);
+
+  // 重建网格前先把这一拍清掉：下面这句 innerHTML 会把铺满层一起删掉，
+  // 正在跑的那一轮等于把遮挡层抽了，动画会当场露馅。
+  // **但不停播** —— 改筛选/排序只是换了要看的内容，用户并没有按停止，
+  // 重建完接着在新网格上放（见函数末尾的 pwRestart）。
+  if (typeof pwReset === 'function' && pwOn && pwTargetKey === 'albums') pwReset();
+  wallForgetDetached();               // 旧的格子引用随这次重建一起作废（只摘掉已脱离文档的）
 
   grid.style.setProperty('--photo-cols', PHOTO_COLS[photoView.zoom]);
   grid.innerHTML = '';
@@ -4221,13 +4255,25 @@ function renderPhotoGrid() {
       };
       cell.appendChild(badge);
     }
+    // 自动播放要用它拿原图地址和「地点 · 时间」，存一份备查（见 cellWallByCell）
+    cellWallByCell.set(cell, m);
     cell.onclick = () => {
+      if (pwOn) pwStop();             // 点开大图看细节 —— 自动播放让位
       lightboxMedia = photoShown;
       openLightbox(idx);
     };
     grid.appendChild(cell);
   });
+  // 新网格铺好了，接着放（没在播就是个空操作）
+  if (typeof pwRestart === 'function' && pwTargetKey === 'albums') pwRestart();
 }
+
+/* 相册墙自动播放（实现在 common.js）：这里只需提供主页面特有的那一处挂钩 ——
+   铺满层用哪张图。**必须走 mediaSrc(m,'full') 而不是 m.url**：
+   只有服务端知道这个文件同步到 OSS 没有（见 common.js mediaSrc 的注释），
+   分享页那边接口直接带 url 所以能用 m.url，主页面这里不行。 */
+wallMediaUrl = function (m) { return mediaSrc(m, 'full'); };
+wallAttach();
 
 function setPhotoZoom(delta) {
   const next = Math.min(PHOTO_COLS.length - 1, Math.max(0, photoView.zoom + delta));
@@ -4241,6 +4287,9 @@ function setPhotoZoom(delta) {
   flipGrid(grid, function () {
     grid.style.setProperty('--photo-cols', PHOTO_COLS[next]);
   });
+  // 列数变了 = 格子边长和整面墙的尺寸都变了，起点几何当场作废。
+  // 不停播，从新几何重起一拍（见 common.js pwRestart）。
+  if (typeof pwRestart === 'function') pwRestart();
 }
 
 document.querySelectorAll('#photo-filter .seg-btn').forEach(b => {
@@ -5178,7 +5227,8 @@ function restoredMapHeight(full) {
   const st = (typeof getTripState === 'function') ? getTripState() : {};
   const saved = Number(st && st.panelHeight);
   const dflt = Math.round(window.innerHeight * 0.55);
-  const h = (saved > 0 && saved < full - 40) ? saved : dflt;
+  // 同上：0 是合法的一档（面板吃满整个地图区），别把它当「没存过」
+  const h = (saved >= 0 && saved < full - 40) ? saved : dflt;
   return Math.max(0, Math.min(full - 40, h));
 }
 // 把最终状态一次性落到 DOM 上（不含动画）

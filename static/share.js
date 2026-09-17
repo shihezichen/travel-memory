@@ -1114,6 +1114,9 @@ function shareToggleReplay() {
 
 function shareRenderMedia(media) {
   const grid = $('#media-grid');
+  // 这面网格也是一面「相片墙」（见 common.js PW_TARGETS.detail）：
+  // 重建会把铺满层一起冲掉，正在播的那一轮等于被抽了遮挡层，先停。
+  if (typeof pwReset === 'function' && pwOn && pwTargetKey === 'detail') pwReset();
   grid.innerHTML = '';
   applyMediaCols();      // 重建后把当前缩放档位重新落到网格上
   lightboxMedia = media;
@@ -1131,8 +1134,22 @@ function shareRenderMedia(media) {
     item.appendChild(img);
     if (m.type === 'video') item.appendChild(el('span', 'video-badge', '▶'));
     if (m.exif_time) item.appendChild(el('span', 'media-date', m.exif_time.slice(0, 10)));
+    // 自动播放要用它拿原图/视频地址，存一份备查（见 common.js cellWallByCell）
+    cellWallByCell.set(item, m);
     grid.appendChild(item);
   });
+  wallForgetDetached();        // 上一轮的格子已经随 innerHTML='' 脱离文档
+  shareSyncDetailPlayBtn(media);
+  // 换点之后接着放（没在播就是个空操作）
+  if (typeof pwRestart === 'function' && pwTargetKey === 'detail') pwRestart();
+}
+
+/* 点详情的自动播放入口：这个点一张媒体都没有就没什么可播的，藏起来别占位置。 */
+function shareSyncDetailPlayBtn(media) {
+  const b = document.getElementById('btn-detail-play');
+  if (!b) return;
+  b.classList.toggle('hidden', !(media && media.length));
+  if (typeof pwSetButton === 'function') pwSetButton();
 }
 
 // ---------- 点详情的媒体网格：同样支持捏合缩放重排 ----------
@@ -1159,6 +1176,9 @@ function shareSetMediaZoom(delta) {
   try { localStorage.setItem(MEDIA_ZOOM_KEY, String(next)); } catch (e) {}
   const grid = document.getElementById('media-grid');
   shareFlipGrid(grid, applyMediaCols);
+  // 列数变了 = 格子边长和整面墙的尺寸都变了，起点几何当场作废。
+  // 不停播，从新几何重起一拍（见 common.js pwRestart）。
+  if (typeof pwRestart === 'function') pwRestart();
 }
 (function initMediaGridZoom() {
   // 同相册：手势绑在**整个 tab 页**上。网格只到最后一行缩略图为止，
@@ -1818,7 +1838,14 @@ function shareRenderPhotoGrid() {
   const n = photoShown.length, total = photoItems.length;
   // 写明范围：这里是「整个行程」的全部媒体，不是某个轨迹点的
   $('#photo-count').textContent = total === 0 ? ''
-    : (n === total ? `本行程 · ${total} 项` : `本行程 · ${n} / ${total} 项`);
+    : (n === total ? `${total} 项` : `${n} / ${total} 项`);
+
+  // 重建网格前先停播：下面这句 innerHTML 会把铺满层一起删掉，
+  // 正在跑的那一轮等于把遮挡层抽了，动画会当场露馅。
+  // 顺带——播放中用户还能改筛选/排序，说明他不想看自动播放了。
+  // 不停播，只把这一拍清掉；重建完接着在新网格上放（见函数末尾的 pwRestart）
+  if (typeof pwReset === 'function' && pwOn && pwTargetKey === 'albums') pwReset();
+  wallForgetDetached();               // 旧的格子引用随这次重建一起作废（只摘掉已脱离文档的）
 
   grid.style.setProperty('--photo-cols', PHOTO_COLS[photoView.zoom]);
   grid.innerHTML = '';
@@ -1851,7 +1878,10 @@ function shareRenderPhotoGrid() {
     }
     if (m.type === 'video') cell.appendChild(el('span', 'photo-video-badge', '▶'));
     if (m.caption && m.caption.trim()) cell.appendChild(el('span', 'photo-cap-badge', '✎'));
+    // 自动播放要用它拿原图地址和「地点 · 时间」，存一份备查（见 cellWallByCell）
+    cellWallByCell.set(cell, m);
     cell.onclick = () => {
+      if (pwOn) pwStop();             // 点开大图看细节 —— 自动播放让位
       lightboxMedia = photoShown;
       lightboxIndex = idx;
       shareRenderLightbox();
@@ -1873,6 +1903,9 @@ function shareSetPhotoZoom(delta) {
   shareFlipGrid(grid, function () {
     grid.style.setProperty('--photo-cols', PHOTO_COLS[next]);
   });
+  // 列数变了 = 格子边长和整面墙的尺寸都变了，起点几何当场作废。
+  // 不停播，从新几何重起一拍（见 common.js pwRestart）。
+  if (typeof pwRestart === 'function') pwRestart();
 }
 
 document.querySelectorAll('#photo-filter .seg-btn').forEach(b => {
@@ -1921,6 +1954,13 @@ albumsView.addEventListener('wheel', e => {
   e.preventDefault();
   shareSetPhotoZoom(e.deltaY < 0 ? 1 : -1);
 }, { passive: false });
+
+// ---------- 相册墙自动播放 --------------------------------------------------
+// 实现在 common.js 里（两个页面共用同一套五拍动画）；这里只做两件分享页特有的事：
+//   ① 铺满层用哪张图 —— 分享接口带回了 m.url（服务端已经按 OSS 水位算过），直接用它
+//   ② 装配（绑按钮 + 那些「用户动一下就停」的事件）
+wallMediaUrl = function (m) { return m && m.url; };
+wallAttach();
 
 // ---------- 我的位置 ----------
 // 和各家地图 App 一样：蓝点 + 精度圈，点按钮回到自己的位置。
