@@ -33,6 +33,13 @@ route** between them (not straight lines), labels each leg with its distance and
 its elevation. A trip moves through planning → traveling → completed → archived, so you can lay
 out where you want to go before you leave and keep editing it on the road.
 
+Routing isn't one-shot. If a leg runs along several numbered highways, all of their numbers get
+labelled. And when AMap routes you the long way round because of a seasonal closure or a
+restriction — the Duku Highway shuts every October, which turns Nalati → Kuqa into a 1361 km
+detour — the system fetches a second route that ignores closures, and makes it the default when
+it is clearly shorter. A record of a trip should follow **the road you actually drove**. Whichever
+option you pick is stored, so it stays picked; only moving the coordinates invalidates it.
+
 Every place holds photos and videos. Shoot on your phone and upload straight away — the
 **capture time and coordinates are read out of the photo automatically**. Big videos don't need
 babysitting: pause the upload, go do something else, come back and resume; if the connection
@@ -48,8 +55,14 @@ than just title it.
   the day back in a way a pile of stills doesn't
 - **Album** — the trip's photos as one flat wall (iOS Photos style); pinch to change how many per
   row, sort by time, filter by type
+- **Photo wall autoplay** — a ▶ on both the album page and the place detail page sets the whole
+  wall going by itself: it picks a cell at random, selects it, blows it up in place, fills the
+  screen, then shrinks it back, one after another. Good to just leave running. Videos play, with a
+  hand-rolled fullscreen button in the corner — native control bars differ so much across
+  browsers that building our own is the only way to guarantee one exists, in the same place
 - **Photo stacks** — photos cluster onto each place on the map and scale with zoom, so you can see
-  at a glance where you shot the most
+  at a glance where you shot the most. Videos are in there too, using their first frame as the
+  thumbnail
 - **Footprint heatmap** — every trip laid over each other: everywhere you have been, over the years
 - **Lightbox** — finger-tracking paging, tap for fullscreen, pinch to zoom, drag past the edge to
   keep paging. The same feel as your phone's gallery
@@ -66,6 +79,13 @@ library on mobile.
 A share page contains **only that one trip** — your footprint heatmap and the photos from your
 other trips never leak out with it.
 
+Every image and video URL on the page is a **signed, expiring link** (30 minutes by default), so
+the bucket holding your media can have public read turned off — no more "forwarded once, public
+forever". Expiry is invisible to whoever is looking: images re-fetch a fresh batch of signatures,
+and videos re-sign themselves five minutes before the deadline while holding their playback
+position. The share link itself is unaffected — post it in a group chat and it still opens two
+weeks later.
+
 ### 🤖 Let your AI assistant dig through your memories
 
 Connect Claude, Cursor, or any client that speaks **MCP**, and you can just ask:
@@ -80,8 +100,15 @@ The agent reads **your own** data: a key only ever sees the account that issued 
 come in four grades (read / write / share / admin), keys can carry an expiry and be revoked at
 any time.
 
+Media URLs handed to an agent are signed and expiring too, with a longer window (24 hours by
+default) — agents tend to list everything first and download some of it much later.
+
 To connect: sign an API key in the developer console after logging in, and paste it into your MCP
-client. Step-by-step in [MCP-ACCESS.md](MCP-ACCESS.md).
+client. Step-by-step in [MCP-ACCESS.md](MCP-ACCESS.md). The console has a separate shape on
+phones (a persistent bottom tab bar and card lists, swipe a key card left to delete); keys carry
+an expiry with the remaining days shown in the list, and the call log tells you where a request
+came from. **Only the sha256 of a key is stored** — after the one time it is shown to you, the
+system can't read it back either, so a lost key has to be reissued.
 
 ### 📱 About phones
 
@@ -101,13 +128,22 @@ cd travel-memory
 ./start.sh
 ```
 
-Open `http://localhost:8084` and you're in.
+Open `http://localhost:8084` and you're in. Three entry points:
+
+| Path | Who it serves |
+|---|---|
+| `/` | Branches on login state: signed-out visitors get the public landing page (a 60-second demo video and a five-panel carousel), signed-in ones go straight into the app |
+| `/app` | The app itself, always. Signed out, the sign-in overlay comes up |
+| `/welcome` | The landing page, always — for when you're signed in and want another look at the pitch |
+
+(The branch deliberately isn't a 302: a redirect leaves an extra entry in browser history, and
+after signing out the back button would bounce between the two pages.)
 
 The first run creates a virtualenv, installs dependencies and initialises the database; every run
 after that notices the environment is already there and just starts. No schema to create by hand,
 no config file to edit.
 
-That first run also brings **a set of demo data** (3 trips, 12 points, 28 photos, 1 video) under
+That first run also brings **a set of demo data** (3 trips, 18 points, 55 photos, 6 videos) under
 the account `test` / `test1234`, with a one-tap button on the sign-in page — so you can see what
 the thing looks like without recording a trip first.
 
@@ -218,6 +254,12 @@ It is **one switch**: blank it out and everything falls back to local serving, n
 `deploy/travel-memory-oss-sync.{service,timer}` keeps the bucket in sync. Note that `/static/` is
 deliberately *not* offloaded — the frontend JS/CSS must ship with the code.
 
+**The bucket does not need public read.** Every outward-facing media URL is signed on the fly
+with an expiry: 30 minutes for the web and share pages (`TRAVEL_MEDIA_URL_TTL`), 24 hours for
+agents (`TRAVEL_AGENT_URL_TTL`). Expiry heals itself on the frontend, invisibly (see "Share with
+people" above). With no object storage configured the signing layer is skipped and links fall
+back to the in-app `/uploads/` path.
+
 ### Uplink: upload straight to object storage
 
 The previous section fixes other people viewing your photos. The uplink is just as congested: the
@@ -291,6 +333,8 @@ None are required. Add them as you need them:
 | `TRAVEL_LLM_PROVIDER` | Which model backs the AI features: `auto` / `claude-cli` / `anthropic-api` / `deepseek` | `auto` |
 | `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | Key for the chosen provider; unnecessary if you don't use AI features | empty |
 | `TRAVEL_MEDIA_BASE_URL` | Origin that serves media (object storage / CDN). Empty = the app serves `/uploads/` itself | empty (or put it in `media_base.txt`) |
+| `TRAVEL_MEDIA_URL_TTL` | Lifetime of signed media URLs on the web and share pages, in seconds. **Change this and you must change `MEDIA_SIG_TTL_MS` in `static/share.js` too** — the frontend uses it to decide when to re-sign | `1800` (30 min) |
+| `TRAVEL_AGENT_URL_TTL` | Lifetime of signed media URLs handed to agents (`/api/ai/*`, `/mcp`), in seconds | `86400` (24 h) |
 | `TRAVEL_OSS_DIRECT` | Master switch for browser-to-object-storage direct upload. `0` = off, fully back to relaying through the server | `1` (auto-disabled when the config is incomplete) |
 | `TRAVEL_OSS_AK` / `TRAVEL_OSS_SK` | AK/SK used to sign direct uploads. Unset = read `~/.ossutilconfig` | empty |
 | `TRAVEL_OSS_PART_SIZE` | Direct-upload part size, in bytes | `8388608` (8 MB) |
@@ -319,8 +363,11 @@ all: `./start.sh --no-demo`.
   Postgres.
 - Media is served by the app process by default and competes with the API for bandwidth. Point
   `media_base.txt` at object storage (previous section) and that limit disappears.
-- Transcoding is a local ffmpeg background thread handling one video at a time; a bulk import of
-  dozens of videos takes a while. Without ffmpeg you simply get the original rung only.
+- Transcoding runs in local ffmpeg background threads. One video's quality rungs are produced by
+  a single ffmpeg pass that decodes once and encodes all of them, and concurrency is capped by
+  **cores in use** (leaving 20% of the machine by default) — but it still saturates the CPU, so a
+  bulk import of dozens of videos takes a while. Without ffmpeg you simply get the original rung
+  only.
 - Routing depends on AMap/OSRM; some regions outside China fall back to straight lines.
 - "Reopen the file picker where you left it" relies on the File System Access API (desktop Chrome
   / Edge). Firefox and Safari get the ordinary file dialog and behave as before; on phones it is
@@ -341,15 +388,21 @@ install a handful of Python packages, run it. Edit a line of JS and reload the p
 ## Layout
 
 ```
-app.py                 FastAPI app and Web UI routes (90 paths / 105 operations)
+app.py                 FastAPI app and Web UI routes (100 paths / 117 operations)
 db.py                  SQLite schema, migrations and every query (WAL)
-config.py              static config shared across modules (AMap key, OSRM, media origin)
+config.py              static config shared across modules (AMap key, OSRM, media origin,
+                       signed-URL lifetimes)
 media.py               thumbnails / EXIF / video frame extraction
-transcode.py           video quality ladder (faststart + 1080p/720p/480p, background thread)
+media_purge.py         really deletes the bytes, locally and on OSS — shared by six delete paths
+transcode.py           video quality ladder (one decode pass emits 1080p/720p/480p, capped by
+                       cores in use)
 download.py            media "save as": filename building, RFC 5987, quality whitelist
 oss.py                 OSS V1 signing + multipart direct upload (browser -> OSS, never via the app)
 oss_backfill.py        pulls directly-uploaded objects back for archival (background queue:
                        thumbnails / EXIF / transcode)
+agent_media.py         signed media URLs for the agent path (separate, longer-lived than the web's)
+formfix.py             normalises form bodies to percent-encoded ASCII (fixes agent-written CJK)
+video_gen.py           trip video generation engine (FFmpeg templates)
 mcp_http.py            MCP Streamable HTTP endpoint (routing table: tools -> domain API)
 mcp_server.py          MCP stdio variant
 companion.py           companion process (scheduled jobs) + the single definition of TOOLS
@@ -357,18 +410,27 @@ routers/
   agent_api.py         domain API (/api/ai/*) + /mcp — API-key auth, disjoint from the Web UI
   console.py           developer console (API key management), session auth
   share.py             read-only share page and its anonymous endpoints
-  deps.py              request-scoped helpers shared between routers
+  deps.py              request-scoped helpers shared between routers (incl. asset versioning)
 domain/                domain logic: memory generation, association, search, geocoding,
                        LLM provider, rate limiting, token auth
 static/
-  index.html app.js    main UI (~5,600 lines of JS)
-  share.html share.js  read-only share page
-  common.js            shared by both pages: map layers, lightbox, quality picker, download, Markdown
+  landing.html         the public landing page. Fully self-contained — no style.css, app.js or AMap
+  index.html app.js    main UI (~6,800 lines of JS)
+  share.html share.js  read-only share page (~2,800 lines)
+  common.js            shared by both pages (~2,600 lines): map layers, lightbox, quality picker,
+                       download, Markdown, photo wall autoplay
   console.html         developer console
   style.css
-scripts/               seeding, demo reset, secret scanning and utilities
+  promo/               landing page artefacts (screenshot WebPs, demo video, narration subtitles)
+assets/landing-src/    **source** images for the landing carousel. Not under static/ — that
+                       directory is publicly served
+tools/                 make-slides.py (source image -> desktop/mobile WebP), shoot-landing.py
+scripts/               seeding, demo reset, secret scanning, promo recording and assembly
+ops/                   operational scripts (OSS sync, health check, standby update, daily recall)
 deploy/                systemd unit samples (11 services + 9 timers) + a Caddyfile sample
-tests/                 automated tests (unit / api / e2e)
+docs/advertising/      positioning, copy and storyboards for the promo material
+verify/                site-ownership verification files, served verbatim at the site root
+tests/                 automated tests (unit / api / e2e, 39 test files)
 .githooks/             pre-commit checks (secret scan + fast suite)
 start.sh               install + run, merged into one idempotent script
 test.sh                test entry point
@@ -377,8 +439,8 @@ test.sh                test entry point
 ## Tests
 
 ```bash
-./test.sh                # fast suite: unit + API, ~20 s (run this after every change)
-./test.sh all            # everything, including browser end-to-end, ~90 s (before committing)
+./test.sh                # fast suite: unit + API, 693 tests in ~30 s (run after every change)
+./test.sh all            # everything incl. browser end-to-end, 786 tests in ~2m20s (before committing)
 ./test.sh unit           # unit layer only
 ./test.sh api            # API integration layer only
 ./test.sh e2e            # end-to-end only (needs system Chrome)
