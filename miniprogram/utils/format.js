@@ -60,8 +60,14 @@ function timeOfDay(ts) {
 }
 
 /**
- * 媒体的展示地址。后端返回的 url 已经是 OSS 绝对地址；
- * 万一是相对路径（本机开发没配 OSS），补上站点前缀。
+ * 媒体的展示地址。
+ *
+ * **地址一律由后端给，客户端不许自己拼。** 2026-09-16 起 OSS Bucket 关掉了
+ * 公共读，`m.url` 是一条带 Expires + Signature 的临时链接（见 config.media_url）；
+ * 自己拿域名拼 `/uploads/xxx` 出来的裸链会 403。
+ *
+ * 唯一做的加工是：后端在「文件刚落盘还没同步到 OSS」时返回的是本机相对路径
+ * （`/uploads/...`），给它补上站点前缀，`<image>` 才认。
  */
 function mediaUrl(m, baseUrl) {
   if (!m) return '';
@@ -71,13 +77,18 @@ function mediaUrl(m, baseUrl) {
   return (baseUrl || '').replace(/\/$/, '') + u;
 }
 
-/** 缩略图地址。列表里用它，别拿原图铺网格 —— 一屏几十张会把流量打爆。 */
-function thumbUrl(m, baseUrl, mediaHost) {
+/**
+ * 缩略图地址。列表里用它，别拿原图铺网格 —— 一屏几十张会把流量打爆。
+ *
+ * 用后端算好的 `thumb_url`（同样是签名 URL）。没有这个字段有两种情况，
+ * 都退回原图：老接口不返回它，或者直传之后回源还没补出缩略图。
+ */
+function thumbUrl(m, baseUrl) {
   if (!m) return '';
-  const name = m.thumb_filename;
-  if (!name) return mediaUrl(m, baseUrl);       // 直传后还没回源补缩略图
-  const host = (mediaHost || baseUrl || '').replace(/\/$/, '');
-  return host + '/uploads/thumbs/' + name;
+  const t = m.thumb_url || '';
+  if (!t) return mediaUrl(m, baseUrl);
+  if (/^https?:\/\//.test(t)) return t;
+  return (baseUrl || '').replace(/\/$/, '') + t;
 }
 
 module.exports = {

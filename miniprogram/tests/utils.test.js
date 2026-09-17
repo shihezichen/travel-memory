@@ -111,17 +111,24 @@ test('statusClass 对未知状态也给得出一个类名', () => {
   assert.strictEqual(fmt.statusClass('weird'), 'badge-archived');
 });
 
-test('thumbUrl 走 thumbs/ 目录；没有缩略图时退回原图', () => {
-  const host = 'https://oss.example.com';
+test('thumbUrl 用后端签好名的 thumb_url，不自己拼裸链', () => {
+  // Bucket 关掉公共读之后，自己拼出来的 host + /uploads/thumbs/x.jpg 会 403，
+  // 所以这里断言的是「原样用 thumb_url」而不是「拼得对不对」。
+  const signed = 'https://oss.example.com/uploads/thumbs/a.jpg?Expires=1&Signature=s';
   assert.strictEqual(
-    fmt.thumbUrl({ thumb_filename: 'a.jpg', url: host + '/uploads/a.jpg' }, '', host),
-    host + '/uploads/thumbs/a.jpg'
-  );
-  // 直传完成但回源还没补缩略图的那段窗口期，thumb_filename 是 null
+    fmt.thumbUrl({ thumb_filename: 'a.jpg', thumb_url: signed, url: 'x' }, ''),
+    signed);
+});
+
+test('thumbUrl 没有 thumb_url 时退回原图（直传后还没回源补缩略图）', () => {
+  const full = 'https://oss.example.com/uploads/a.jpg?Expires=1&Signature=s';
+  assert.strictEqual(fmt.thumbUrl({ thumb_filename: null, url: full }, ''), full);
+});
+
+test('thumbUrl 对本机相对路径补站点前缀（文件还没同步到 OSS 时后端就这么返回）', () => {
   assert.strictEqual(
-    fmt.thumbUrl({ thumb_filename: null, url: host + '/uploads/a.jpg' }, '', host),
-    host + '/uploads/a.jpg'
-  );
+    fmt.thumbUrl({ thumb_url: '/uploads/thumbs/a.jpg' }, 'https://top001.xin/'),
+    'https://top001.xin/uploads/thumbs/a.jpg');
 });
 
 test('mediaUrl 对相对路径补前缀，对绝对地址原样返回', () => {

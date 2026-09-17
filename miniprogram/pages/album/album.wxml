@@ -1,6 +1,8 @@
 <view class="page" wx:if="{{videoUrl}}">
   <video class="fullvideo" src="{{videoUrl}}" controls autoplay
-         show-fullscreen-btn enable-play-gesture object-fit="contain" />
+         show-fullscreen-btn enable-play-gesture object-fit="contain"
+         binderror="onVideoError" />
+  <view wx:if="{{qualityName}}" class="quality">{{qualityName}}</view>
 </view>
 <view class="page" wx:else>
   <view wx:if="{{loading}}" class="loading">加载中…</view>

@@ -4,3 +4,7 @@
 .play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 36rpx; text-shadow: 0 2rpx 12rpx rgba(0,0,0,.6); }
 
 .fullvideo { width: 100%; height: 60vh; background: #000; border-radius: 12rpx; }
+/* 当前清晰度角标。手机上默认不给 1080p（见 utils/media.js 的 capForNetwork），
+   不标一下容易被当成「画质变差了」。 */
+.quality { margin: 12rpx auto 0; padding: 4rpx 16rpx; align-self: center; width: fit-content;
+           font-size: 22rpx; color: #9AA7B8; background: rgba(255,255,255,.06); border-radius: 999rpx; }
