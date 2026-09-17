@@ -175,25 +175,49 @@ loginctl enable-linger "$USER"      # 没登录时也保持运行
 > `deploy/` 下还有 9 组可选 unit：证书续期、演示账号每日重置、每日回忆推送、
 > 上传会话回收、健康检查、定时全量测试、媒体同步到对象存储等，按需拷。
 
-### 2. 前面挂 Caddy / Nginx 处理 TLS
+### 2. 配上 TLS
 
-`deploy/Caddyfile.example` 是一份能直接用的最小配置，Caddy 会自动签发和续期证书：
+**两条路，二选一，别叠着用。**
+
+#### A. 反代终结 TLS（推荐给新装的人）
+
+`deploy/Caddyfile.example` 是一份能直接用的最小配置，Caddy 会自动签发和续期证书，
+反代到应用的**明文**端口 `127.0.0.1:8084`：
 
 ```bash
 cp deploy/Caddyfile.example /etc/caddy/Caddyfile   # 改成你的域名
 sudo systemctl reload caddy
 ```
 
+走这条路时，`deploy/travel-memory.service` 里的 `--ssl-certfile` / `--ssl-keyfile`
+两行要删掉，端口改回 8084 —— 那个 unit 默认是下面 B 那条路的配置。
+
 本机开发拿不到公网域名时，用 Caddy 的内部 CA 给 `localhost` / 局域网 IP 签一张自签证书
 （`tls internal`），把根证书装进手机，真机上也能跑完整的 https 路径 —— 见示例文件里的注释。
 
-**接了 MCP 的注意**：应用换到 TLS 端口之后，`/mcp` 回调自己领域 API 的地址也要跟着改，
-否则所有工具会报「领域 API 不可达」：
+#### B. uvicorn 自己终结 TLS
+
+`deploy/travel-memory.service` **默认就是这一条**：uvicorn 直接带证书起在
+`127.0.0.1:8443`，前面没有 nginx/Caddy，公网入口由隧道或反代转进来。
+本项目的生产机（top001.xin）跑的就是这套。
+
+代价是证书得你自己弄：unit 里写的 `acme/ip.crt`、`acme/renew.sh` 都在 `acme/` 下，
+而**这个目录被 `.gitignore` 排除了**（里面是 TLS 私钥和特定机器的主机名，对别人没意义），
+所以新 clone 出来是没有的 —— 要么自己用 lego / certbot 签一张放进去并把路径改对，
+要么直接走 A。`deploy/travel-memory-cert-renew.timer` 和 `-domain-renew.timer`
+是配套的续期定时器，同样依赖 `acme/` 里的脚本。
+
+#### 接了 MCP 的注意
+
+应用换到 TLS 端口之后，`/mcp` 回调自己领域 API 的地址也要跟着改，
+否则所有工具会报「领域 API 不可达」，而 Web UI 一点异常都没有：
 
 ```ini
 Environment=TRAVEL_BASE_URL=https://127.0.0.1:8443
 ```
 
+走 A 那条路的话，这里填明文的 `http://127.0.0.1:8084` —— 要和 `ExecStart` 里
+**真正监听的协议和端口**一致，不是和公网地址一致。
 （回环地址的证书主机名对不上是正常的，`mcp_http.py` 只对回环跳过校验。）
 
 ### 3. 备份

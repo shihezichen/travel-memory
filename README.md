@@ -203,27 +203,53 @@ Logs: `journalctl --user -u travel-memory -f`.
 > push, upload-session reclamation, health checks, a nightly full test run, media sync to object
 > storage. Copy whichever you want.
 
-### 2. Put Caddy / Nginx in front for TLS
+### 2. Set up TLS
+
+**Two routes. Pick one — don't stack them.**
+
+#### A. Terminate TLS in a reverse proxy (recommended for a fresh install)
 
 `deploy/Caddyfile.example` is a minimal working config; Caddy issues and renews certificates on
-its own:
+its own and proxies to the app's **plaintext** port `127.0.0.1:8084`:
 
 ```bash
 cp deploy/Caddyfile.example /etc/caddy/Caddyfile   # set your domain
 sudo systemctl reload caddy
 ```
 
+Going this way, drop the `--ssl-certfile` / `--ssl-keyfile` lines from
+`deploy/travel-memory.service` and put the port back to 8084 — that unit ships configured for
+route B below.
+
 No public domain on your dev box? Use Caddy's internal CA (`tls internal`) to sign a certificate
 for `localhost` / a LAN IP, install the root on your phone, and you can exercise the full https
 path on a real device — see the comments in the example file.
 
-**If you use MCP**: once the app moves to a TLS port, the address `/mcp` uses to call its own
-domain API has to move with it, or every tool reports "domain API unreachable":
+#### B. Terminate TLS in uvicorn itself
+
+`deploy/travel-memory.service` **ships set up for this one**: uvicorn binds
+`127.0.0.1:8443` with the certificate directly, no nginx or Caddy in front, and the public entry
+point is a tunnel or an upstream proxy. It is what this project's own production host
+(top001.xin) runs.
+
+The cost is that certificates are on you: the unit points at `acme/ip.crt` and `acme/renew.sh`,
+and **that directory is excluded by `.gitignore`** (it holds TLS private keys and one machine's
+hostnames — no use to anyone else), so a fresh clone does not have it. Either sign one yourself
+with lego / certbot and fix the paths, or just take route A.
+`deploy/travel-memory-cert-renew.timer` and `-domain-renew.timer` are the matching renewal
+timers, and depend on the same scripts under `acme/`.
+
+#### If you use MCP
+
+Once the app moves to a TLS port, the address `/mcp` uses to call its own domain API has to move
+with it, or every tool reports "domain API unreachable" while the Web UI looks perfectly fine:
 
 ```ini
 Environment=TRAVEL_BASE_URL=https://127.0.0.1:8443
 ```
 
+On route A this is the plaintext `http://127.0.0.1:8084` instead — it has to match the protocol
+and port `ExecStart` **actually listens on**, not your public address.
 (A hostname mismatch on a loopback certificate is expected; `mcp_http.py` skips verification for
 loopback only.)
 
