@@ -2504,15 +2504,24 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
    在手机上把缩略图拉满整屏会糊成一片。所以 URL 由 JS 直接告诉这里，
    不再走首页那条 `getComputedStyle(cell).backgroundImage` 的路子。
 
-   铺满层的定位：`inset:0` 是相对**最近的已定位祖先**（CSS 的包含块规则，
-   不只是 position 决定的）。.photo-cell 是 position:relative，
-   所以铺满层若放在格子里，inset:0 只会铺满那一格、而不是整面墙。
-   因此它必须放在 #photo-grid 的直接子层（见 share.html / 脚本 wallEnsureLayer）。 */
+   铺满层的定位（2026-09-18 重做）：它要盖的是**下面板留下来的可见区**，
+   不是那面墙。原先挂在 #photo-grid 上、inset:0 铺满整面墙 —— 那是错的，
+   因为墙的高度由照片数量决定：一行照片时「铺满」只铺满一行，
+   照片多到墙高过面板时又会顺着墙铺到面板外面去（用户报的 bug）。
+   现在挂在 .view（= 可滚动的那一层）下，absolute + 脚本每次写 top：
+   top 跟着滚动位置走、但夹在网格上下边界之间，所以它盖住的永远是
+   「面板留给照片的那块地方」，跟照片多少无关。
+   **不能用 position:sticky**：层在文档流里排在网格**后面**，
+   sticky 在「网格之后」那块地方没有行程，top 完全不起作用，
+   它只会一动不动待在网格末尾（实测踩过）。也正因为这样，
+   absolute 还额外省掉了「层把文档撑高」的副作用。
+   高度由脚本给（见 wallSizeFill），宽度铺满整宽。
+   .photo-grid / .media-grid 保留 position:relative 是给格子的
+   offsetLeft/offsetTop 用的（它们得有这个 offsetParent），跟铺满层无关。 */
 .photo-grid { position: relative; }
-/* 点详情的媒体网格用同一套墙（见 common.js 的 PW_TARGETS）。
-   铺满层是 inset:0 的绝对定位，没有这一行它会铺到更外层的 .view 上去。 */
 .media-grid { position: relative; }
-.pw-fill { position: absolute; inset: 0; pointer-events: none; z-index: 4;
+.pw-fill { position: absolute; top: 0; left: 0; width: 100%;
+  pointer-events: none; z-index: 4;
   border-radius: 2px; background-size: cover; background-position: center;
   opacity: 0; transform-origin: 50% 50%;
   will-change: transform, opacity;

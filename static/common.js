@@ -1094,8 +1094,10 @@ let pwOn = false;
    几何全部由 wallBoxInfo 现场量，所以除了选择器不需要别的差异；
    同一时刻只可能有一面墙在播（pwSetTarget 会先把上一面停掉）。 */
 const PW_TARGETS = {
-  albums: { grid: '#photo-grid', cell: '.photo-cell', btn: '#btn-photo-play', view: '#albums-view', tab: 'albums' },
-  detail: { grid: '#media-grid', cell: '.media-item', btn: '#btn-detail-play', view: '#detail-view', tab: 'detail' },
+  albums: { grid: '#photo-grid', cell: '.photo-cell', btn: '#btn-photo-play', view: '#albums-view', tab: 'albums',
+            panel: '.view-track' },
+  detail: { grid: '#media-grid', cell: '.media-item', btn: '#btn-detail-play', view: '#detail-view', tab: 'detail',
+            panel: '.view-track' },
 };
 let pwTargetKey = 'albums';
 const pwTarget = () => PW_TARGETS[pwTargetKey];
@@ -1180,34 +1182,71 @@ function pwReducedMotion() {
   return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-/* 铺满层要盖住**整个网格**。`inset:0` 是相对最近的已定位祖先（CSS 的包含块
-   规则），而每一格 .photo-cell 都是 position:relative —— 所以铺满层绝不能
-   放进格子里（那样只会盖住那一格），必须挂在 #photo-grid 的直接子层。
-   建一次就够，之后只改它的大小和底图（重建网格会把它们一起删掉，所以要能重建）。 */
+/* 铺满层要盖住**下面板留下来的可见区**，不是那面墙。它是绝对定位，
+   所以要挂在最近的已定位祖先下 —— 绝不能放进格子里（每一格 .photo-cell
+   都是 position:relative，放进去只会盖住那一格），必须挂在 .view 的直接子层。
+
+   **为什么是 .view 而不是网格**（用户 2026-09-18 报的 bug）：
+   以前铺满层挂在网格上、盖住整面墙。可墙的高度是**照片数量**决定的 ——
+   只有一行时墙只有一行高，大图「铺满」就只铺满那一行；照片多到墙比面板还高时，
+   大图又会顺着墙铺到面板外面去。而用户看到的那块地方是**面板**，不是墙。
+   所以终点尺寸一律由面板可见区说了算：墙只负责两件事 ——
+   起点格子在哪儿、从哪儿抽格子（见 wallGeom / wallBoxInfo 的分工）。
+
+   挂到 .view 之后 inset:0 不能用了（那会拉伸成整个可滚动内容，比屏幕还高），
+   所以 top / height 全部由脚本给死（见 wallFillRel / wallSizeFill）。
+   .view 自己的定位交给 CSS（它本来就是 absolute，是 .view-track 的定位子元素）；
+   面板 .view-track 再兜一层 relative，防止将来 .view 的定位被改掉时
+   铺满层一路往上找到更外层的定位祖先、盖到整个布局上去。
+   记在 dataset 上，停播时按原样恢复（别把页面自己的定位改没了）。 */
 function wallEnsureLayer() {
   const grid = pwGrid();
-  if (!grid) return;
+  const view = $(pwTarget().view);
+  const panel = $(pwTarget().panel);
+  if (!grid || !view || !panel) return;
+  if (getComputedStyle(panel).position === 'static') {
+    panel.dataset.pwPos = panel.style.position || '';
+    panel.style.position = 'relative';
+  }
   // 必须连 parentElement 一起判：切墙之后旧的两层还「连在文档里」，
   // 只判 isConnected 会把上一面墙的层当成这一面的，大图就长在看不见的那个 tab 上。
-  if (pwFillA && pwFillA.parentElement === grid && pwFillB && pwFillB.parentElement === grid) return;
-  grid.querySelectorAll('.pw-fill').forEach(n => n.remove());
+  if (pwFillA && pwFillA.parentElement === view && pwFillB && pwFillB.parentElement === view) return;
+  view.querySelectorAll('.pw-fill').forEach(n => n.remove());
   pwFillA = el('div', 'pw-fill'); pwFillA.setAttribute('aria-hidden', 'true');
   pwFillB = el('div', 'pw-fill'); pwFillB.setAttribute('aria-hidden', 'true');
-  grid.appendChild(pwFillA);
-  grid.appendChild(pwFillB);
+  view.appendChild(pwFillA);
+  view.appendChild(pwFillB);
   pwCur = pwFillA;
   pwSel = null; pwSettling = null;
 }
 
-/* 墙的几何 —— 全部从**格子**推，不量网格容器（原因见上面 ②）。
+/* 铺满层的高度**只能由这里给死**：它不再是 inset:0 那种由包含块拉伸的
+   绝对定位（挂到 .view 之后 inset:0 会铺满整个可滚动内容，比屏幕还高），
+   所以不写 height 的话高度就是 0，什么都看不见。
+   高度取**滚动容器的可视高度** —— .view 自己避开了工具栏和底部按钮条，
+   量它就等于量「面板留给照片的那块地方」，比任何反推都准。
+   宽度交给样式表（width:100%），横向永远铺满整宽。 */
+function wallSizeFill() {
+  const view = $(pwTarget().view);
+  if (!view) return;
+  [pwFillA, pwFillB].forEach(f => { if (f) f.style.height = view.clientHeight + 'px'; });
+}
+
+/* 墙的几何 —— 只回答「格子在哪儿、多大」和「一行几格」。
+   ⚠ **这里的 h / rows 不再是铺满层的终点高度**（2026-09-18 改）：
+   以前拿网格 clientHeight 反推行数，再乘出一面「墙」当铺满终点，于是
+   一行照片铺满成一行、多行照片铺到面板外面去。现在终点是 wallFillRel().h。
+   h/rows 留着只为了两件事：抽格子的候选范围、以及 offsetTop 相对谁量。
+
    格子尺寸用 offsetWidth 而不是 getBoundingClientRect()：后者是**变换后**的
    尺寸，而放大到 1.5 倍的那一拍格子上正挂着 scale(1.5)，
    量它会得到 1.5 倍的墙 —— 大图的起点和落点会一起错开半格。
-   （首页那边量的是格子上的 offsetLeft/offsetWidth，同一个道理。） */
+   宽高一律取浮点：clientWidth 减去左右边距和间隙，再除以列数 ——
+   offsetHeight 是取整值，83.5 会报成 84，铺满整屏时被放大几十倍能看出错位。 */
 function wallBoxInfo() {
   const grid = pwGrid();
   const cell = grid && grid.querySelector(pwCellSel());
-  if (!cell) return null;
+  if (!cell || !grid) return null;
   const cs = getComputedStyle(grid);
   const cols = parseInt(cs.gridTemplateColumns.split(' ').length, 10) || 1;
   const gap = parseFloat(cs.rowGap) || 0;
@@ -1216,62 +1255,105 @@ function wallBoxInfo() {
   const padT = parseFloat(cs.paddingTop) || 0;
   const padB = parseFloat(cs.paddingBottom) || 0;
 
-  /* 两条路各取所长，**不要**只用一个：
-       · 高度**只能**用容器量（content box）—— grid 的尺寸是内容盒，
-         格子阵列的实际总高就是它。用 offsetHeight 反推行数会栽在取整上：
-         格子真实宽高是 83.5，offsetHeight 报 84；8 行按 84 算出来 690，
-         而网格只有 686 —— 大图就停在 4px 不到底的地方（实测过）。
-       · 宽高**不能**用容器的 —— .photo-grid 是 align-content:start，
-         只占满用掉的行，容器还摊在可滚动高度上，量它会把网格底下那片空白
-         也算进墙里，大图会铺到列表下面去。
-         所以格子尺寸一律取浮点：clientWidth 减去左右边距和间隙，再除以列数。 */
   const w = grid.clientWidth;
   const h = grid.clientHeight;
   const cw = (w - padL - padR - gap * (cols - 1)) / cols;
-  // 行数由**内容盒高度**反推：n 行的总高是 n*ch + (n-1)*gap
   const rows = Math.max(1, Math.round((h - padT - padB + gap) / (cw + gap)));
   const ch = cw;   // 两处格子都是正方形（.photo-cell / .media-item 的 aspect-ratio:1）
   return { grid, w, h, cw, ch, gap, cols, rows, padL, padR, padT, padB };
 }
 
+/* 铺满层盖哪一块：**面板的可见区**（= 用户真正看得见的那个框）。
+   它每次都按当前滚动位置重算，所以往下滚时它跟着走 ——
+   用户看到的大图永远填满面板留给照片的地方，跟照片有多少张无关。
+   返回 null = 面板可见区整个落在网格之外（滚过头了 / 面板塌了），
+   这一拍没地方铺，调用方应当跳过。 */
+function wallFillRel(info) {
+  const view = $(pwTarget().view);
+  if (!view) return null;
+  wallSizeFill();            // 面板尺寸可能刚变过（横竖屏、工具栏换行），先钉住高度
+  const h = view.clientHeight;
+  if (!h) return null;       // 面板整个塌了（隐藏的 tab）—— 没地方铺
+  /* 层钉在哪儿：**面板可见区的顶端**，用滚动偏移直接算。
+
+     ⚠ 这里**不能用 position:sticky**（第一版就是那么写的，实测三组全错）：
+     层是网格后面的流内兄弟，sticky 只在它自己的包含块里有行程，而它在
+     「网格之后」这块地方根本没有行程 —— top:0 形同虚设，它老老实实待在
+     网格末尾（实测 3 张时层顶在 989px，而面板可见段是 460~788px）。
+     而且 sticky 会把层算进流里、把文档撑高，越弄越乱。
+
+     改成 absolute + 每次重算 top：层的顶跟着**滚动位置**走，但夹在网格的
+     上下边界之间 —— 面板展示网格的哪一段，大图就贴在哪一段的顶上。
+     网格顶就是 .view 内容的顶，所以「网格起点」对应 scrollTop 0。 */
+  /* 「网格顶在 .view 内容里的偏移」用 rect 差推，不用 offsetTop：
+     两个元素不一定共用一个 offsetParent，减出来的数没有意义。
+     rect 差是屏幕坐标，但 view 正滚着的时候 grid.top 和 view.top 一起动，
+     它们的**差**恰好就是网格顶相对 view 可视段顶的偏移，正是要的那个数。
+     加回 scrollTop 就换算成「相对 view 内容顶」的坐标系，和层的 top 同一套。 */
+  const gr = info.grid.getBoundingClientRect(), vr = view.getBoundingClientRect();
+  const gridTopInView = (gr.top - vr.top) + view.scrollTop;
+  const maxTop = Math.max(0, info.h - h);          // 层顶能滑到的最下面
+  const top = Math.min(maxTop, Math.max(0, view.scrollTop - gridTopInView));
+  return { top, left: 0, w: info.w, h, maxTop };
+}
+
 /* 某一格在墙里的几何：中心偏移（相对墙中心）和「起点缩放」。
    起点缩放必须分 x/y 两个 —— 格子是正方形、整面墙不是，
+   只写一个 scale 会让大图从一个比格子窄的条形里长出来（首页踩过，见那边 xf()）。 */
+/* 某一格相对**铺满层**的几何：中心偏移 + 起点缩放。
+   ⚠ 这里的 w/h 是铺满层自己的尺寸（= 面板可见区），不是墙。
+   transform 的百分比/像素都相对元素自身，所以偏移要减掉层自身的一半。
+   起点缩放必须分 x/y —— 格子是正方形、面板可见区不是，
    只写一个 scale 会让大图从一个比格子窄的条形里长出来（首页踩过，见那边 xf()）。 */
 function wallGeom(cell) {
   const info = wallBoxInfo();
   if (!info) return null;
-  const { w, h, cw, ch, gap, padL, padT } = info;
+  const f = wallFillRel(info);
+  if (!f) return null;                 // 面板可见区在网格外面，这一拍铺不了
+  const { w, cw, ch, gap, padL, padT } = info;
   const col = Math.round((cell.offsetLeft - gap / 2) / (cw + gap));
   const row = Math.round((cell.offsetTop - gap / 2) / (ch + gap));
-  // 格子在墙里的绝对中心。用 col/row 反推而不是直接读 offsetWidth/2，
+  // 格子在网格可滚动内容里的绝对中心。用 col/row 反推而不是直接读 offsetWidth/2，
   // 是为了和 wallGrowPos 的让位量用**同一套**浮点步长推，两边才严丝合缝。
   const p = wallGrowPos(cell, info);
+  // 绝对中心 → 相对铺满层：先减面板可见区的左边缘，再减层的中心。
+  // f.top 是层的**顶端**而非中心，所以要补上 f.h/2（原来墙这一项是 h/2，
+  // 但那时 h 就是终点高度；现在终点高度是 f.h，别混用 —— 这正是这个 bug 的根）。
+  const absX = padL + col * (cw + gap) + cw / 2 + p.dx;
+  const absY = padT + row * (ch + gap) + ch / 2 + p.dy;
   return {
-    cx: (padL + col * (cw + gap) + cw / 2) + p.dx - w / 2,
-    cy: (padT + row * (ch + gap) + ch / 2) + p.dy - h / 2,
+    cx: absX - f.left - w / 2,
+    cy: absY - (f.top + f.h / 2),
     // 起点缩放用**浮点**的 cw/ch，不用 offsetWidth/offsetHeight（那是取整值）：
-    // 83.5 对 84 差 0.5px，铺满整墙时会被放大几十倍，边角上能看出错位。
+    // 83.5 对 84 差 0.5px，铺满整屏时会被放大几十倍，边角上能看出错位。
     sx: cw / w,
-    sy: ch / h,
+    sy: ch / f.h,
   };
 }
 
-/* 放大这一格时要不要往墙内让。
-   1.5 倍比「贴边那格原地放大不出墙」的上限大，所以放大量得花在墙里：
-   哪边不够就往反方向推那么多。壁中央那些格子两边都够，算出来是 0 —— 原地放大。
-   描边要贴着墙边而不是越出去，所以可用空间再减掉 PW_RING —— 让位之后，
-   描边的外沿正好落在墙边上（w/h 量的是 clientWidth/clientHeight，也就是内边距盒，
-   和铺满层 `inset:0` 的参照系是同一个）。 */
+/* 放大这一格时要不要往里让。
+   1.5 倍比「贴边那格原地放大不出去」的上限大，所以放大量得花在可见区里：
+   哪边不够就往反方向推那么多。正中间那些格子两边都够，算出来是 0 —— 原地放大。
+   描边要贴着可见区的边而不是越出去，所以可用空间再减掉 PW_RING —— 让位之后，
+   描边的外沿正好落在边上（w/h 量的是 clientWidth/clientHeight，也就是内边距盒）。 */
 function wallGrowPos(cell, info) {
-  const { w, h, cw, ch } = info || wallBoxInfo();
+  const ii = info || wallBoxInfo();
+  if (!ii) return { dx: 0, dy: 0 };
+  const { cw, ch } = ii;
+  // ⚠ 「墙」的边界现在是**面板可见区**，不是网格（2026-09-18 改）：
+  // 放大那一拍要贴着用户看得见的那块地方的边，而不是贴着一面可能比屏幕高
+  // 好几倍的网格的边。面板可见区取不到（滚到网格外了）就退化成原地放大。
+  const f = wallFillRel(ii);
+  if (!f) return { dx: 0, dy: 0 };
   const over = (PW_GROW - 1) / 2;
   // offsetLeft/offsetTop 是相对 offsetParent（就是网格自己，position:relative）的
   // **内边距盒**量的，网格自身的 padding 已经算在里面了 —— 再加一次 padL/padT
   // 就多算了一个 padding，贴边那几格会被往里推多那么些（相册 padding 2px，
   // 加上原来 8 的余量，实测离墙边差了 4px）。
-  const x = cell.offsetLeft, y = cell.offsetTop;
-  const l = x - PW_EDGE_PAD,      r = w - (x + cw) - PW_EDGE_PAD;
-  const t = y - PW_EDGE_PAD,      b = h - (y + ch) - PW_EDGE_PAD;
+  // 竖直方向先减掉面板可见区在网格里的偏移，换算进「相对可见区」的坐标系。
+  const x = cell.offsetLeft, y = cell.offsetTop - f.top;
+  const l = x - PW_EDGE_PAD,      r = f.w - (x + cw) - PW_EDGE_PAD;
+  const t = y - PW_EDGE_PAD,      b = f.h - (y + ch) - PW_EDGE_PAD;
   // 负数是允许的：贴边那一格本来就没有 PW_RING 那么多余量，
   // 让位量会多推出这一点，把描边挤回墙里。
   return {
@@ -1497,7 +1579,7 @@ function pwPlayFillVideo(fill, m, cell, done) {
      横向轨道（切换时整条 transform 平移），而 transform 祖先会把
      position:fixed 的包含块从**视口**改成**它自己** —— 不搬走的话所谓
      「全屏」只铺满面板那一小块（实测 420×350，而视口是 420×860）。
-     退出时原样插回去：铺满层是按 #photo-grid 的直接子层定位的（inset:0），
+     退出时原样插回去：铺满层是按 .view 的直接子层定位的，
      留在 body 上会让下一轮的 wallEnsureLayer 认不出它、重建出一对孤儿层。 */
   const fsCss = on => {
     if (on) {
@@ -1687,7 +1769,7 @@ function pwCleanupFill(f) {
 function pwReset() {
   pwClearTimers();
   pwKillFillVideos();
-  const grid = pwGrid();
+  const view = $(pwTarget().view);
   [pwFillA, pwFillB].forEach(f => {
     if (!f) return;
     f.removeAttribute('data-burst');
@@ -1696,12 +1778,25 @@ function pwReset() {
     f.style.opacity = '';
     f.style.transform = '';
     f.style.backgroundImage = '';
+    f.style.top = '';            // 钉位还给样式表（默认 0），下次起拍重新算
     requestAnimationFrame(() => { if (!pwOn) f.style.transition = ''; });
   });
-  if (grid) grid.querySelectorAll('.pw-fill').forEach(f => { if (f !== pwFillA && f !== pwFillB) f.remove(); });
+  if (view) view.querySelectorAll('.pw-fill').forEach(f => { if (f !== pwFillA && f !== pwFillB) f.remove(); });
+  pwRestorePanelPos();           // 面板那行临时 position:relative 撤掉
   pwCur = pwFillA;
   pwPrevCell = null;
   wallRestoreCells();
+}
+
+/* 面板上那行临时定位用完要还回去。只还我们写过的那种：别把页面本来
+   （或者别的脚本）设的定位给抹了。 */
+function pwRestorePanelPos() {
+  Object.keys(PW_TARGETS).forEach(k => {
+    const p = $(PW_TARGETS[k].panel);
+    if (!p || !p.dataset || p.dataset.pwPos === undefined) return;
+    p.style.position = p.dataset.pwPos;
+    delete p.dataset.pwPos;
+  });
 }
 
 /* 一轮：换层 → 抽格 → 选中 → 放大 → 铺满 → 渐隐（渐隐的同时开下一轮）。 */
@@ -1709,6 +1804,7 @@ async function pWallRound() {
   if (!pwOn) return;
   wallEnsureLayer();
   if (!pwFillA || !pwFillB) { pwStop(); return; }
+  wallSizeFill();
 
   // 先把上一轮的选中痕迹清干净：清除 + 重置过渡都在这里发生，
   // 所以只需要在 pWallRound 开头调一次。
@@ -1726,6 +1822,11 @@ async function pWallRound() {
   fill.style.backgroundImage = '';
 
   const info = wallBoxInfo();
+  // ⚠ 层的 top 必须**在量几何之前**写死：top 一改会触发重排，同一帧量到的
+  // rect 还是改动前那一版 —— 起点会整个错开。
+  const f0 = info && wallFillRel(info);
+  fill.style.top = (f0 ? f0.top : 0) + 'px';
+
   const cell = wallPickCell();
   const m = cell && cellWallByCell.get(cell);
   // 地址一律走 wallMediaUrl：主页面的媒体对象不一定带 m.url（同步到 OSS 之前只有
@@ -1736,9 +1837,12 @@ async function pWallRound() {
     pwLater(pWallRound, PW_HOLD_STILL);   // 只是这一轮抽到没图的格子，歇一下再来
     return;
   }
+  const g = wallGeom(cell);
+  // g 为 null = 面板可见区整个落在网格之外（滚过头了），这一拍没地方铺 ——
+  // 别硬铺，跳过去抽下一个。
+  if (!g) { pwLater(pWallRound, PW_HOLD_STILL); return; }
   pwPrevCell = cell;
 
-  const g = wallGeom(cell);
   fill.style.backgroundImage = '';
   fill.style.transition = 'none';
   fill.style.transform = pwXf(g.cx, g.cy, g.sx, g.sy);
@@ -1916,6 +2020,7 @@ function pwToggle(target) {
 // 这里在重建之后立刻补回来，免得整段动画中途没了遮挡层。
 function pwEnsureLayerNow() {
   wallEnsureLayer();
+  wallSizeFill();
   const ok = pwFillA && pwFillA.isConnected && pwFillB && pwFillB.isConnected;
   if (!ok && pwOn) pwStop();
 }
