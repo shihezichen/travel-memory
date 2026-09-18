@@ -462,7 +462,7 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
    都会让元素成为包含块。卡片这套样式是给手机准备的，只要哪天给 .card 或它
    下面任意一层加上 transform（或者是动画里带了 transform），上面的 `.chat`
    就会脱离文档流、跳到那个祖先的左上角去 —— 实测的表现正是"稻城亚丁那段
-   文字浮上来盖住『每张照片都能写字』这句标题"。写死 static 从根上断掉这条路。 */
+   文字浮上来盖住『给照片配上文字』这句标题"。写死 static 从根上断掉这条路。 */
 /* **width:auto 必须显式写。** 第 715 行那条给第 5 屏全屏插图用的
    `.chat{...width:60%}` 是全局的，卡片这套规则没写宽度就会继承它 ——
    实测桌面 1440：.demo-box 1034px，气泡该占满却只有 600px（1034×60%≈620，
@@ -1105,8 +1105,8 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
      手机上要收掉一行：「问」「工具回执」「答」「引用」四行实测需要 168px，
      可用的只有 108px —— overflow:hidden 会把最后那行引用整个切掉，看着像
      "少了一行"，实际是被裁了。留三行（问 / 回执 / 答）够讲清楚这条链路，
-     引用行是小屏上最该让位的：它的意思在"答案能追到原始照片"那句副标题里
-     已经有了。宽屏空间够，那一行照常显示。 */
+     引用行是小屏上最该让位的：它只是「答案从哪来」的补充证据，而这条演示
+     要讲的主线是「能问、能答、能改」。宽屏空间够，那一行照常显示。 */
   /* 对话区：**只钉上边，下边不钉**。
      原来的写法是 top+bottom 两端都定死、加 overflow:hidden —— 可内容高度是
      随字号和折行变的。真实设备上按 10.5px 正文排下来，"问 + 回执 + 答"
@@ -1298,7 +1298,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     </div>
     <p class="cta-note" id="cta-note">
       <span class="only-pc">用内置体验账号直接进去逛，看完再决定要不要注册</span>
-      <span class="only-m">进去直接逛，看完再决定要不要注册 · <a href="/app"
+      <span class="only-m">先体验，后注册 · <a href="/app"
         style="color:var(--fg-2);text-decoration:underline;text-underline-offset:3px">登录</a></span>
     </p>
 
@@ -1406,7 +1406,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
                  src="/static/promo/slide-route-m.webp"
                  alt="旅行记忆地图：滇藏线轨迹与沿途落脚点">
           </div>
-          <p class="slide-cap">陆行轨迹，串成记忆珍珠的项链
+          <p class="slide-cap">路线轨迹，串起每一段旅程
             <small>每一段路、每一个落脚点，按顺序串在一条线上</small></p>
         </div>
 
@@ -1422,7 +1422,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
                  alt="旅行记忆相册页：按时间排列的照片墙">
           </div>
           <p class="slide-cap">照片墙，记录美景与瞬间
-            <small>按时间排好，照片视频混在一起翻</small></p>
+            <small>照片和视频按时间排布</small></p>
         </div>
 
         <!-- 第四屏：分享 —— 分享设置 + 二维码卡片 -->
@@ -1440,7 +1440,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
                  alt="旅行记忆分享页：分享设置在上、行程地图与二维码卡片在下">
           </div>
           <p class="slide-cap">分享旅程，一同感受彼此
-            <small>一条链接或一个二维码，对方打开就能看，改不了</small></p>
+            <small>一条链接或一个二维码，对方打开就能看</small></p>
         </div>
 
         <!-- 第五屏：智能体 —— 对话问答 + MCP 工具调用。
@@ -1506,8 +1506,8 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
             <span class="tl-item"><i></i>export_media</span>
           </div>
 
-          <p class="slide-cap">智能体，激活所有旅程记忆
-            <small>自然语言提问，接口返回结构化行程，答案能追到原始照片</small></p>
+          <p class="slide-cap">接入智能体，自然提问
+            <small>通过智能体，询问旅程细节，添加照片等</small></p>
         </div>
 
         </div><!-- /carousel-track -->
@@ -1563,9 +1563,9 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
          下面的数字就是这么定的，改标题前先量一量。 -->
     <div class="marquee-row reveal">
       <div><b>路线自动还原</b><span>点几个落脚点，真正开过的那条路自己长出来</span></div>
-      <div><b>照片交给它收</b><span>传完就回相册躺着，不用再挑再整理</span></div>
-      <div><b>想找就能找</b><span>一句话问出来，答案能追到当时那张照片</span></div>
-      <div><b>朋友点开就看</b><span>发条链接过去，不用注册、不用装 App</span></div>
+      <div><b>照片交给它</b><span>上传后自动归入相册，无需手动整理</span></div>
+      <div><b>想找就能找</b><span>一句话问出来，问细节、加照片都行</span></div>
+      <div><b>免注册分享</b><span>发条链接过去，不用注册、不用装 App</span></div>
     </div>
   </div>
 </section>
@@ -1588,13 +1588,13 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
       </div>
       <div class="card c-3 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="2.5"/><circle cx="12" cy="12.5" r="3.5"/><path d="M8 5l1.5-2h5L16 5"/></svg></div>
-        <h3>拍完就传，信息自己填</h3>
+        <h3>拍完就传</h3>
         <p>手机上传照片视频，拍摄时间和坐标直接从文件里读出来。大视频可以暂停、可以断线后接着传，传的过程中还能先看本地那份。</p>
       </div>
       <div class="card c-6 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 10h10M4 15h16M4 20h7"/></svg></div>
-        <h3>每张照片都能写字，支持 Markdown</h3>
-        <p>不是只能起个标题。当时在想什么、那家店叫什么、下次来要注意什么 —— 该写的写下来，一个月后你会感谢自己。</p>
+        <h3>给照片配上文字</h3>
+        <p>支持 Markdown 排版。当时在想什么、那家店叫什么、下次来要注意什么 —— 该写的写下来，一个月后你会感谢自己。</p>
         <div class="demo-box">
           <div class="chat">
             <!-- 标题、正文、落款本来是三个 `<br>` 断开的**硬换行**。
@@ -1641,45 +1641,36 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <h3>路线回放</h3>
         <p>沿着真实路线把整趟行程放一遍，速度可调。它能把那一天带回来，一堆静止的照片做不到。</p>
       </div>
-      <div class="card c-2 reveal">
+      <div class="card c-6 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg></div>
         <h3>相册墙</h3>
         <p>整趟行程的照片铺成一面墙，双指捏合改每行几张，按时间排、按类型筛。</p>
-      </div>
-      <!-- 「随时整份带走」原来在页尾单独一张卡。它和这块讲的是同一件事的两端：
-           回看是**在站内**重新走一遍，导出是**拿走之后**照样能走一遍 ——
-           并在这里，回看完的顾虑（照片是不是就锁在你站里了）当场就答了，
-           页尾也不再重复。 -->
-      <div class="card c-6 reveal" style="padding-bottom:28px">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 5h9v9H4z"/><path d="M9 9l11-4M15 9v6a3 3 0 01-3 3H9"/></svg></div>
-        <h3>不只是在这儿能看，随时整份带走</h3>
-        <p style="margin-bottom:18px">每趟行程都能导出成一个文件，照片和文字一起 ——
-           哪天不想用了，拿走就是。</p>
-        <div class="demo-box" style="margin-top:0">
-          <!-- 相册墙：24 格，每格一张独立小图（底图由上面的 :nth-child 分配）。
-               顺序刻意打散、不按 p01..p24 排，相邻两格不同题材。
-               #wall-fill 是「被选中那张铺满整面墙」的那一层，平时空着；
-               播放时 JS 把选中格的图填进去，它从那一格的位置放大到盖住整墙。
-               放在 .album 之外、.demo-box 之内，这样它铺满的是照片墙那一块，
-               不会溢出到卡片外面去。 -->
-          <div class="wall-stage" id="wall-stage">
-            <div class="album" id="wall-album">
-              <i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i>
-            </div>
-            <!-- 两个 fill 轮换：收尾（缩小到 0）的那一个正在跑 CSS 动画，
-                 新一轮绝不能往它身上写属性 —— 会顶掉动画，或者被 cleanupFill
-                 摘 data-burst 时当场弹回原尺寸。所以一轮收尾期间，
-                 新一轮已经在**另一个** fill 上从格子长开，两者互不干扰。
-                 脚本用 fillA/fillB + cur 轮流指。 -->
-            <div class="wall-fill" id="wall-fill" aria-hidden="true"></div>
-            <div class="wall-fill" id="wall-fill-2" aria-hidden="true"></div>
+      <div class="demo-box" style="margin-top:0">
+        <!-- 相册墙：24 格，每格一张独立小图（底图由上面的 :nth-child 分配）。
+             顺序刻意打散、不按 p01..p24 排，相邻两格不同题材。
+             #wall-fill 是「被选中那张铺满整面墙」的那一层，平时空着；
+             播放时 JS 把选中格的图填进去，它从那一格的位置放大到盖住整墙。
+             放在 .album 之外、.demo-box 之内，这样它铺满的是照片墙那一块，
+             不会溢出到卡片外面去。 -->
+        <div class="wall-stage" id="wall-stage">
+          <div class="album" id="wall-album">
+            <i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i>
           </div>
+          <!-- 两个 fill 轮换：收尾（缩小到 0）的那一个正在跑 CSS 动画，
+               新一轮绝不能往它身上写属性 —— 会顶掉动画，或者被 cleanupFill
+               摘 data-burst 时当场弹回原尺寸。所以一轮收尾期间，
+               新一轮已经在**另一个** fill 上从格子长开，两者互不干扰。
+               脚本用 fillA/fillB + cur 轮流指。 -->
+          <div class="wall-fill" id="wall-fill" aria-hidden="true"></div>
+          <div class="wall-fill" id="wall-fill-2" aria-hidden="true"></div>
         </div>
+      </div>
+      </div>
       </div>
       <div class="card c-2 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 17l4-9 5 5 4-8 5 12z"/></svg></div>
@@ -1688,7 +1679,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
       </div>
       <div class="card c-2 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M8 9h8M8 13h5"/></svg></div>
-        <h3>照片堆在地图上</h3>
+        <h3>照片按地点聚合</h3>
         <p>照片按地点聚成一堆，跟着缩放变大小 —— 哪儿拍得最多，一眼就看出来。</p>
       </div>
       <!-- 「存回手机」原来在页尾隐私带里单独占一张卡。它和这张讲的是同一件事的两个粒度 ——
@@ -1711,14 +1702,14 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     <div class="bento">
       <div class="card c-3 reveal" style="padding:34px">
         <p class="kicker">03 / 分享</p>
-        <h2 style="font-size:clamp(24px,3.2vw,34px);margin-bottom:14px">发个只读链接，<br>对方不用注册</h2>
+        <h2 style="font-size:clamp(24px,3.2vw,34px);margin-bottom:14px">发个只读链接，<br>打开就能看</h2>
         <p style="font-size:16px">
-          收到链接的人和你看到的是同一套交互：图层、回放、相册，全都在。
-          可以设过期时间、加密码，随时收回。
+          收到链接的人<strong style="color:#fff;font-weight:620">不用注册、不用装 App</strong>，打开就能看 ——
+          图层、回放、相册，和你看到的一样。
         </p>
         <p style="font-size:16px;margin-top:16px;color:var(--fg-2)">
           <strong style="color:#fff;font-weight:620">一个分享页只含那一趟行程</strong> ——
-          你的足迹热力图、别的行程的照片，不会跟着漏出去。
+          别的行程和足迹热力图不会跟着漏出去。
         </p>
         <!-- 「链接随时收回」原来单独占着页尾隐私区的一张卡（原标题「删了就是删了」），
              讲的其实全是分享这条链路上的事，和上面这段重复，所以并到这里来 ——
@@ -1726,7 +1717,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
              窄的同时你说撤就撤。并完页尾少一张，不再两处各讲半截。 -->
         <p style="font-size:16px;margin-top:14px;color:var(--fg-2)">
           链接<strong style="color:#fff;font-weight:620">随时可以收回</strong>，
-          设过期时间、加密码都行 —— 手滑发错了，撤掉那条链接就失效了，照片不会流出去。
+          也能设过期时间与访问密码。
         </p>
       </div>
       <div class="card c-3 reveal" style="display:flex;flex-direction:column;justify-content:center;
@@ -1772,7 +1763,9 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 
     <div class="bento">
       <div class="card c-3 reveal">
-        <div class="chat">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></svg></div>
+        <h3>自然问答，操作旅程</h3>
+        <div class="chat" style="margin-top:16px">
           <div class="msg me">我上次去京都是什么时候？那天晚上住哪儿？</div>
           <div class="msg ai"><b>2025 年 11 月 3 日</b>到 11 月 7 日。3 号晚住在东山区一家町屋民宿，你当时写了一句「巷子太窄，行李箱推不进去」。</div>
           <div class="msg me">今天 9 月 14 号，往年这天我在哪？</div>
@@ -1781,7 +1774,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
       </div>
       <div class="card c-3 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6.4.8-4.7 4.3 1.2 6.3L12 17l-5.5 3 1.2-6.3L3 9.4l6.4-.8z"/></svg></div>
-        <h3>它读的是你自己的数据</h3>
+        <h3>数据安全、私密、隔离</h3>
         <p>一把 Key 只看得到签发它的那个账号。权限分四档 —— 读 / 写 / 分享 / 管理，可以设过期，随时吊销。</p>
         <div class="codeline"><span class="k">GET</span> /api/ai/trips &nbsp;·&nbsp; <span class="k">Authorization:</span> Bearer tm_••••••</div>
         <p style="margin-top:20px">
