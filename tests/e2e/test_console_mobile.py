@@ -106,25 +106,42 @@ def test_expiry_within_a_week_is_highlighted(mobile_page):
 
 
 def test_expired_and_today_keys_read_correctly(mobile_page):
-    """纯前端文案：已过期 / 今天到期 两种边界，直接喂数据给渲染函数验。"""
+    """纯前端文案：已过期 / 即将到期 / 还有几天，直接喂数据给渲染函数验。
+
+    ⚠ 偏移量一律用**分钟/小时**给，不用「天」的小数：`0.2 天` 落不落在
+    今天，取决于现在是几点 —— 晚上跑的时候它会跨到第二天，用例就随钟点红了。
+    这是真实踩过的坑（2026-09-18 全量 e2e 只有它红，白天却是绿的）。
+    """
     out = mobile_page.eval("""() => {
       const pad = n => String(n).padStart(2, '0');
-      const stamp = d => {
-        const x = new Date(Date.now() + d * 86400000);
+      // 按**分钟**给偏移，和钟点无关
+      const stamp = mins => {
+        const x = new Date(Date.now() + mins * 60000);
         return `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())} `
              + `${pad(x.getHours())}:${pad(x.getMinutes())}:00`;
       };
       return {
         forever: expiryText({expires_at: null}),
-        past: expiryText({expires_at: stamp(-2)}),
-        today: expiryText({expires_at: stamp(0.2)}),
-        expiredStatus: keyStatus({expires_at: stamp(-2), revoked: 0}),
-        liveStatus: keyStatus({expires_at: stamp(30), revoked: 0}),
+        past: expiryText({expires_at: stamp(-2 * 24 * 60)}),
+        // 5 小时后（不到 24 小时，无论现在几点都不该说「剩 1 天」）
+        today: expiryText({expires_at: stamp(5 * 60)}),
+        // 30 分钟后：要细到分钟，越近越该看得见
+        soon: expiryText({expires_at: stamp(30)}),
+        // 3 天后：仍然是「剩 N 天」
+        days: expiryText({expires_at: stamp(3 * 24 * 60)}),
+        expiredStatus: keyStatus({expires_at: stamp(-2 * 24 * 60), revoked: 0}),
+        liveStatus: keyStatus({expires_at: stamp(30 * 24 * 60), revoked: 0}),
       };
     }""")
     assert "永久" in out["forever"]
     assert "已过期" in out["past"]
-    assert "今天到期" in out["today"]
+    # 不到 24 小时：说「今天到期」，不能说「剩 1 天」
+    assert "今天到期" in out["today"], out["today"]
+    assert "剩 1 天" not in out["today"], out["today"]
+    # 不到 1 小时：细到分钟
+    assert "分钟" in out["soon"], out["soon"]
+    # 3 天后仍是「剩 N 天」
+    assert "剩 3 天" in out["days"], out["days"]
     assert "已过期" in out["expiredStatus"]
     assert "有效" in out["liveStatus"]
 

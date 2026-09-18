@@ -35,10 +35,44 @@ def _open_detail(page, e2e_user, idx):
 
 
 def _fake_video(path, seed, size=220_000):
+    """一个**故意解不了码**的假 mp4：有像样的 ftyp 头 + 一段随机字节。
+
+    别拿它当「能播的视频」用。这一批里只有「解码失败要给人话」那条该用它；
+    需要真的播起来的地方（比如上传 cell 里点▶看本地那份）用 `_playable_video`，
+    否则浏览器拿到它就是一个 readyState=0 的死块，黑屏不算，还得看运气。
+    """
     head = b"\x00\x00\x00\x18ftypmp42"
     blob = hashlib.sha256(f"tm-ui-{seed}".encode()).digest()
     body = (blob * (size // len(blob) + 1))[:size - len(head)]
     path.write_bytes(head + body)
+    return str(path)
+
+
+def _playable_video(path, seconds=1):
+    """现造一小段**真能解码**的 mp4（用 ffmpeg，和 test_video_fullscreen 同源）。
+
+    上传 cell 里「点▶看本地那份」的用例必须喂能解码的片子：那个按钮走的是
+    `<video>` 的原生解码，喂假文件的话它永远 readyState=0 / `paused===true`，
+    用例就只能靠「错误分支恰好闪一下」蒙混过关（实测 20 轮错 6 轮）。
+    """
+    import subprocess
+    import tempfile
+    from pathlib import Path as _P
+
+    import imageio_ffmpeg
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    with tempfile.TemporaryDirectory() as d:
+        out = _P(d) / "e2e.mp4"
+        # 必须写真文件而不是 pipe：mp4 的 muxer 要回头改写 moov，不支持不可 seek 的输出
+        cmd = [ffmpeg, "-y", "-f", "lavfi", "-i",
+               f"color=c=navy:s=320x240:d={seconds}",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+               "-t", str(seconds), str(out)]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+            pytest.skip("这台机器的 ffmpeg 造不出测试用的 mp4")
+        path.write_bytes(out.read_bytes())
     return str(path)
 
 
@@ -226,32 +260,51 @@ def test_uploading_cell_pause_and_resume(chunky_page, e2e_user, tmp_path):
 def test_uploading_cell_plays_the_local_file(page, e2e_user, tmp_path):
     _open_detail(page, e2e_user, idx=1)
     _throttle(page)
-    page.p.set_input_files("#file-input", [_fake_video(tmp_path / "l.mp4", 3)])
+    page.p.set_input_files("#file-input", [_playable_video(tmp_path / "l.mp4")])
     page.wait_for(f"{UPLOADING} .up-act-play")
     page.eval(f"document.querySelector('{UPLOADING} .up-act-play').click()")
     page.wait_for(".local-preview video")
     # 放的是本地那份，不是服务端的地址
     assert page.eval("document.querySelector('.local-preview video').src")\
         .startswith("blob:")
-    # 播起来了才算数：autoplay 属性会被自动播放策略拦下，必须是手动 play()
-    page.wait_until("!document.querySelector('.local-preview video').paused"
-                    " || document.querySelector('.local-preview-err')"
-                    ".style.display !== 'none'", timeout=5000)
+    # 播起来了才算数：autoplay 属性会被自动播放策略拦下，必须是手动 play()。
+    # 只等「不再 paused」不够 —— 解不了码的片子也会停在 paused=true 上，
+    # 那样用例就变成在赌错误分支有没有及时把提示弹出来，纯看运气。
+    page.wait_until("(() => { const v = document.querySelector('.local-preview video');"
+                    "  return v.readyState >= 2 && v.currentTime > 0 && !v.paused; })()",
+                    timeout=8000)
     page.eval("document.querySelector('.local-preview-close').click()")
     page.wait_until("document.querySelectorAll('.local-preview').length === 0")
 
 
 def test_local_preview_says_so_when_the_codec_is_unsupported(page, e2e_user, tmp_path):
-    """解不了码的时候要给一句人话，不能只留一块黑屏。"""
+    """解不了码的时候要给一句人话，不能只留一块黑屏。
+
+    ⚠ 这里**不能** `wait_for('.local-preview video')` 等它「可见」。
+    Playwright 的可见性判定要求元素有非空 bounding box，而一块解不了码的
+    <video> 根本没有内在尺寸 —— 能不能出现那么一帧有尺寸，取决于错误事件
+    和这一步谁先到，于是这个 wait_for 就是在赌几十毫秒（实测 3~11ms 的窗口，
+    不压网络时单跑也有 ~13% 的轮次赌输）。文案出来时 video 已经按设计藏掉了，
+    「可见」本就不该是这条用例的验收条件。
+
+    所以：等 overlay 挂上（挂载，不是可见），再等文案，最后查两件事 ——
+    说了人话，且黑框确实藏起来了。
+    """
     _open_detail(page, e2e_user, idx=1)
     _throttle(page)
     page.p.set_input_files("#file-input", [_fake_video(tmp_path / "bad.mp4", 7)])
     page.wait_for(f"{UPLOADING} .up-act-play")
     page.eval(f"document.querySelector('{UPLOADING} .up-act-play').click()")
-    page.wait_for(".local-preview video")
+    # state="attached"：元素进了 DOM 就算数，不管有没有渲染出尺寸
+    page.p.wait_for_selector(".local-preview video", state="attached", timeout=8000)
     page.wait_until("document.querySelector('.local-preview-err')"
                     ".style.display !== 'none'", timeout=8000)
     assert "转码" in page.text(".local-preview-err")
+    # 光有文案不够：解不了的这块 video 必须真的藏掉，否则黑框和提示语会一起
+    # 杵在屏幕上。这条断言是补的 —— 从前只查 err 的 display，把「video 没藏」
+    # 这种回归放过去了（而且失败时会伪装成上面那句 wait_for 超时，看着像偶发）。
+    assert page.eval("getComputedStyle(document.querySelector('.local-preview video'))"
+                     ".display") == "none", "解不了码时 video 应当隐藏"
 
 
 def test_progress_shows_what_the_server_is_doing_after_100pct(page, e2e_user, tmp_path):

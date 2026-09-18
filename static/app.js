@@ -2423,11 +2423,20 @@ function openLocalPreview(file) {
     err.style.display = '';
     media.style.display = 'none';
   };
-  media.onerror = () => {
-    fail(video
-      ? '这个视频浏览器解不了码（多半是 iPhone 拍的 HEVC/MOV）。上传完服务端会转码，到时候就能在线播放了。'
-      : '这张图片浏览器打不开。');
-  };
+  // ⚠ onerror 必须挂在 media.src **之前**。挂在后面的话，坏文件在
+  // 「src 已设 → handler 挂上」这一两个 tick 内就把 error 事件派发完了，
+  // 事件没人接，于是控制台干干净净、界面也不给提示 —— 只剩一块黑屏，
+  // 正是上面那句注释说过的老毛病。实测换成坏 mp4 时，10 轮里有 4 轮
+  // 报错发生在 handler 挂上之前（首帧可见只维持 3~11ms），就是这么漏的。
+  const failMsg = video
+    ? '这个视频浏览器解不了码（多半是 iPhone 拍的 HEVC/MOV）。上传完服务端会转码，到时候就能在线播放了。'
+    : '这张图片浏览器打不开。';
+  media.onerror = () => fail(failMsg);
+  // 兜底：万一 onerror 还是没接住（比如事件在更早的阶段就派发完了），
+  // 插进 DOM 后补查一次 error 状态，别让用户对着黑屏猜。
+  if (video) {
+    queueMicrotask(() => { if (media.error && media.error.code) fail(failMsg); });
+  }
   ov.onclick = (e) => { if (e.target === ov) close(); };
   document.addEventListener('keydown', onKey);
   document.body.appendChild(ov);

@@ -895,16 +895,23 @@ function expiryText(k) {
   if (isExpired(k)) return `<span class="muted">${day} 已过期</span>`;
   const left = daysLeft(k.expires_at);
   const soon = left <= 7;                       /* 一周内到期标黄，别等它悄悄失效 */
-  const tail = day === todayStr() ? '今天到期' : `剩 ${left} 天`;
+  /* 不满一天时按**小时**说，别硬说「剩 1 天」。
+     「今天到期」以前判的是「到期日期串 == 今天的日期串」，这只在到期时刻
+     和现在落在**同一个自然日**时成立：晚上 10 点建的 0.2 天有效期落到第二天
+     凌晨，明明只剩 5 小时，却因为跨了一天而显示「剩 1 天」——读起来像还有
+     一整天，实际几个小时后就失效了。
+     改成按**剩余毫秒**判：不到 24 小时就是「今天到期」，
+     不到 1 小时再细到分钟，越近越该让人看得见。 */
+  const msLeft = parseLocal(k.expires_at) - new Date();
+  let tail;
+  if (msLeft < 3600000) tail = `剩 ${Math.max(1, Math.ceil(msLeft / 60000))} 分钟`;
+  else if (msLeft < 86400000) tail = `今天到期 · 剩 ${Math.ceil(msLeft / 3600000)} 小时`;
+  else tail = `剩 ${left} 天`;
   return `<span style="color:${soon ? 'var(--amber)' : 'inherit'}">${day} · ${tail}</span>`;
 }
 
 function isExpired(k) {
   return !!k.expires_at && parseLocal(k.expires_at) <= new Date();
-}
-function todayStr() {
-  const d = new Date(), p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 function daysLeft(ts) {
   return Math.ceil((parseLocal(ts) - new Date()) / 86400000);
