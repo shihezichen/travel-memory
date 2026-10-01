@@ -36,8 +36,11 @@ log = logging.getLogger("travel.oss")
 # response-content-disposition 是「另存为」下载用的：OSS 对**匿名**请求不允许覆盖
 # 响应头（回 400 InvalidRequest "Can not override response header for an anonymous
 # user"），哪怕对象本身是 public-read。所以这个参数必须签进去。
+# x-oss-process 是服务端缩图：AI 索引只需要 224px 的像素，拉原图是 50 倍的浪费
+# （实测单张原图 1.07MB，resize l_224 后约 20KB）。不签进来就是 SignatureDoesNotMatch。
 SIGNED_SUBRESOURCES = ("partNumber", "uploadId", "uploads",
-                       "response-content-disposition", "response-content-type")
+                       "response-content-disposition", "response-content-type",
+                       "x-oss-process")
 
 # 分片大小。OSS 要求除最后一片外每片 ≥ 100KB、片数 ≤ 10000。
 # 取 8MB 而不是前端原来那个 4MB：直传没有「服务端逐片落盘」的开销，片子大一点

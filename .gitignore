@@ -86,3 +86,11 @@ static/promo/
 # 收进来会让 .git 从 10MB 涨到 120MB 且永久留在历史里；线上 OSS 已有同一份。
 # 跟上面 static/promo/ 一个道理。
 docs/advertising/assets/*.mp4
+
+# ---- AI 语义索引的本地重物（不进库）----
+# .venv-ai/ 是跑 CLIP 的独立虚拟环境（5.8G，torch + onnxruntime），
+# models/ 是下载的 Chinese-CLIP 权重、导出的 onnx，以及探针跑出来的中间产物
+# （1.5G）。两者都能由 scripts/export_clip_onnx.py 和 ModelScope 下载重建，
+# 没有一个字节是手写的，不该让每个 clone 背着 7G。
+.venv-ai/
+models/

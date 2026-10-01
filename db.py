@@ -93,6 +93,21 @@ CREATE TABLE IF NOT EXISTS media_variants (
 );
 CREATE INDEX IF NOT EXISTS idx_variants_media ON media_variants(media_id);
 
+CREATE TABLE IF NOT EXISTS media_embeddings (
+    -- 一张照片一个向量，所以 media_id 直接做主键：换模型是整表重算，不是堆版本。
+    media_id   INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+    model      TEXT NOT NULL,
+    dim        INTEGER NOT NULL,
+    -- float32 原始字节，写入前已 L2 归一化。512 维正好 2KB，3000 张也才 6MB，
+    -- 全部读进内存做一次矩阵乘就是检索，不需要向量数据库（实测 10 万张仍只要 10ms）。
+    vec        BLOB,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    error      TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_status ON media_embeddings(status);
+
 CREATE TABLE IF NOT EXISTS shares (
     token TEXT PRIMARY KEY,
     trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
@@ -2110,3 +2125,28 @@ def usage_stats(user_id):
     ).fetchall()
     conn.close()
     return rows_to_dicts(rows)
+
+
+def get_media_brief(media_ids):
+    """批量取媒体概要：{media_id: {point/trip 信息}}。语义检索结果的补全用。
+
+    一次 IN 查完而不是逐条查：搜索一次可能返回 200 条，逐条就是 200 趟往返。
+    """
+    ids = [int(i) for i in media_ids]
+    if not ids:
+        return {}
+    conn = get_conn()
+    try:
+        ph = ",".join("?" * len(ids))
+        rows = conn.execute(
+            "SELECT m.id AS id, m.filename AS filename, m.thumb_filename AS thumb_filename, "
+            "       m.caption AS caption, m.exif_time AS exif_time, "
+            "       p.id AS point_id, p.name AS point_name, "
+            "       t.id AS trip_id, t.name AS trip_title "
+            "  FROM media m "
+            "  JOIN points p ON p.id = m.point_id "
+            "  JOIN trips  t ON t.id = p.trip_id "
+            " WHERE m.id IN (%s)" % ph, ids).fetchall()
+    finally:
+        conn.close()
+    return {r["id"]: dict(r) for r in rows}

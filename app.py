@@ -34,6 +34,7 @@ import media_purge  # 删媒体时一并清掉 OSS 上的对象（见 media_purg
 import oss           # OSS 直传签名（见 oss.py）
 import oss_backfill  # 直传之后把对象拉回本机存档（见 oss_backfill.py）
 import transcode  # 视频清晰度分层转码（后台线程，见 transcode.py 顶部的诊断说明）
+import aiindex  # 照片语义索引（Chinese-CLIP，见 aiindex.py 顶部）
 import mcp_http  # MCP Streamable HTTP 远程端点（开放平台：远程 Agent 接入）
 
 # 领域 API 层（记忆/联想/生成 + API Key 认证 + 审计）
@@ -329,6 +330,26 @@ def _startup_widen_threadpool():
         anyio.to_thread.current_default_thread_limiter().total_tokens = THREADPOOL_LIMIT
     except Exception as e:                                   # noqa: BLE001
         print("[startup] 调整线程池容量失败（沿用默认 40）:", e)
+
+
+@app.on_event("startup")
+def _startup_warm_clip():
+    """把文本塔先读进内存。不预热的话第一个搜索的人要等 2.3 秒（实测），
+    而那之后每次只要 26ms —— 这 2.3 秒纯粹是 410MB 权重的加载，没必要让用户付。
+
+    放后台线程：模型加载不该拖慢进程启动，更不该因为模型文件缺失就起不来。"""
+    import threading
+
+    def _warm():
+        try:
+            if aiindex.available():
+                import clipmodel
+                clipmodel.encode_texts(["预热"])
+                print("[startup] CLIP 文本塔已预热")
+        except Exception as e:                            # noqa: BLE001
+            print("[startup] CLIP 预热跳过:", e)
+
+    threading.Thread(target=_warm, name="clip-warm", daemon=True).start()
 
 
 @app.on_event("startup")
@@ -1236,6 +1257,7 @@ def register_uploaded_file(point_id: int, src_path: Path, mtype: str) -> dict:
     mid = db.add_media(point_id, mtype, src_path.name, thumb_name,
                        exif_time, exif_lat, exif_lng)
     transcode.on_media_uploaded(mid, src_path, mtype)   # 视频丢后台转码，不阻塞本请求
+    aiindex.on_media_uploaded(mid, src_path.name, mtype)  # 照片丢后台算向量，同样不阻塞
     return {
         "id": mid, "type": mtype, "filename": src_path.name,
         "thumb": thumb_name, "exif_time": exif_time,
@@ -2002,6 +2024,49 @@ def api_search_media(request: Request, trip_id: int,
         r["url"] = media_url(f"/uploads/{r['filename']}")
         r["thumb_url"] = media_url(f"/uploads/thumbs/{r['thumb_filename']}") if r.get("thumb_filename") else None
     return {"results": results, "count": len(results)}
+
+
+@app.get("/api/search/photos")
+def api_search_photos(request: Request, q: str = "", limit: int = 30,
+                      min_score: float = 0.0):
+    """跨行程语义搜图。「海边日落」这类说法在这里才有意义 ——
+    旧的 /api/trips/{id}/media/search 匹配的是 filename/point_name/caption 四个
+    文本字段，输入「海边日落」只有当你自己打过这四个字才搜得到。
+
+    模型没装或开关关掉时返回 enabled=false，前端据此把入口藏起来，
+    而不是给用户一个永远搜不出东西的框。
+    """
+    user = current_user(request)
+    if not aiindex.available():
+        return {"enabled": False, "results": [], "count": 0}
+
+    hits = aiindex.search(user["id"], q, limit=max(1, min(limit, 200)),
+                          min_score=min_score)
+    ids = [h["media_id"] for h in hits]
+    meta = db.get_media_brief(ids) if ids else {}
+    out = []
+    for h in hits:
+        m = meta.get(h["media_id"], {})
+        out.append({
+            **h,
+            "point_id": m.get("point_id"),
+            "point_name": m.get("point_name"),
+            "trip_id": m.get("trip_id"),
+            "trip_title": m.get("trip_title"),
+            "caption": m.get("caption"),
+            "exif_time": m.get("exif_time"),
+            "url": media_url(f"/uploads/{h['filename']}"),
+            "thumb_url": (media_url(f"/uploads/thumbs/{m['thumb_filename']}")
+                          if m.get("thumb_filename") else None),
+        })
+    return {"enabled": True, "results": out, "count": len(out), "q": q}
+
+
+@app.get("/api/search/status")
+def api_search_status(request: Request):
+    """索引进度。回填 3000 张要十几分钟，没有这个接口就只能去翻日志。"""
+    current_user(request)
+    return aiindex.stats()
 
 
 @app.get("/api/trips/{trip_id}/media")
