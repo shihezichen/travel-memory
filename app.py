@@ -35,6 +35,7 @@ import oss           # OSS 直传签名（见 oss.py）
 import oss_backfill  # 直传之后把对象拉回本机存档（见 oss_backfill.py）
 import transcode  # 视频清晰度分层转码（后台线程，见 transcode.py 顶部的诊断说明）
 import aiindex  # 照片语义索引（Chinese-CLIP，见 aiindex.py 顶部）
+import jevrerank  # 召回之后的 Jev 精判重排（见 jevrerank.py 顶部）
 import mcp_http  # MCP Streamable HTTP 远程端点（开放平台：远程 Agent 接入）
 
 # 领域 API 层（记忆/联想/生成 + API Key 认证 + 审计）
@@ -2028,22 +2029,43 @@ def api_search_media(request: Request, trip_id: int,
 
 @app.get("/api/search/photos")
 def api_search_photos(request: Request, q: str = "", limit: int = 30,
-                      min_score: float = 0.0):
+                      min_score: float = 0.0, rerank: bool = True):
     """跨行程语义搜图。「海边日落」这类说法在这里才有意义 ——
     旧的 /api/trips/{id}/media/search 匹配的是 filename/point_name/caption 四个
     文本字段，输入「海边日落」只有当你自己打过这四个字才搜得到。
 
     模型没装或开关关掉时返回 enabled=false，前端据此把入口藏起来，
     而不是给用户一个永远搜不出东西的框。
+
+    配了 TM_JEV_API_KEY 的话，CLIP 召回之后还会过一道 Jev 精判重排
+    （见 jevrerank.py）。rerank=false 关掉它、单看 CLIP 的原始顺序 ——
+    调权重的时候需要这个对照。没精判时 rerank_skipped 说明原因。
     """
     user = current_user(request)
     if not aiindex.available():
         return {"enabled": False, "results": [], "count": 0}
 
-    hits = aiindex.search(user["id"], q, limit=max(1, min(limit, 200)),
+    # 开了精判就多召回一些：Jev 要判的是「CLIP 捞上来的这批里哪些真的对」，
+    # 只喂它 30 条的话，被 CLIP 排在 31 名、本来能被救回来的图根本没进场。
+    want_rerank = rerank and jevrerank.available()
+    recall = max(limit, jevrerank.RECALL) if want_rerank else limit
+    hits = aiindex.search(user["id"], q, limit=max(1, min(recall, 500)),
                           min_score=min_score)
     ids = [h["media_id"] for h in hits]
     meta = db.get_media_brief(ids) if ids else {}
+
+    if want_rerank and hits:
+        rr = jevrerank.rerank(q, hits, meta, limit=limit)
+        hits = rr["results"]
+    else:
+        # rerank_skipped 让排查能一眼看出「为什么这次没精判」，
+        # 而不是对着 reranked=false 猜是关了、没配、还是根本没候选。
+        rr = {"reranked": False, "judged": 0,
+              "reason": "rerank_off" if not rerank else
+                        ("jev_disabled" if not jevrerank.available()
+                         else "no_candidates")}
+        hits = hits[:limit]
+
     out = []
     for h in hits:
         m = meta.get(h["media_id"], {})
@@ -2059,14 +2081,16 @@ def api_search_photos(request: Request, q: str = "", limit: int = 30,
             "thumb_url": (media_url(f"/uploads/thumbs/{m['thumb_filename']}")
                           if m.get("thumb_filename") else None),
         })
-    return {"enabled": True, "results": out, "count": len(out), "q": q}
+    return {"enabled": True, "results": out, "count": len(out), "q": q,
+            "reranked": rr["reranked"], "judged": rr["judged"],
+            "rerank_skipped": rr["reason"]}
 
 
 @app.get("/api/search/status")
 def api_search_status(request: Request):
     """索引进度。回填 3000 张要十几分钟，没有这个接口就只能去翻日志。"""
     current_user(request)
-    return aiindex.stats()
+    return {**aiindex.stats(), "jev": jevrerank.stats()}
 
 
 @app.get("/api/trips/{trip_id}/media")
