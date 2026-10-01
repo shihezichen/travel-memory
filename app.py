@@ -35,6 +35,7 @@ import oss           # OSS 直传签名（见 oss.py）
 import oss_backfill  # 直传之后把对象拉回本机存档（见 oss_backfill.py）
 import transcode  # 视频清晰度分层转码（后台线程，见 transcode.py 顶部的诊断说明）
 import aiindex  # 照片语义索引（Chinese-CLIP，见 aiindex.py 顶部）
+import caption  # 建库时预生成的照片画面描述，精判的主要输入（见 caption.py 顶部）
 import jevrerank  # 召回之后的 Jev 精判重排（见 jevrerank.py 顶部）
 import mcp_http  # MCP Streamable HTTP 远程端点（开放平台：远程 Agent 接入）
 
@@ -2029,7 +2030,8 @@ def api_search_media(request: Request, trip_id: int,
 
 @app.get("/api/search/photos")
 def api_search_photos(request: Request, q: str = "", limit: int = 30,
-                      min_score: float = 0.0, rerank: bool = True):
+                      min_score: float = 0.0, rerank: bool = True,
+                      trips: str = ""):
     """跨行程语义搜图。「海边日落」这类说法在这里才有意义 ——
     旧的 /api/trips/{id}/media/search 匹配的是 filename/point_name/caption 四个
     文本字段，输入「海边日落」只有当你自己打过这四个字才搜得到。
@@ -2040,17 +2042,30 @@ def api_search_photos(request: Request, q: str = "", limit: int = 30,
     配了 TM_JEV_API_KEY 的话，CLIP 召回之后还会过一道 Jev 精判重排
     （见 jevrerank.py）。rerank=false 关掉它、单看 CLIP 的原始顺序 ——
     调权重的时候需要这个对照。没精判时 rerank_skipped 说明原因。
+
+    trips="3,7" 把范围收到这几条行程；不传 = 全部行程。界面默认只勾当前这条，
+    因为「海边日落」在一次旅行里通常指得很具体，跨 3000 张全库搜反而把它淹掉。
+    过滤发生在向量矩阵那一层（见 aiindex.search），所以收窄范围之后 limit
+    仍然能取满，而不是先全局取 30 条再筛剩几条。
     """
     user = current_user(request)
     if not aiindex.available():
         return {"enabled": False, "results": [], "count": 0}
+
+    # 非数字的段直接丢掉而不是报 422：这个参数来自前端拼串，多一个逗号、
+    # 带个空串都很常见，为此把整次搜索打回去不值当。
+    tids = []
+    for part in (trips or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            tids.append(int(part))
 
     # 开了精判就多召回一些：Jev 要判的是「CLIP 捞上来的这批里哪些真的对」，
     # 只喂它 30 条的话，被 CLIP 排在 31 名、本来能被救回来的图根本没进场。
     want_rerank = rerank and jevrerank.available()
     recall = max(limit, jevrerank.RECALL) if want_rerank else limit
     hits = aiindex.search(user["id"], q, limit=max(1, min(recall, 500)),
-                          min_score=min_score)
+                          min_score=min_score, trip_ids=tids or None)
     ids = [h["media_id"] for h in hits]
     meta = db.get_media_brief(ids) if ids else {}
 
@@ -2076,12 +2091,16 @@ def api_search_photos(request: Request, q: str = "", limit: int = 30,
             "trip_id": m.get("trip_id"),
             "trip_title": m.get("trip_title"),
             "caption": m.get("caption"),
+            # 模型看图说的那句话。前端不一定展示，但排查「这张为什么被判成相关」
+            # 时它是唯一的证据 —— 没有它只能对着分数猜。
+            "ai_caption": m.get("ai_caption"),
             "exif_time": m.get("exif_time"),
             "url": media_url(f"/uploads/{h['filename']}"),
             "thumb_url": (media_url(f"/uploads/thumbs/{m['thumb_filename']}")
                           if m.get("thumb_filename") else None),
         })
     return {"enabled": True, "results": out, "count": len(out), "q": q,
+            "trips": tids,
             "reranked": rr["reranked"], "judged": rr["judged"],
             "rerank_skipped": rr["reason"]}
 
@@ -2090,7 +2109,8 @@ def api_search_photos(request: Request, q: str = "", limit: int = 30,
 def api_search_status(request: Request):
     """索引进度。回填 3000 张要十几分钟，没有这个接口就只能去翻日志。"""
     current_user(request)
-    return {**aiindex.stats(), "jev": jevrerank.stats()}
+    return {**aiindex.stats(), "jev": jevrerank.stats(),
+            "caption": caption.stats()}
 
 
 @app.get("/api/trips/{trip_id}/media")

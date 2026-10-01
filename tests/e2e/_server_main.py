@@ -43,6 +43,11 @@ import transcode as _transcode  # noqa: E402
 _transcode.UPLOAD_DIR = UPLOADS
 _transcode.VARIANT_DIR = UPLOADS / "variants"
 
+# 语义索引从 UPLOAD_DIR 读图算向量。漏了这一行，E2E 里传的照片永远进不了索引
+# （去生产 uploads/ 找一个只存在于临时目录的 uuid），搜图那组用例就只能搜到空。
+import aiindex as _aiindex      # noqa: E402
+_aiindex.UPLOAD_DIR = UPLOADS
+
 import app as app_mod           # noqa: E402
 app_mod.UPLOAD_DIR = UPLOADS
 # _TILE_DIR 随分享缩略图一起搬到了 routers/share.py

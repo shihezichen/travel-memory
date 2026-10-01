@@ -154,6 +154,24 @@ def test_rerank_survives_total_api_failure(jev_on):
     assert [x["media_id"] for x in r["results"]] == [1, 2, 3]
 
 
+def test_rerank_all_rejected_is_not_reported_as_an_outage(jev_on):
+    """Jev 把整批都否了：退回 CLIP 顺序，但 reason 要说清这是结论不是故障。
+
+    没有画面描述的图库天天触发这一条 —— 用户写的 caption 答不了「下雪」，
+    Jev 一张也不认。混报成 jev_unavailable 会把人骗去查网络。
+    """
+    def reject_everything(state, questions):
+        if "image_description" not in state:
+            return {"category": {"choice": "自然风光"}}
+        return _answers(0, 0.02)
+    jev_on.setattr(jevrerank, "_post", reject_everything)
+
+    r = jevrerank.rerank("海边日落", HITS, META, limit=10)
+    assert r["reranked"] is False and r["judged"] == 0
+    assert r["reason"] == "all_rejected"
+    assert [x["media_id"] for x in r["results"]] == [1, 2, 3]   # 一条都不能少
+
+
 def test_rerank_partial_failure_does_not_punish_unjudged(jev_on):
     """只有一张判失败：它不该因此掉到所有判过的图后面。"""
     def flaky(state, questions):

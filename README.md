@@ -55,6 +55,12 @@ than just title it.
   the day back in a way a pile of stills doesn't
 - **Album** — the trip's photos as one flat wall (iOS Photos style); pinch to change how many per
   row, sort by time, filter by type
+- **Search photos by what's in them** — the magnifier in the top bar. Type "sunset by the sea" and
+  it finds them; you never had to tag anything, it matches the picture itself (Chinese-CLIP, see
+  below). The scope starts on **the trip you have open**, because that kind of phrase usually means
+  something specific within one trip; "全选" widens it to every trip. Results come back as a photo
+  wall too, each one labelled with the trip and place it came from. With no model installed the
+  entry point simply isn't there
 - **Photo wall autoplay** — a ▶ on both the album page and the place detail page sets the whole
   wall going by itself: it picks a cell at random, selects it, blows it up in place, fills the
   screen, then shrinks it back, one after another. Good to just leave running. Videos play, with a
@@ -192,8 +198,61 @@ another host, `TM_JEV_BACKEND=typesafe` to go back to the official cloud, `TM_JE
 for the Workers AI relay. Any timeout or error degrades to plain CLIP ordering -- search is what
 the user is waiting on, reranking is a bonus and must never take search down with it.
 
-> It only sees **text**: the caption, place name, trip title and filename of each candidate, never
-> the pixels. On a library where nobody wrote captions there is nothing for it to judge.
+> It only sees **text**, never the pixels. So how well it ranks depends entirely on how good the
+> descriptions you feed it are -- read on.
+
+## Optional: pre-generate photo descriptions at index time
+
+The rerank input is a **textual description** of each candidate. That text used to be assembled from
+the user-written caption plus place and trip names -- and user captions are mostly empty or noise, so
+a whole batch would often yield nothing at all (`rerank_skipped: no_descriptions`) and the rerank
+silently did nothing.
+
+`scripts/backfill_caption.py` fixes that: at **index time** it runs Qwen2-VL-2B over every photo and
+stores one Chinese sentence describing what is actually in the frame ("a winding road crossing a
+snowfield, distant ranges and haze") into the `media_captions` table. Query time pays nothing -- the
+search path gains one LEFT JOIN and runs no model at all.
+
+```bash
+# one-off: fetch the model (~4.4GB, via modelscope)
+.venv-ai/bin/python -c 'from modelscope import snapshot_download; \
+    snapshot_download("Qwen/Qwen2-VL-2B-Instruct", local_dir="models/qwen2-vl-2b-instruct")'
+
+.venv-ai/bin/python scripts/backfill_caption.py --limit 10 --dry-run  # see what it writes
+.venv-ai/bin/python scripts/backfill_caption.py                       # drain the backlog
+.venv-ai/bin/python scripts/backfill_caption.py --watch                # stay up, pick up new uploads
+```
+
+It runs in `.venv-ai` (torch + CUDA), the same split as the ONNX export: the main venv still only
+knows onnxruntime and the web process never imports torch. Out of VRAM it falls back to CPU (an order
+of magnitude slower, but it finishes). Incremental coverage comes from `--watch` polling, not from a
+queue in the upload path, so upload latency is untouched.
+
+Skipping this step breaks nothing: photos without a description get exactly the old behaviour
+(metadata concatenation). Progress shows up under `caption` in `/api/search/status`.
+
+Measured gain (`scripts/eval_caption_gain.py` reranks one CLIP recall twice, with and without the
+generated descriptions; 72 photos, 6 queries, 12 candidates each):
+
+- **Candidates the rerank actually judged: 17 → 41.** Not a smarter model -- the old text simply
+  could not answer "snowing" or "sunset", and for those two queries Jev rejected the whole batch
+  (`all_rejected`), i.e. the rerank did nothing at all.
+- **13 of 26 top-5 slots changed**, and mean Jev relevance rose on every query where both sides
+  produced a number: 0.548 → 0.838, 0.623 → 0.728, 0.703 → 0.737, 0.581 → 0.610.
+- Query latency **unchanged** -- the descriptions were computed at index time; search gains one
+  LEFT JOIN.
+
+```bash
+.venv/bin/python scripts/eval_caption_gain.py -k 5 --recall 12 --json gain.json
+```
+
+> The script rate-limits itself (`--rate`, 28/min by default). The self-hosted KEV box allows 30
+> calls a minute; go over and you get a full minute of 429s -- both sides then fall back to CLIP
+> order and the experiment measures nothing.
+
+> ⚠️ A 2B model will not honour "do not guess place names" -- the same photo produced two different
+> invented towns across two runs. The visual description itself is accurate; treat any place name as
+> noise, or tune `TM_CAPTION_PROMPT`, or move to a larger model.
 
 ## Keeping it running
 

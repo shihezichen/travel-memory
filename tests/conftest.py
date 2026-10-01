@@ -84,7 +84,12 @@ import transcode as _transcode  # noqa: E402
 # 漏了它，回源测试就会把对象写进生产 uploads/。
 import oss_backfill as _oss_backfill  # noqa: E402
 
-_ROUTER_MODULES = [_r_agent_api, _r_share, _transcode, _oss_backfill]
+# aiindex 也有一份 UPLOAD_DIR（算向量时从那里读图）。漏了它，装了 CLIP 的机器上
+# 每次上传都会去**生产** uploads/ 里找那个 uuid 文件名，找不到就把索引记成 failed
+# —— 测试于是在一个「索引永远失败」的世界里跑，而这事一声不吭。
+import aiindex as _aiindex  # noqa: E402
+
+_ROUTER_MODULES = [_r_agent_api, _r_share, _transcode, _oss_backfill, _aiindex]
 # 每个模块里需要被重定向到 tmp_path 的目录型全局。
 # 不是每个模块都全有，所以按 hasattr 挑。
 _ROUTER_DIR_ATTRS = ("UPLOAD_DIR", "_TILE_DIR", "VARIANT_DIR")
@@ -148,6 +153,11 @@ def isolated_env(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(_transcode, "enqueue", _fake_enqueue)
+
+    # 语义索引同理：**绝不**在测试里真的跑 CLIP。装了模型的机器上，每一次上传都会
+    # 起一个后台线程算 512 维向量 —— 慢，而且会让「这台机器装没装模型」变成测试
+    # 结果的一部分。要测索引本身的用例自己把 available/enqueue 换回去。
+    monkeypatch.setattr(_aiindex, "enqueue", lambda media_id, filename: False)
     monkeypatch.setattr(media_mod, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(media_mod, "THUMB_DIR", thumbs)
 

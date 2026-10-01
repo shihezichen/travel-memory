@@ -46,6 +46,7 @@ let placesDict = [];    // 5 国（西/土/英/爱/法）中文↔英文地名�
 // 灯箱状态
 let lightboxMedia = [];   // 当前点所有媒体
 let lightboxIndex = 0;    // 当前索引
+let lightboxSource = 'point';  // 这组图的来源：'point' 记录进度，'search' 不记
 
 // 轨迹回放动画状态
 let replayMarker = null;   // 移动的小圆点 marker
@@ -214,6 +215,10 @@ function saveLayerState(patch) {
 }
 function saveLightboxState() {
   try {
+    if (lightboxSource === 'search') {    // 搜索结果不留痕，见 openLightbox 的注释
+      localStorage.removeItem(LIGHTBOX_STATE_KEY);
+      return;
+    }
     const m = lightboxMedia[lightboxIndex];
     if (!m || !m.point_id) return;
     localStorage.setItem(LIGHTBOX_STATE_KEY, JSON.stringify({ point_id: m.point_id, index: lightboxIndex }));
@@ -470,6 +475,7 @@ function onLoggedIn() {
   loadCurrentUser().then(loadTrips).then(() => {
     restoreLayerState();
     restoreLightboxState();
+    initPhotoSearch();
   });
 }
 
@@ -3862,8 +3868,12 @@ function toggleReplay() {
 }
 
 // ---------- 媒体灯箱 ----------
-function openLightbox(idx) {
+// source：这一组图是从哪儿点开的。只有 'point'（轨迹点/相册）那种才值得记进
+// localStorage —— 搜索结果是一次性的列表，下次打开页面它早就不在了，
+// 按下标恢复只会把人扔到同一个点的另一张图上（见 saveLightboxState）。
+function openLightbox(idx, source) {
   lightboxIndex = idx;
+  lightboxSource = source || 'point';
   renderLightbox();
   $('#lightbox').classList.remove('hidden');
 }
@@ -3974,6 +3984,7 @@ function buildLightboxCaption(m, idx) {
     e.stopPropagation();
     if (!await editMediaCaption(m)) return;
     render();
+    if (searchOpen()) renderSearchGrid();
     if (currentTab === 'albums') renderPhotoGrid();
     if (currentTab === 'detail') {
       // 点详情网格上那个 ✎ 的「已写过描述」状态也要跟着变
@@ -5114,10 +5125,15 @@ function openMoreSheet() {
     upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
           + '<polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
     terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+    search: '<circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
           + '<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
   };
   const items = [
+    // 搜图排第一，而且只在模型就绪时出现 —— 没装模型还摆个入口，点进去只能
+    // 告诉用户「这儿没东西」，不如不摆（和顶栏那枚放大镜同一套判断）。
+    ...(searchAvailable
+      ? [{ ico: svg(ICON.search), lbl: '搜照片', fn: openPhotoSearch }] : []),
     { ico: svg(ICON.plus),     lbl: '新建行程',     fn: openNewTrip },
     { ico: svg(ICON.edit),     lbl: '编辑行程信息', fn: openEditTrip },
     { ico: svg(ICON.share),    lbl: '分享当前行程', fn: shareTrip },
@@ -6726,7 +6742,10 @@ function closeTopLayer() {
     closeLightbox();
     return true;
   }
-  // 5. 分享卡片 / 各类模态框
+  // 5. 语义搜图浮层。排在灯箱**之后**：从结果墙点开大图时灯箱盖在它上面，
+  //    第一次返回该关的是大图，第二次才轮到整个搜索页。
+  if (shown(q('#search-overlay'))) { closePhotoSearch(); return true; }
+  // 6. 分享卡片 / 各类模态框
   const card = q('#share-card-modal');
   if (card) { card.remove(); return true; }
   if (shown(q('#stats-modal'))) { q('#stats-modal').classList.add('hidden'); return true; }
@@ -6743,6 +6762,214 @@ function closeTopLayer() {
   if (shown(q('#layer-panel'))) { q('#layer-panel').classList.add('hidden'); return true; }
   return false;
 }
+
+// ---------- 语义搜图（跨行程） ----------
+// 入口是顶栏那枚放大镜（小屏也留着，见 style.css）。点进来是一整页：
+// 上面输入要找的画面，中间勾搜哪几条行程，下面直接出照片墙。
+//
+// 范围默认**只勾当前这条行程**。原因是「海边落日」这类说法在一次旅行里指得很具体，
+// 摊到全库去搜，真正想找的那张常被别处的海岸线挤出前 30 名；想扩就点「全选」，
+// 一次点击的事，比反过来每次都要收窄划算。
+//
+// 模型没装（/api/search/status 的 enabled=false）时顶栏那枚按钮和抽屉里那条
+// 都不出现 —— 给一个永远搜不出东西的框，比没有这个功能更糟。
+
+let searchAvailable = false;   // 模型装没装，/api/search/status 说了算
+let searchStats = null;        // 索引进度，用来在状态行里说明「还没索引完」
+let searchScope = new Set();   // 勾中的行程 id
+let searchResults = [];        // 最近一次结果（已规整成媒体对象，灯箱直接用）
+let searchReqSeq = 0;          // 防竞态：旧请求回来得晚就丢掉
+const SEARCH_LIMIT = 60;       // 一次要多少张。照片墙一屏 3~6 列，60 张够翻几屏
+
+function searchOpen() {
+  const ov = $('#search-overlay');
+  return !!ov && !ov.classList.contains('hidden');
+}
+
+// 登录后探一次。失败就当没装：这个接口挂了不该连累主界面，顶多是少个入口。
+async function initPhotoSearch() {
+  try {
+    const st = await api('/api/search/status');
+    searchAvailable = !!st.enabled;
+    searchStats = st;
+  } catch (e) {
+    searchAvailable = false;
+  }
+  $('#btn-search').classList.toggle('hidden', !searchAvailable);
+}
+
+function openPhotoSearch() {
+  if (!searchAvailable) { tmToast('语义搜图未开启'); return; }
+  // 每次进来都回到「只搜当前行程」。记住上次的勾选听着体贴，实际是：
+  // 人多半已经切到别的行程了，却还在用上一次的范围搜，搜不到又找不出原因。
+  searchScope = new Set(currentTripId
+    ? [Number(currentTripId)] : allTrips.map(t => Number(t.id)));
+  searchResults = [];
+  $('#search-input').value = '';
+  $('#search-grid').innerHTML = '';
+  renderSearchTrips();
+  setSearchStatus('');
+  $('#search-overlay').classList.remove('hidden');
+  $('#search-overlay').setAttribute('aria-hidden', 'false');
+  // 手机上别自动弹键盘：一进来半屏就被输入法吃掉，行程范围那排直接看不见。
+  if (!isMobileLayout()) $('#search-input').focus();
+  initPhotoSearch();              // 顺手刷新索引进度（不等它，拿到了下次搜索才用）
+}
+
+function closePhotoSearch() {
+  $('#search-overlay').classList.add('hidden');
+  $('#search-overlay').setAttribute('aria-hidden', 'true');
+}
+
+function setSearchStatus(html) {
+  $('#search-status').innerHTML = html || '';
+}
+
+function renderSearchTrips() {
+  const box = $('#search-trips');
+  box.innerHTML = '';
+  if (!allTrips.length) {
+    box.appendChild(el('span', 'search-scope-title', '还没有行程'));
+    return;
+  }
+  allTrips.forEach(t => {
+    const id = Number(t.id);
+    const chip = el('button', 'search-chip' + (searchScope.has(id) ? ' on' : ''), t.name);
+    chip.type = 'button';
+    chip.title = t.name;
+    chip.onclick = () => {
+      if (searchScope.has(id)) {
+        // 一条都不剩的话后端会当成「全部行程」，而界面上看着像「什么都没选」——
+        // 两者不一致，索性不让它发生。想搜全部就点「全选」，意思是明写的。
+        if (searchScope.size === 1) { tmToast('至少留一条行程；想搜全部点「全选」'); return; }
+        searchScope.delete(id);
+      } else {
+        searchScope.add(id);
+      }
+      renderSearchTrips();
+    };
+    box.appendChild(chip);
+  });
+  // 勾中的那条滚进视野：行程一多，当前这条常常落在横向滚动条外面，
+  // 看着就像「默认一条都没勾」。
+  const on = box.querySelector('.search-chip.on');
+  if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+async function runPhotoSearch() {
+  const q = $('#search-input').value.trim();
+  if (!q) { tmToast('先说说要找什么画面'); $('#search-input').focus(); return; }
+  if (!searchScope.size) { tmToast('至少选一条行程'); return; }
+
+  const seq = ++searchReqSeq;
+  const btn = $('#search-go');
+  btn.disabled = true;
+  setSearchStatus('搜索中…');
+  const params = new URLSearchParams({
+    q: q,
+    limit: String(SEARCH_LIMIT),
+    trips: [...searchScope].join(','),
+  });
+  let body;
+  try {
+    body = await api('/api/search/photos?' + params.toString());
+  } catch (e) {
+    if (seq === searchReqSeq) {
+      btn.disabled = false;
+      setSearchStatus('<span class="search-err">搜索失败：' + esc(e.message) + '</span>');
+    }
+    return;
+  }
+  if (seq !== searchReqSeq) return;        // 已经有更新的一次搜索了，这份作废
+  btn.disabled = false;
+
+  if (body.enabled === false) {            // 搜的中途被关掉了（改了开关/挪走了模型）
+    searchAvailable = false;
+    $('#btn-search').classList.add('hidden');
+    closePhotoSearch();
+    tmToast('语义搜图已关闭');
+    return;
+  }
+
+  // 规整成媒体对象：灯箱、下载按钮、说明栏都认 id/type/taken_at 这几个键，
+  // 而搜索接口给的是 media_id/exif_time，不转一道灯箱里就是一片空白。
+  searchResults = (body.results || []).map(r => Object.assign({}, r, {
+    id: r.media_id,
+    type: 'photo',                         // 索引的只有照片，视频抽帧是二期的事
+    taken_at: r.exif_time,
+  }));
+  renderSearchGrid();
+
+  const bits = [];
+  bits.push(searchResults.length + ' 张');
+  bits.push(searchScope.size === allTrips.length ? '全部行程'
+    : '限 ' + searchScope.size + ' 条行程');
+  if (body.reranked) bits.push('已精判 ' + body.judged + ' 张');
+  // 回填还没跑完时必须说一声：此刻搜不到不代表那张照片不在，可能只是还没进索引。
+  if (searchStats && searchStats.indexed < searchStats.photos) {
+    bits.push('索引中 ' + searchStats.indexed + '/' + searchStats.photos);
+  }
+  setSearchStatus(esc(bits.join(' · ')));
+}
+
+function renderSearchGrid() {
+  const grid = $('#search-grid');
+  grid.innerHTML = '';
+  if (!searchResults.length) {
+    grid.appendChild(el('div', 'empty-hint',
+      '没搜到。换个说法试试，或者点「全选」把范围放宽到全部行程。'));
+    return;
+  }
+  searchResults.forEach((m, idx) => {
+    const cell = el('div', 'photo-cell');
+    const img = el('img');
+    img.src = m.thumb_url || m.url;
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.alt = m.caption || m.ai_caption || '';
+    img.onerror = () => { if (m.url && img.src !== m.url) img.src = m.url; };
+    cell.appendChild(img);
+    // 分数常驻。搜出来的像不像，人自己看得出；分数真正的用处是**排查** ——
+    // 一眼分得出「0.21 勉强沾边」和「0.42 确实对上了」。
+    if (typeof m.score === 'number') {
+      cell.appendChild(el('span', 'search-cell-score', m.score.toFixed(2)));
+    }
+    // 跨行程搜出来的东西混在一面墙上，不写清来历就只能靠猜。行程名放前面：
+    // 「这是哪次旅行」比「这是哪个点」更能帮人定位。
+    const meta = [m.trip_title, m.point_name].filter(Boolean).join(' · ');
+    if (meta) cell.appendChild(el('div', 'search-cell-meta', meta));
+    cell.title = [m.caption, meta, (m.exif_time || '').slice(0, 16)]
+      .filter(Boolean).join(' · ');
+    cell.onclick = () => {
+      lightboxMedia = searchResults;
+      openLightbox(idx, 'search');
+    };
+    grid.appendChild(cell);
+  });
+}
+
+$('#btn-search').onclick = openPhotoSearch;
+$('#search-back').onclick = closePhotoSearch;
+$('#search-go').onclick = runPhotoSearch;
+$('#search-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); runPhotoSearch(); }
+});
+$('#search-scope-all').onclick = () => {
+  searchScope = new Set(allTrips.map(t => Number(t.id)));
+  renderSearchTrips();
+};
+$('#search-scope-cur').onclick = () => {
+  if (!currentTripId) { tmToast('当前没有打开的行程'); return; }
+  searchScope = new Set([Number(currentTripId)]);
+  renderSearchTrips();
+};
+// Esc 退出搜索页。灯箱开着时让位 —— 那边自己那条 keydown 会先把大图关掉，
+// 两条都动手的话一次 Esc 就把两层一起收了，和「关掉大图回到结果」正好相反。
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !searchOpen()) return;
+  if (!$('#lightbox').classList.contains('hidden')) return;
+  closePhotoSearch();
+});
 
 // ---------- 浏览器返回拦截 ----------
 // 手机上从屏幕边缘右滑 = 后退，本来会直接退出整个网站，体验很差。
@@ -6798,5 +7025,5 @@ syncTabIndicator();
 ensureAuth().then(ok => {
   loadTrips();
   // 登录成功后才恢复图层勾选与灯箱（未登录时恢复会触发接口报错/弹窗）
-  if (ok) { restoreLayerState(); restoreLightboxState(); }
+  if (ok) { restoreLayerState(); restoreLightboxState(); initPhotoSearch(); }
 });

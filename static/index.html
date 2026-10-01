@@ -97,6 +97,12 @@
            根本没有，会掉成豆腐块；而这几个动作（编辑/重算/分享/导入导出）
            恰恰都是"有通行画法"的，用线条图标一眼就认得。
            每个按钮都补 aria-label —— 只剩图形之后，读屏得靠它。 -->
+      <!-- 搜图入口。**手机端也留着**（见 style.css 里 .topbtn.btn-search 的覆盖）：
+           其余顶栏按钮在小屏上全收进「更多」，但搜索是高频的读操作，
+           藏两层以后基本等于没有。模型没装时 JS 会把它整个摘掉。 -->
+      <button id="btn-search" class="btn topbtn btn-icon btn-search hidden" title="按画面内容搜照片" aria-label="搜照片">
+        <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+      </button>
       <button id="btn-new-trip" class="btn topbtn">
         <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span>新行程</span>
@@ -267,6 +273,38 @@
     <div class="lightbox-next" id="lightbox-next">›</div>
     <div class="lightbox-stage" id="lightbox-stage"></div>
     <div class="lightbox-counter" id="lightbox-counter"></div>
+  </div>
+
+  <!-- 语义搜图：条件和结果在同一页。
+       做成整屏覆盖层而不是模态框，是因为结果是一面照片墙 —— 墙要铺得开，
+       弹窗那点宽度放不下。层级 1500：高于顶栏和面板，低于灯箱(2000)，
+       这样从墙上点开大图时灯箱盖在它上面，关掉大图又回到原来的结果。 -->
+  <div id="search-overlay" class="search-overlay hidden" aria-hidden="true">
+    <div class="search-head">
+      <button id="search-back" class="search-back" type="button" title="返回" aria-label="返回">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <div class="search-box">
+        <svg class="search-box-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+        <!-- type=search 而不是 text：手机输入法的回车键会变成「搜索」，
+             iOS 还会自带一个清除叉。enterkeyhint 是给不认 type=search 的那些。 -->
+        <input id="search-input" class="search-input" type="search" enterkeyhint="search"
+               placeholder="描述画面，比如「海边落日」" autocomplete="off">
+      </div>
+      <button id="search-go" class="btn btn-primary search-go" type="button">搜索</button>
+    </div>
+
+    <div class="search-scope">
+      <div class="search-scope-head">
+        <span class="search-scope-title">搜索范围</span>
+        <button id="search-scope-all" class="search-scope-act" type="button">全选</button>
+        <button id="search-scope-cur" class="search-scope-act" type="button">只搜当前</button>
+      </div>
+      <div id="search-trips" class="search-trips"></div>
+    </div>
+
+    <div id="search-status" class="search-status"></div>
+    <div id="search-grid" class="photo-grid search-grid"></div>
   </div>
 
   <!-- 模态框 -->

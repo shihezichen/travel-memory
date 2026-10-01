@@ -2735,3 +2735,111 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
   flex: none; border: 0; border-radius: 7px; padding: 6px 14px;
   background: #2563eb; color: #fff; font-size: 14px; cursor: pointer;
 }
+
+/* ---------- 语义搜图浮层 ----------
+   整屏覆盖层：上面一条输入栏、中间一排行程筛选、下面一面照片墙。
+   z-index 1500 夹在顶栏(10)/面板之上、灯箱(2000)之下 —— 从墙上点开大图时
+   灯箱盖住它，关掉大图人还站在原来的结果里，不用重搜一次。 */
+.search-overlay {
+  position: fixed; inset: 0; z-index: 1500;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+}
+.search-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.search-back {
+  flex: none; width: 36px; height: 36px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 9px; background: transparent;
+  color: var(--text); cursor: pointer;
+}
+.search-back:hover { background: var(--bg); }
+.search-back svg { width: 20px; height: 20px; }
+.search-box { flex: 1; min-width: 0; position: relative; display: flex; }
+.search-box-ico {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 17px; height: 17px; color: var(--muted); pointer-events: none;
+}
+.search-input {
+  flex: 1; min-width: 0;
+  padding: 9px 12px 9px 33px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: #fff; color: var(--text);
+  font-size: 15px;   /* 别低于 16px 以外的坑：iOS 会在 <16px 时聚焦缩放整页 */
+  font-family: inherit;
+}
+.search-input:focus { outline: none; border-color: var(--primary); }
+.search-go { flex: none; padding: 9px 16px; }
+.search-go:disabled { opacity: .5; cursor: default; }
+
+.search-scope {
+  flex: none; padding: 9px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.search-scope-head { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.search-scope-title { font-size: 12.5px; color: var(--muted); }
+.search-scope-act {
+  border: 0; background: transparent; padding: 0;
+  color: var(--primary); font-size: 12.5px; cursor: pointer;
+}
+/* 行程多了就横向滚，不往下堆 —— 条件区一旦涨到半屏，照片墙就没地方了 */
+.search-trips {
+  display: flex; gap: 7px; overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.search-trips::-webkit-scrollbar { display: none; }
+.search-chip {
+  flex: none; max-width: 46vw;
+  padding: 6px 13px; border: 1px solid var(--border); border-radius: 999px;
+  background: #fff; color: var(--text); font-size: 13px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.search-chip.on {
+  background: var(--primary); border-color: var(--primary); color: #fff;
+}
+.search-chip.on::before { content: '✓ '; }
+
+.search-status {
+  flex: none; padding: 8px 12px; font-size: 12.5px; color: var(--muted);
+  min-height: 0;
+}
+.search-status:empty { display: none; }
+.search-status .search-err { color: var(--danger); }
+
+.search-grid {
+  --photo-cols: 6;
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+/* 结果格比相册多一层说明：搜出来的照片横跨好几条行程，不写清楚是哪一次旅行，
+   看到一张海就只能靠猜。常驻而不是悬停才显示 —— 手机没有悬停。 */
+.search-cell-meta {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  padding: 10px 5px 3px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .62));
+  color: #fff; font-size: 10.5px; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+}
+.search-cell-score {
+  position: absolute; right: 3px; top: 3px; z-index: 4;
+  padding: 1px 5px; border-radius: 999px;
+  background: rgba(0, 0, 0, .5); color: #fff;
+  font-size: 10px; pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  /* 其余 .topbtn 在小屏上全被收进「更多」，搜索是例外（见 index.html 的注释）。
+     选择器写到 .topbar 这一层，是为了压过上面那条 .topbtn{display:none}。 */
+  .topbar .btn.topbtn.btn-search {
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0; width: 38px; height: 38px; padding: 0;
+    border-radius: 9px;
+  }
+  .topbar .btn.topbtn.btn-search .tbi { width: 19px; height: 19px; vertical-align: 0; }
+  .search-grid { --photo-cols: 3; }
+  .search-chip { max-width: 60vw; }
+}

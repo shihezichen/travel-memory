@@ -108,6 +108,20 @@ CREATE TABLE IF NOT EXISTS media_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_status ON media_embeddings(status);
 
+CREATE TABLE IF NOT EXISTS media_captions (
+    -- 照片的**画面**描述，由 VLM 在建库阶段生成（scripts/backfill_caption.py）。
+    -- 和 media.caption 是两码事：那一列是用户自己写的说明，这里是模型看图说的话。
+    -- 分开存是必须的 —— 合并写回去会把用户的原话冲掉，而且分不清哪句是谁说的。
+    media_id   INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+    model      TEXT NOT NULL,
+    caption    TEXT,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    error      TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_captions_status ON media_captions(status);
+
 CREATE TABLE IF NOT EXISTS shares (
     token TEXT PRIMARY KEY,
     trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
@@ -2142,10 +2156,14 @@ def get_media_brief(media_ids):
             "SELECT m.id AS id, m.filename AS filename, m.thumb_filename AS thumb_filename, "
             "       m.caption AS caption, m.exif_time AS exif_time, "
             "       p.id AS point_id, p.name AS point_name, "
-            "       t.id AS trip_id, t.name AS trip_title "
+            "       t.id AS trip_id, t.name AS trip_title, "
+            # VLM 预生成的画面描述。LEFT JOIN 而不是 JOIN：没生成的图照样要出来，
+            # 精判那边会退回元数据拼接（jevrerank.describe 的兜底分支）。
+            "       CASE WHEN c.status='done' THEN c.caption END AS ai_caption "
             "  FROM media m "
             "  JOIN points p ON p.id = m.point_id "
             "  JOIN trips  t ON t.id = p.trip_id "
+            "  LEFT JOIN media_captions c ON c.media_id = m.id "
             " WHERE m.id IN (%s)" % ph, ids).fetchall()
     finally:
         conn.close()

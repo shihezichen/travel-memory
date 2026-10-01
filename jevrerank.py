@@ -16,9 +16,13 @@ Jev 是 System One 那一类模型：吃一个 state + 一组**有类型**的问
 
 但它看不见图 —— 官方写死 text only，不收 image/audio/video。所以这里喂给它的是
 候选图的**文字描述**（见 describe()），不是图本身。这是整套方案的天花板：
-描述有多准，精判就有多准。本仓库目前没有 VLM，描述只能由 caption + 地点 +
-行程 + 文件名拼出来，caption 多半是用户自己写的，常常是空 —— 这一层的收益
-因此高度依赖图库的元数据质量，别期待它能凭空看出「日落」。
+描述有多准，精判就有多准。
+
+描述的主来源是 caption.py：建库阶段 Qwen2-VL-2B 给每张照片生成的一句画面描述
+（「金色夕阳下的海岸线，远处有礁石」）。没有它的时候这里只能拿用户写的 caption
+加地点行程名凑合 —— 实测用户写的多半是空或者「哈哈哈哈哈哈」，整批凑不出描述
+就直接 no_descriptions 退场，精判等于没开。所以**要让这一层真的有增量，
+先把 scripts/backfill_caption.py 跑一遍**，元数据拼接只是兜底。
 
 关闭方式：不配 key（环境变量 TM_JEV_API_KEY，或仓库根下的 jev_key.txt）
 就是关的，/api/search/photos 的行为和没有这个模块时完全一样。任何一次调用超时、报错、返回格式不对，都降级回纯 CLIP 排序 ——
@@ -115,15 +119,19 @@ def available() -> bool:
 def describe(meta: dict) -> str:
     """把一条媒体的元数据拼成一句能让 Jev 读的中文描述。
 
-    顺序是有讲究的：caption 是人写的，信息密度最高，放最前面；文件名放最后，
-    因为 IMG_2317.jpg 这种纯噪声不该污染前面的语义。全空的时候返回空串，
-    调用方据此跳过这张图的精判（而不是拿空字符串去问 Jev，那是在烧钱买噪声）。
+    顺序是有讲究的，按「对 query 的判别力」从高到低排：
 
-    注意这里拼出来的是「关于照片的已知信息」，不是「照片的内容」。
-    没有 VLM caption 的图，Jev 只能基于地点和行程名推断，判不出画面细节。
+      ai_caption   模型看图说的画面内容，唯一能回答「是不是日落」的来源；
+      caption      用户自己写的说明，可能是心情也可能是地名，信息密度不稳定；
+      point/trip   地点和行程名，只能定位不能描述画面；
+      文件名        IMG_2317.jpg 这种纯噪声不该污染前面的语义，所以垫底且要过滤。
+
+    Jev 读的是一整句话，越靠前的词权重越高 —— 顺序错了等于把噪声顶到最前面。
+    全空的时候返回空串，调用方据此跳过这张图的精判（而不是拿空字符串去问 Jev，
+    那是在烧钱买噪声）。
     """
     parts = []
-    for key in ("caption", "point_name", "trip_title"):
+    for key in ("ai_caption", "caption", "point_name", "trip_title"):
         v = (meta.get(key) or "").strip()
         if v and v not in parts:
             parts.append(v)
@@ -342,17 +350,27 @@ def rerank(query: str, hits: list, meta: dict, limit: int = 20) -> dict:
     answers = _judge_all(query, [(i, descs[i]) for i in todo])
 
     scored = []
+    answered = 0                          # 判成了的张数，含后面被否决掉的
     for i, h in enumerate(cands):
         f = fuse(clip_norm[i], answers.get(i), intent)
-        if f["judged"] and f["is_match"] < MATCH_THRESHOLD:
-            continue                      # Jev 明确说「不该返回」的，丢掉
+        if f["judged"]:
+            answered += 1
+            if f["is_match"] < MATCH_THRESHOLD:
+                continue                  # Jev 明确说「不该返回」的，丢掉
         scored.append({**h, "clip_score": h["score"],
                        "score": round(f["final"], 4), "jev": f})
 
     judged = sum(1 for s in scored if s["jev"]["judged"])
     if judged == 0:
+        # 两种完全不同的「0 张判过」，必须分开报：
+        #   jev_unavailable —— Jev 没判成（网络挂了、返回形状不对），这是故障；
+        #   all_rejected    —— 判成了，但一张都没过 is_match 的线，这是结论 ——
+        #                      「这批图里确实没有符合 query 的」。
+        # 没有画面描述的图库天天触发后者（用户写的 caption 答不了「下雪」），
+        # 混报成 unavailable 会让人去查网络，查半天发现 Jev 一直是好的。
+        # 两边都退回 CLIP 顺序：精判的否决不该让搜索框空着。
         return {"results": hits[:limit], "reranked": False, "judged": 0,
-                "reason": "jev_unavailable"}
+                "reason": "all_rejected" if answered else "jev_unavailable"}
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     return {"results": scored[:limit], "reranked": True, "judged": judged,

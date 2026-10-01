@@ -37,6 +37,9 @@ def live_server(tmp_path_factory):
         "TM_TEST_UPLOADS": str(workdir / "uploads"),
         "TM_TEST_PORT": str(port),
         "TRAVEL_LLM_PROVIDER": "none",
+        # 精判要走外网（KEV / TypeSafe），E2E 不该依赖它：仓库里躺着 jev_key.txt
+        # 的机器上，搜索会真的发请求出去，慢且看别人家服务的脸色。
+        "TM_JEV_ENABLED": "0",
     })
     proc = subprocess.Popen(
         [sys.executable, str(REPO_ROOT / "tests" / "e2e" / "_server_main.py")],

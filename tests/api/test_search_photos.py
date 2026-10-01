@@ -7,6 +7,7 @@ CLIP 那一侧在这里是替身（monkeypatch aiindex.search）—— 这组用
 import pytest
 
 import aiindex
+import caption
 import jevrerank
 
 pytestmark = pytest.mark.api
@@ -41,8 +42,9 @@ def fake_recall(monkeypatch, two_photos):
     a, b = two_photos
     seen = {}
 
-    def _search(user_id, query, limit=30, min_score=0.0):
+    def _search(user_id, query, limit=30, min_score=0.0, trip_ids=None):
         seen["limit"] = limit
+        seen["trip_ids"] = trip_ids
         return [{"media_id": a, "filename": "duanqiao.jpg", "score": 0.31},
                 {"media_id": b, "filename": "leifeng.jpg", "score": 0.22}]
 
@@ -128,5 +130,171 @@ def test_search_status_exposes_jev_config(auth_client, jev_on):
     assert body["jev"]["weights"]["relevance"] == jevrerank.W_RELEVANCE
 
 
+# ---------------- 建库时预生成的画面描述 ----------------
+def test_ai_caption_rides_along_in_results(auth_client, fake_recall, two_photos):
+    """搜索结果带出模型写的那句话 —— 排查「这张为什么被判成相关」的唯一证据。"""
+    caption.save(two_photos[0], "金色夕阳下的海岸线，远处有礁石")
+    body = auth_client.get("/api/search/photos",
+                           params={"q": "海边日落", "rerank": "false"}).json()
+    got = {x["media_id"]: x["ai_caption"] for x in body["results"]}
+    assert got[two_photos[0]] == "金色夕阳下的海岸线，远处有礁石"
+    assert got[two_photos[1]] is None
+
+
+def test_ai_caption_is_what_jev_actually_reads(auth_client, fake_recall, jev_on,
+                                               two_photos, monkeypatch):
+    """这条是整件事的目的：精判读到的得是画面描述，不是用户写的那句心情。
+
+    两张图的用户 caption 都没有判别力（fixture 里写的是地点感想），真正能回答
+    「是不是海边日落」的只有模型看图写的那句。
+    """
+    caption.save(two_photos[0], "金色夕阳下的海岸线，远处有礁石")
+    seen = []
+
+    def _post(state, questions):
+        if "image_description" not in state:         # 意图分类那一次，不是候选图
+            return {"category": {"choice": "自然风光"}}
+        seen.append(state["image_description"])
+        hit = "海岸线" in state["image_description"]
+        return _answers(4 if hit else 0, 0.95 if hit else 0.05)
+
+    monkeypatch.setattr(jevrerank, "_post", _post)
+    body = auth_client.get("/api/search/photos", params={"q": "海边日落"}).json()
+
+    assert any(d.startswith("金色夕阳下的海岸线") for d in seen), seen
+    assert body["reranked"] is True
+    # 没有画面描述的那张被 Jev 判成「不该返回」，直接出局
+    assert [x["media_id"] for x in body["results"]] == [two_photos[0]]
+
+
+def test_without_any_ai_caption_nothing_changes(auth_client, fake_recall, jev_on,
+                                                monkeypatch):
+    """一张都没生成过描述时，这条接口必须和加这一层之前逐字节一致（方案C 兜底）。"""
+    monkeypatch.setattr(jevrerank, "_post",
+                        lambda state, q: {"category": {"choice": "自然风光"}}
+                        if "image_description" not in state else _answers(2, 0.6))
+    body = auth_client.get("/api/search/photos", params={"q": "西湖"}).json()
+    assert body["reranked"] is True and body["judged"] == 2
+    assert all(x["ai_caption"] is None for x in body["results"])
+
+
+def test_search_status_exposes_caption_progress(auth_client, two_photos):
+    caption.save(two_photos[0], "金色夕阳下的海岸线")
+    body = auth_client.get("/api/search/status").json()["caption"]
+    assert body["photos"] == 2 and body["captioned"] == 1 and body["backlog"] == 1
+
+
 def test_search_requires_login(client):
     assert client.get("/api/search/photos", params={"q": "西湖"}).status_code == 401
+
+# ---------------- 搜索范围：trips= 这个参数 ----------------
+# 界面上默认只勾当前行程（见 static/app.js 的 openPhotoSearch），所以这个参数
+# 是常态而不是边角料 —— 它拼错一次，用户看到的就是「我这次旅行一张都没搜到」。
+def test_trips_param_reaches_the_recall_layer(auth_client, fake_recall):
+    body = auth_client.get("/api/search/photos",
+                           params={"q": "海边日落", "trips": "3,7"}).json()
+    assert fake_recall["trip_ids"] == [3, 7]
+    assert body["trips"] == [3, 7]          # 回显出来，前端/排查都不用猜
+
+
+def test_no_trips_param_means_every_trip(auth_client, fake_recall):
+    """不传 = 全部行程。这里要的是 None 而不是空列表：空列表在召回层会被当成
+    「一条行程都不要」，那是另一个意思。"""
+    body = auth_client.get("/api/search/photos", params={"q": "海边日落"}).json()
+    assert fake_recall["trip_ids"] is None
+    assert body["trips"] == []
+
+
+def test_junk_in_trips_is_dropped_rather_than_rejected(auth_client, fake_recall):
+    """参数是前端拼串来的，多个逗号、带空格、夹个空值都很常见。
+    为此把整次搜索打回 422 不值当 —— 认得出的留下，认不出的丢掉。"""
+    r = auth_client.get("/api/search/photos",
+                        params={"q": "海边日落", "trips": " 8 ,,abc,9,"})
+    assert r.status_code == 200
+    assert fake_recall["trip_ids"] == [8, 9]
+
+
+# ---------------- 召回层：过滤真的发生在矩阵那一层 ----------------
+@pytest.fixture
+def cross_trip_vectors(auth_client, seeded_trip, jpeg_bytes, monkeypatch):
+    """两条行程各一张照片，向量手工写进 media_embeddings。
+
+    CLIP 换成固定向量的替身：这组用例要钉的是**范围过滤本身** —— 收窄到一条
+    行程之后，另一条里分数更高的那张必须一张都不出现，而不是「排在后面」。
+    """
+    np = pytest.importorskip("numpy")
+    import sys
+    import types
+
+    import db
+
+    # 第二条行程 + 一个点
+    t2 = auth_client.post("/api/trips", data={"name": "第二条行程"}).json()["id"]
+    p2 = auth_client.post(f"/api/trips/{t2}/points", data={
+        "name": "海边", "lat": 36.06, "lng": 120.38}).json()["id"]
+
+    m1 = _upload(auth_client, seeded_trip["point_ids"][0], "a.jpg",
+                 jpeg_bytes()).json()["id"]
+    m2 = _upload(auth_client, p2, "b.jpg", jpeg_bytes()).json()["id"]
+
+    # 第二条行程那张跟查询更贴（0.96 对 0.60）。不这么摆的话，
+    # 「收窄之后它没出现」可能只是因为它本来就排不进前几名。
+    vecs = {m1: [1.0, 0.0, 0.0, 0.0], m2: [0.8, 0.6, 0.0, 0.0]}
+    conn = db.get_conn()
+    try:
+        for mid, v in vecs.items():
+            conn.execute(
+                # 用 upsert 而不是裸 INSERT：上传链路如果哪天又开始自己写这张表，
+                # 这里撞的是主键冲突，报出来的却是一句和本用例毫不相干的 IntegrityError。
+                "INSERT INTO media_embeddings (media_id, model, dim, vec, status) "
+                "VALUES (?, ?, ?, ?, 'done') "
+                "ON CONFLICT(media_id) DO UPDATE SET "
+                "  model=excluded.model, dim=excluded.dim, vec=excluded.vec, "
+                "  status=excluded.status",
+                (mid, "test", 4, np.array(v, dtype="float32").tobytes()))
+        conn.commit()
+    finally:
+        conn.close()
+    aiindex._invalidate_cache()
+
+    fake = types.ModuleType("clipmodel")
+    fake.available = lambda: True
+    fake.encode_texts = lambda qs: [np.array([0.6, 0.8, 0.0, 0.0], dtype="float32")]
+    monkeypatch.setitem(sys.modules, "clipmodel", fake)
+    monkeypatch.setattr(aiindex, "available", lambda: True)
+
+    return {"uid": auth_client.user["id"], "t1": seeded_trip["trip_id"], "t2": t2,
+            "m1": m1, "m2": m2}
+
+
+def test_scoped_search_excludes_other_trips(auth_client, cross_trip_vectors):
+    c = cross_trip_vectors
+    hits = aiindex.search(c["uid"], "海边日落", trip_ids=[c["t1"]])
+    assert [h["media_id"] for h in hits] == [c["m1"]]
+
+
+def test_unscoped_search_still_sees_everything(auth_client, cross_trip_vectors):
+    """不收窄时顺序由分数说了算：第二条行程那张更贴，排第一。"""
+    c = cross_trip_vectors
+    hits = aiindex.search(c["uid"], "海边日落")
+    assert [h["media_id"] for h in hits] == [c["m2"], c["m1"]]
+
+
+def test_narrowing_does_not_eat_into_limit(auth_client, cross_trip_vectors):
+    """收窄之后 limit 仍然取得满 —— 过滤在矩阵那一层，不是先全局取 topk 再筛。
+
+    limit=1 配上「只搜第一条行程」：先取 topk 的实现会取到第二条行程那张
+    （分数更高），筛完返回空；按掩码过滤的实现返回第一条行程里的那张。
+    """
+    c = cross_trip_vectors
+    hits = aiindex.search(c["uid"], "海边日落", limit=1, trip_ids=[c["t1"]])
+    assert [h["media_id"] for h in hits] == [c["m1"]]
+
+
+def test_other_peoples_trip_ids_buy_you_nothing(auth_client, other_client,
+                                                cross_trip_vectors):
+    """拿别人的行程 id 来搜也是空的 —— 用户掩码和行程掩码是「与」的关系。"""
+    c = cross_trip_vectors
+    assert aiindex.search(other_client.user["id"], "海边日落",
+                          trip_ids=[c["t1"], c["t2"]]) == []
+

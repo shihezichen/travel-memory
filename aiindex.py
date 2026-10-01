@@ -79,8 +79,13 @@ def available() -> bool:
 
 # ---------------------------------------------------------------- 取图
 
-def load_image(filename: str):
-    """本地有就读本地，没有就让 OSS 缩好了再传回来。两条路都失败才抛。"""
+def load_image(filename: str, process: str = None):
+    """本地有就读本地，没有就让 OSS 缩好了再传回来。两条路都失败才抛。
+
+    process 是回源时的 x-oss-process。默认走 CLIP 要的 448；喂 VLM 生成描述时
+    调用方会要一张更大的（见 scripts/backfill_caption.py）—— 224 的图只够
+    CLIP 算向量，说不出画面细节。
+    """
     from PIL import Image
 
     local = UPLOAD_DIR / filename
@@ -93,7 +98,8 @@ def load_image(filename: str):
         raise FileNotFoundError("本地无此文件且 OSS 未配置: %s" % filename)
 
     url = oss.sign_url("GET", "uploads/" + filename,
-                       params={"x-oss-process": OSS_PROCESS}, expires_in=600)
+                       params={"x-oss-process": process or OSS_PROCESS},
+                       expires_in=600)
     if not url:
         raise FileNotFoundError("签不出 OSS URL: %s" % filename)
     r = httpx.get(url, timeout=30)
@@ -181,8 +187,10 @@ def _invalidate_cache():
 
 
 def _load_vectors():
-    """(media_ids, user_ids, filenames, 矩阵)。user_id 一起带出来，
-    是为了在矩阵里直接按用户过滤 —— 每个路由都 require_owner，这里漏一层就是越权。"""
+    """(media_ids, user_ids, trip_ids, filenames, 矩阵)。user_id 一起带出来，
+    是为了在矩阵里直接按用户过滤 —— 每个路由都 require_owner，这里漏一层就是越权。
+    trip_id 则是给「只搜这几条行程」用的：按行程过滤发生在矩阵这一层（布尔掩码），
+    不是先全局 topk 再把不要的行程扔掉 —— 后者会让「只搜北欧那条」拿到不足 limit 条。"""
     global _CACHE
     with _CACHE_LOCK:
         if _CACHE is not None:
@@ -193,7 +201,7 @@ def _load_vectors():
     try:
         rows = conn.execute(
             """SELECT e.media_id AS media_id, e.vec AS vec, m.filename AS filename,
-                      t.user_id AS user_id
+                      t.user_id AS user_id, t.id AS trip_id
                  FROM media_embeddings e
                  JOIN media  m ON m.id = e.media_id
                  JOIN points p ON p.id = m.point_id
@@ -204,12 +212,13 @@ def _load_vectors():
         conn.close()
 
     if not rows:
-        out = ([], [], [], np.zeros((0, 512), dtype="float32"))
+        out = ([], [], [], [], np.zeros((0, 512), dtype="float32"))
     else:
         M = np.frombuffer(b"".join(r["vec"] for r in rows),
                           dtype="float32").reshape(len(rows), -1)
         out = ([r["media_id"] for r in rows],
                [r["user_id"] for r in rows],
+               [r["trip_id"] for r in rows],
                [r["filename"] for r in rows],
                M)
 
@@ -218,11 +227,16 @@ def _load_vectors():
     return out
 
 
-def search(user_id: int, query: str, limit: int = 30, min_score: float = 0.0):
+def search(user_id: int, query: str, limit: int = 30, min_score: float = 0.0,
+           trip_ids=None):
     """语义检索。返回 [{media_id, filename, score}]，已按用户隔离、已去重。
 
     去重是必须的：media 表里存在同 filename 的重复行（实测 bcn_a_1.jpg 两条），
     不去重的话搜索结果会成片出现同一张图，3000 张规模下更明显。
+
+    trip_ids 给定时只在这几条行程里搜；None 或空集合 = 全部行程。
+    传了一堆别人的行程 id 也无妨 —— 用户掩码和行程掩码是**与**的关系，
+    越不过 user_id 那一关。
     """
     if not available() or not query.strip():
         return []
@@ -230,11 +244,13 @@ def search(user_id: int, query: str, limit: int = 30, min_score: float = 0.0):
     import numpy as np
     import clipmodel
 
-    media_ids, user_ids, filenames, M = _load_vectors()
+    media_ids, user_ids, row_trips, filenames, M = _load_vectors()
     if len(media_ids) == 0:
         return []
 
-    mine = np.array([u == user_id for u in user_ids])
+    want = set(int(t) for t in trip_ids) if trip_ids else None
+    mine = np.array([u == user_id and (want is None or t in want)
+                     for u, t in zip(user_ids, row_trips)])
     if not mine.any():
         return []
 
