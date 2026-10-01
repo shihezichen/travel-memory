@@ -15,7 +15,7 @@ def jev_on(monkeypatch):
     """把模块配成「已启用」，并且不许任何真实 HTTP 漏出去。"""
     monkeypatch.setattr(jevrerank, "API_KEY", "test-key")
     monkeypatch.setattr(jevrerank, "ENABLED", True)
-    monkeypatch.setattr(jevrerank, "BACKEND", "typesafe")
+    monkeypatch.setattr(jevrerank, "BACKEND", "kev")
     monkeypatch.setattr(jevrerank, "_post",
                         lambda *a, **k: pytest.fail("不该发真请求"))
     return monkeypatch
@@ -218,3 +218,23 @@ def test_candidate_questions_match_official_schema():
     # choice 的 criteria 是 option → 描述 的 map，最多 255 项
     assert isinstance(qs["category"]["criteria"], dict)
     assert len(qs["category"]["criteria"]) <= 255
+
+
+# ---------------- 端点选择 ----------------
+def test_default_backend_points_at_self_hosted_kev():
+    """默认不该再打 TypeSafe 官方云 —— 生产用的是自建部署。"""
+    assert jevrerank.BACKEND == "kev"
+    assert jevrerank.DEFAULT_URLS["kev"] in jevrerank.api_url() or jevrerank.API_URL
+    assert "api.typesafe.ai" not in jevrerank.api_url()
+
+
+def test_env_url_still_wins(monkeypatch):
+    monkeypatch.setattr(jevrerank, "API_URL", "http://127.0.0.1:9/v1/systemone")
+    assert jevrerank.api_url() == "http://127.0.0.1:9/v1/systemone"
+
+
+def test_typesafe_backend_remains_reachable(monkeypatch):
+    """官方云没被删掉，只是不再是默认 —— 回退一行环境变量的事。"""
+    monkeypatch.setattr(jevrerank, "API_URL", "")
+    monkeypatch.setattr(jevrerank, "BACKEND", "typesafe")
+    assert jevrerank.api_url() == "https://api.typesafe.ai/v1/systemone"

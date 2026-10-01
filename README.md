@@ -172,6 +172,29 @@ echo 'your-security-code'  > amap_security.txt
 > (SRTM 90m), capped at 1000 calls/day. Each point is fetched once and cached, so normal use stays
 > far below that; bulk-importing hundreds of points wants your own instance or another source.
 
+## Optional: Jev rerank for photo search
+
+`/api/search/photos` recalls with Chinese-CLIP and then, if configured, puts the top candidates
+through a System One model (`jevrerank.py`) that answers typed questions -- "how relevant is this,
+on a 0-4 scale", "should this be returned at all", "which category is it" -- and fuses those
+calibrated probabilities with the CLIP score. Cosine similarity answers *does it look alike*;
+it cannot answer *should this come back*.
+
+It is off until you give it a key:
+
+```bash
+echo 'your-key' > jev_key.txt   # or export TM_JEV_API_KEY
+```
+
+The default endpoint is a **self-hosted KEV deployment**, not the TypeSafe cloud. Both speak the
+same `/v1/systemone` wire format, so switching is one environment variable: `TM_JEV_API_URL` for
+another host, `TM_JEV_BACKEND=typesafe` to go back to the official cloud, `TM_JEV_BACKEND=cloudflare`
+for the Workers AI relay. Any timeout or error degrades to plain CLIP ordering -- search is what
+the user is waiting on, reranking is a bonus and must never take search down with it.
+
+> It only sees **text**: the caption, place name, trip title and filename of each candidate, never
+> the pixels. On a library where nobody wrote captions there is nothing for it to judge.
+
 ## Keeping it running
 
 The `./start.sh` above is for a first look: plain HTTP, dies with your terminal. Once you actually
@@ -256,7 +279,7 @@ loopback only.)
 ### 3. Backups
 
 Take these and you have everything: `data.db` + `uploads/` + the three secret files
-(`amap_key.txt`, `amap_security.txt`, `token.txt`). `./backup.sh` packages them using SQLite's
+(`amap_key.txt`, `amap_security.txt`, `token.txt`, plus `jev_key.txt` if you set one). `./backup.sh` packages them using SQLite's
 `backup()` API, which gets a consistent snapshot even under WAL.
 
 ## Optional: make photos and video faster

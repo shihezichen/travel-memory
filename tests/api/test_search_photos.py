@@ -55,7 +55,7 @@ def fake_recall(monkeypatch, two_photos):
 def jev_on(monkeypatch):
     monkeypatch.setattr(jevrerank, "API_KEY", "test-key")
     monkeypatch.setattr(jevrerank, "ENABLED", True)
-    monkeypatch.setattr(jevrerank, "BACKEND", "typesafe")
+    monkeypatch.setattr(jevrerank, "BACKEND", "kev")
     return monkeypatch
 
 

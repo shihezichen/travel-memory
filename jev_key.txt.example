@@ -1,0 +1,7 @@
+# Jev 精判（jevrerank.py）的 API key，整个文件就一行，不要带引号。
+# 复制成 jev_key.txt 填上真值；jev_key.txt 在 .gitignore 里，不会进仓库。
+#
+# 默认后端是自建的 KEV 部署（见 jevrerank.DEFAULT_URLS["kev"]），
+# 换地址用环境变量 TM_JEV_API_URL；切回 TypeSafe 官方云用 TM_JEV_BACKEND=typesafe。
+# 不配这个文件也不配 TM_JEV_API_KEY = 精判整层关闭，搜索退回纯 CLIP 排序。
+sk-your-jev-key-here

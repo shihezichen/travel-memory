@@ -147,6 +147,27 @@ echo '你的安全密钥'  > amap_security.txt
 > 海拔数据来自 [OpenTopoData](https://www.opentopodata.org/) 的公开实例（SRTM 90m），
 > 每天 1000 次。点位查一次就缓存，正常用远到不了上限；要批量导入几百个点的话请自建或换源。
 
+## 可选：照片搜索的 Jev 精判重排
+
+`/api/search/photos` 先用 Chinese-CLIP 召回，配了之后再把头部候选送进一个 System One
+模型（`jevrerank.py`）问几道**有类型**的题 ——「相关程度 0~4 档」「该不该返回给用户」
+「属于哪一类」—— 拿回校准概率跟 CLIP 分融合。余弦只回答「像不像」，回答不了
+「该不该返回」，这一层补的是后者。
+
+不配 key 就是关的：
+
+```bash
+echo '你的Key' > jev_key.txt   # 或者 export TM_JEV_API_KEY
+```
+
+默认端点是**自建的 KEV 部署**，不是 TypeSafe 官方云。两边是同一套 `/v1/systemone`
+协议，换后端就一个环境变量：`TM_JEV_API_URL` 换地址，`TM_JEV_BACKEND=typesafe`
+切回官方云，`TM_JEV_BACKEND=cloudflare` 走 Workers AI 转发。任何一次超时或报错都降级
+回纯 CLIP 排序 —— 搜索是用户正在等的，精判是锦上添花，不能反过来把搜索搞挂。
+
+> 它只看得见**文字**：候选图的 caption、地点、行程名、文件名，看不见画面本身。
+> 图库里一条 caption 都没写的话，它也无从判起。
+
 ## 让它一直跑着
 
 上面那条 `./start.sh` 适合「先看一眼」：明文 HTTP，终端一关就停。
@@ -222,8 +243,8 @@ Environment=TRAVEL_BASE_URL=https://127.0.0.1:8443
 
 ### 3. 备份
 
-拿走这几样就够了：`data.db` + `uploads/` + 三个密钥文件（`amap_key.txt`、
-`amap_security.txt`、`token.txt`）。`./backup.sh` 帮你打包，用的是 SQLite 的
+拿走这几样就够了：`data.db` + `uploads/` + 几个密钥文件（`amap_key.txt`、
+`amap_security.txt`、`token.txt`，配了精判的话还有 `jev_key.txt`）。`./backup.sh` 帮你打包，用的是 SQLite 的
 `backup()` API，WAL 下也能拿到一致性快照。
 
 ## 可选：让照片和视频更快

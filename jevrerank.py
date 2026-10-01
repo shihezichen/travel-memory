@@ -4,9 +4,15 @@
 搜「海边日落」时，半夜的霓虹海岸线在 CLIP 眼里和日落海岸线咬得很死，
 靠调 min_score 分不开 —— 阈值是一维的，而「像海岸」和「是日落」是两件事。
 
-Jev 是 TypeSafe 的 System One 模型：吃一个 state + 一组**有类型**的问题
+Jev 是 System One 那一类模型：吃一个 state + 一组**有类型**的问题
 （Noul 真假概率 / Score 分档 / Choice 选项），一次调用并行回答，返回校准概率，
 不 decode 文本。所以它快、输出形状固定、代码可以直接拿来做 if。
+
+默认打的是**自建的 KEV 部署**，不是 TypeSafe 官方云。两边是同一套
+/v1/systemone 协议：请求体 {model, state, questions}、响应
+{"answers": {问题名: {type, ...}}}，score/noul/choice 三种题型都实测过，
+形状一字不差。所以换后端只换 URL 和 key，下面的问题构造、解析、融合
+一个字都不用动。选自建的理由是出网和延迟：实测 120~350ms 的直连。
 
 但它看不见图 —— 官方写死 text only，不收 image/audio/video。所以这里喂给它的是
 候选图的**文字描述**（见 describe()），不是图本身。这是整套方案的天花板：
@@ -14,8 +20,8 @@ Jev 是 TypeSafe 的 System One 模型：吃一个 state + 一组**有类型**�
 行程 + 文件名拼出来，caption 多半是用户自己写的，常常是空 —— 这一层的收益
 因此高度依赖图库的元数据质量，别期待它能凭空看出「日落」。
 
-关闭方式：不配 TM_JEV_API_KEY 就是关的，/api/search/photos 的行为和没有这个
-模块时完全一样。任何一次调用超时、报错、返回格式不对，都降级回纯 CLIP 排序 ——
+关闭方式：不配 key（环境变量 TM_JEV_API_KEY，或仓库根下的 jev_key.txt）
+就是关的，/api/search/photos 的行为和没有这个模块时完全一样。任何一次调用超时、报错、返回格式不对，都降级回纯 CLIP 排序 ——
 搜索是用户正在等的，精判是锦上添花，不能反过来把搜索搞挂。
 """
 import json
@@ -23,19 +29,33 @@ import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 log = logging.getLogger("travel.jev")
 
 # ---------------------------------------------------------------- 配置
 
-# 两种后端：直连 TypeSafe，或者走 Cloudflare Workers AI 转发（国内出网时
-# Cloudflare 那条往往更通）。请求体不一样，响应也多包一层，见 _post()。
-BACKEND = os.environ.get("TM_JEV_BACKEND", "typesafe").strip().lower()
+# 三种后端：kev = 自建部署（默认）、typesafe = 官方云、cloudflare = Workers AI
+# 转发。前两个的请求体和响应完全一样，只差 URL 和 key；cloudflare 那条请求体
+# 不一样、响应还多包一层 result，见 _post()。
+BACKEND = os.environ.get("TM_JEV_BACKEND", "kev").strip().lower()
 
+# key 先看环境变量，再看 jev_key.txt —— 跟 amap_key.txt 一个套路：文件在
+# .gitignore 里，公开仓库不带凭据，生产机上放一份就行，不用动 systemd unit。
 API_KEY = os.environ.get("TM_JEV_API_KEY", "").strip()
+if not API_KEY:
+    _key_file = Path(__file__).resolve().parent / "jev_key.txt"
+    if _key_file.exists():
+        API_KEY = _key_file.read_text(encoding="utf-8").strip()
+
 API_URL = os.environ.get("TM_JEV_API_URL", "").strip()
-MODEL = os.environ.get("TM_JEV_MODEL", "jev-latest").strip()
 CF_ACCOUNT = os.environ.get("TM_JEV_CF_ACCOUNT_ID", "").strip()
+
+# 自建那台不看 model 字段（固定回 kev-0），但还是按后端填对，免得哪天切回
+# 官方云时带着一个对面不认识的模型名出门。
+DEFAULT_MODELS = {"kev": "kev-0", "typesafe": "jev-latest"}
+MODEL = (os.environ.get("TM_JEV_MODEL", "").strip()
+         or DEFAULT_MODELS.get(BACKEND, "jev-latest"))
 
 ENABLED = os.environ.get("TM_JEV_ENABLED", "1") != "0"
 
@@ -66,6 +86,8 @@ CATEGORIES = [
 ]
 
 DEFAULT_URLS = {
+    # 自建部署。换机器/换端口用 TM_JEV_API_URL 覆盖，不用改代码。
+    "kev": "http://kev.zzss.fun:10025/v1/systemone",
     "typesafe": "https://api.typesafe.ai/v1/systemone",
     "cloudflare": "https://api.cloudflare.com/client/v4/accounts/%s/ai/run",
 }
@@ -76,7 +98,7 @@ def api_url() -> str:
         return API_URL
     if BACKEND == "cloudflare":
         return DEFAULT_URLS["cloudflare"] % CF_ACCOUNT
-    return DEFAULT_URLS["typesafe"]
+    return DEFAULT_URLS.get(BACKEND, DEFAULT_URLS["kev"])
 
 
 def available() -> bool:
