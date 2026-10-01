@@ -2809,10 +2809,17 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
 .search-status:empty { display: none; }
 .search-status .search-err { color: var(--danger); }
 
-.search-grid {
-  --photo-cols: 6;
-  flex: 1; min-height: 0; overflow-y: auto;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+/* 结果墙的滚动容器 —— 对应相册页的 #albums-view，职责也一样：
+   自己滚、自己吃双指、给铺满层当定位祖先（见 common.js wallEnsureLayer）。
+
+   ⚠ 会滚的必须是**这一层**，不能是里面的 #search-grid。网格一旦自己当了
+   flex:1 的子项就拿到一个定死的高度，grid 的自动行会被摊到那个高度上 ——
+   55 张图时行高只剩 32px，而格子仍是 127px 的正方形，于是每张只露出顶上
+   一条、上下行互相叠压。把高度交还给内容，aspect-ratio:1 才算得出来。 */
+.search-view {
+  flex: 1; min-height: 0; position: relative; overflow-y: auto;
+  padding: 0 0 calc(12px + env(safe-area-inset-bottom));
+  touch-action: pan-y;   /* 同 .view：纵向滚动给浏览器，双指归我们 */
 }
 /* 结果格比相册多一层说明：搜出来的照片横跨好几条行程，不写清楚是哪一次旅行，
    看到一张海就只能靠猜。常驻而不是悬停才显示 —— 手机没有悬停。 */
@@ -2840,6 +2847,8 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
     border-radius: 9px;
   }
   .topbar .btn.topbtn.btn-search .tbi { width: 19px; height: 19px; vertical-align: 0; }
-  .search-grid { --photo-cols: 3; }
   .search-chip { max-width: 60vw; }
+  /* 和相册同一个理由：手机上捏合就够了，－/＋ 只是占地方（元素留在 DOM 里，
+     syncSearchToolbar 还要读写它们的 disabled） */
+  #btn-search-zoom-out, #btn-search-zoom-in { display: none; }
 }

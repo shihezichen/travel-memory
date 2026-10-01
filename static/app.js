@@ -6744,7 +6744,13 @@ function closeTopLayer() {
   }
   // 5. 语义搜图浮层。排在灯箱**之后**：从结果墙点开大图时灯箱盖在它上面，
   //    第一次返回该关的是大图，第二次才轮到整个搜索页。
-  if (shown(q('#search-overlay'))) { closePhotoSearch(); return true; }
+  if (shown(q('#search-overlay'))) {
+    // 结果墙正在自动播放：这一下先停播，页面留着。和灯箱那条「先退放大态、
+    // 再关灯箱」是同一个道理 —— 一次返回只收一层。
+    if (typeof pwOn !== 'undefined' && pwOn && pwTargetKey === 'search') { pwStop(); return true; }
+    closePhotoSearch();
+    return true;
+  }
   // 6. 分享卡片 / 各类模态框
   const card = q('#share-card-modal');
   if (card) { card.remove(); return true; }
@@ -6779,7 +6785,20 @@ let searchStats = null;        // 索引进度，用来在状态行里说明「�
 let searchScope = new Set();   // 勾中的行程 id
 let searchResults = [];        // 最近一次结果（已规整成媒体对象，灯箱直接用）
 let searchReqSeq = 0;          // 防竞态：旧请求回来得晚就丢掉
+let searchHidden = 0;          // 上一次被分数线挡掉的张数，状态行里要说一声
 const SEARCH_LIMIT = 60;       // 一次要多少张。照片墙一屏 3~6 列，60 张够翻几屏
+
+/* 结果墙只留这个分数以上的（用户 2026-10-02 要求）。
+
+   ⚠ 这条线**只对精判过的那一版分数成立**。两种分数根本不是一个量纲：
+     - reranked=true：score 是 clip_norm / relevance / is_match / category
+       四项加权融合出来的 0~1 分，实测「雪山」是 0.93 / 0.80 / 0.60 / …，
+       0.5 正好切在「确实是雪山」和「沾点边」之间，是条好线；
+     - reranked=false（精判没跑成，退回 CLIP 原始顺序）：score 是余弦相似度，
+       整批都挤在 0.30~0.40，**最高的那张也到不了 0.5**。这时候照样切 0.5，
+       每一次搜索都会得到一面空墙 —— 看着像搜索坏了，其实是量纲对不上。
+   所以没精判的那次不切线，改在状态行里写明「本次未精判」。 */
+const SEARCH_MIN_SCORE = 0.5;
 
 function searchOpen() {
   const ov = $('#search-overlay');
@@ -6800,13 +6819,19 @@ async function initPhotoSearch() {
 
 function openPhotoSearch() {
   if (!searchAvailable) { tmToast('语义搜图未开启'); return; }
+  // 相册墙正在播就先停：整屏覆盖层一盖，那面墙连同它的大图都看不见了，
+  // 接着放纯属白烧 CPU（视频还会在背后出声）。
+  if (typeof pwStop === 'function' && pwOn) pwStop();
   // 每次进来都回到「只搜当前行程」。记住上次的勾选听着体贴，实际是：
   // 人多半已经切到别的行程了，却还在用上一次的范围搜，搜不到又找不出原因。
   searchScope = new Set(currentTripId
     ? [Number(currentTripId)] : allTrips.map(t => Number(t.id)));
   searchResults = [];
+  searchHidden = 0;
   $('#search-input').value = '';
   $('#search-grid').innerHTML = '';
+  wallForgetDetached();
+  syncSearchToolbar();
   renderSearchTrips();
   setSearchStatus('');
   $('#search-overlay').classList.remove('hidden');
@@ -6817,6 +6842,9 @@ function openPhotoSearch() {
 }
 
 function closePhotoSearch() {
+  // 整页一藏，结果墙连同它的铺满层都看不见了，正在播的那一轮必须先停 ——
+  // 否则 pwOn 一直是真，回到相册页按播放键，第一下只是把搜图那面墙停掉。
+  if (typeof pwStop === 'function' && pwOn && pwTargetKey === 'search') pwStop();
   $('#search-overlay').classList.add('hidden');
   $('#search-overlay').setAttribute('aria-hidden', 'true');
 }
@@ -6893,18 +6921,35 @@ async function runPhotoSearch() {
 
   // 规整成媒体对象：灯箱、下载按钮、说明栏都认 id/type/taken_at 这几个键，
   // 而搜索接口给的是 media_id/exif_time，不转一道灯箱里就是一片空白。
-  searchResults = (body.results || []).map(r => Object.assign({}, r, {
+  let all = (body.results || []).map(r => Object.assign({}, r, {
     id: r.media_id,
     type: 'photo',                         // 索引的只有照片，视频抽帧是二期的事
     taken_at: r.exif_time,
   }));
+  // 分数线。只在精判过的那一版分数上切 —— 为什么，见 SEARCH_MIN_SCORE 的注释。
+  if (body.reranked) {
+    const keep = all.filter(m => typeof m.score === 'number' && m.score >= SEARCH_MIN_SCORE);
+    searchHidden = all.length - keep.length;
+    all = keep;
+  } else {
+    searchHidden = 0;
+  }
+  searchResults = all;
   renderSearchGrid();
 
   const bits = [];
   bits.push(searchResults.length + ' 张');
   bits.push(searchScope.size === allTrips.length ? '全部行程'
     : '限 ' + searchScope.size + ' 条行程');
-  if (body.reranked) bits.push('已精判 ' + body.judged + ' 张');
+  if (body.reranked) {
+    bits.push('已精判 ' + body.judged + ' 张');
+    bits.push('只看 ≥ ' + SEARCH_MIN_SCORE.toFixed(1)
+      + (searchHidden ? '（低于的 ' + searchHidden + ' 张已隐藏）' : ''));
+  } else {
+    // 没精判就没切线。不写这一句的话，用户会以为「这就是 0.5 以上的全部」，
+    // 而其实这一批是 CLIP 原始分，根本没有一张够得着 0.5。
+    bits.push('本次未精判，分数为 CLIP 原始相似度，未按 0.5 过滤');
+  }
   // 回填还没跑完时必须说一声：此刻搜不到不代表那张照片不在，可能只是还没进索引。
   if (searchStats && searchStats.indexed < searchStats.photos) {
     bits.push('索引中 ' + searchStats.indexed + '/' + searchStats.photos);
@@ -6912,12 +6957,25 @@ async function runPhotoSearch() {
   setSearchStatus(esc(bits.join(' · ')));
 }
 
+/* 结果墙。和 renderPhotoGrid 是同一套做法，连那几条注意事项都一样：
+   重建前先把正在播的那一拍清掉（但不停播）、把脱离文档的格子从
+   cellWallByCell 里摘掉、列数走 --photo-cols、每格登记进 cellWallByCell
+   以便自动播放拿得到原图地址。结果墙多出来的只有「分数」和「行程 · 地点」
+   两枚角标。 */
 function renderSearchGrid() {
   const grid = $('#search-grid');
+  // 下面这句 innerHTML 会把铺满层一起删掉，正在跑的那一轮等于被抽了遮挡层。
+  // 只 reset 不 stop：换一批结果不等于用户按了停止，重建完接着放（见末尾 pwRestart）。
+  if (typeof pwReset === 'function' && pwOn && pwTargetKey === 'search') pwReset();
+  wallForgetDetached();
+  grid.style.setProperty('--photo-cols', PHOTO_COLS[searchView.zoom]);
   grid.innerHTML = '';
+  $('#search-count').textContent = searchResults.length ? searchResults.length + ' 张' : '';
   if (!searchResults.length) {
-    grid.appendChild(el('div', 'empty-hint',
-      '没搜到。换个说法试试，或者点「全选」把范围放宽到全部行程。'));
+    grid.appendChild(el('div', 'empty-hint', searchHidden
+      ? ('有 ' + searchHidden + ' 张沾边但都低于 ' + SEARCH_MIN_SCORE.toFixed(1)
+         + ' 分，没有达标的。换个说法试试，或者点「全选」把范围放宽到全部行程。')
+      : '没搜到。换个说法试试，或者点「全选」把范围放宽到全部行程。'));
     return;
   }
   searchResults.forEach((m, idx) => {
@@ -6940,13 +6998,98 @@ function renderSearchGrid() {
     if (meta) cell.appendChild(el('div', 'search-cell-meta', meta));
     cell.title = [m.caption, meta, (m.exif_time || '').slice(0, 16)]
       .filter(Boolean).join(' · ');
+    // 自动播放要用它拿原图地址，存一份备查（见 common.js cellWallByCell）
+    cellWallByCell.set(cell, m);
     cell.onclick = () => {
+      if (pwOn) pwStop();             // 点开大图看细节 —— 自动播放让位
       lightboxMedia = searchResults;
       openLightbox(idx, 'search');
     };
     grid.appendChild(cell);
   });
+  // 新网格铺好了，接着放（没在播就是个空操作）
+  if (typeof pwRestart === 'function' && pwTargetKey === 'search') pwRestart();
 }
+
+/* ---- 结果墙的缩放：和相册页同一套档位、同一套手势 ----------------------
+   档位表共用 PHOTO_COLS，但**档位本身单独存**：搜图是整屏覆盖层，相册在
+   右侧面板里，同样「每行 4 张」在两处是完全不同的大小，共用一个档位的结果是
+   每次来回切都得重调一次。 */
+const SEARCH_VIEW_KEY = 'tm_search_view';
+let searchView = loadSearchView();
+
+function loadSearchView() {
+  const d = { zoom: 3 };
+  try {
+    const s = JSON.parse(localStorage.getItem(SEARCH_VIEW_KEY) || 'null') || {};
+    return { zoom: Number.isInteger(s.zoom) && s.zoom >= 0 && s.zoom < PHOTO_COLS.length ? s.zoom : d.zoom };
+  } catch (e) { return d; }
+}
+function saveSearchView() {
+  try { localStorage.setItem(SEARCH_VIEW_KEY, JSON.stringify(searchView)); } catch (e) {}
+}
+function syncSearchToolbar() {
+  $('#btn-search-zoom-in').disabled = searchView.zoom >= PHOTO_COLS.length - 1;
+  $('#btn-search-zoom-out').disabled = searchView.zoom <= 0;
+}
+
+function setSearchZoom(delta) {
+  const next = Math.min(PHOTO_COLS.length - 1, Math.max(0, searchView.zoom + delta));
+  if (next === searchView.zoom) return;
+  searchView.zoom = next;
+  saveSearchView();
+  syncSearchToolbar();
+  // 只改列数、不重建 DOM —— 重建会让每张缩略图重走一遍加载，中间闪白。
+  const grid = $('#search-grid');
+  flipGrid(grid, function () {
+    grid.style.setProperty('--photo-cols', PHOTO_COLS[next]);
+  });
+  // 列数变了 = 起点几何当场作废。不停播，从新几何重起一拍。
+  if (typeof pwRestart === 'function' && pwTargetKey === 'search') pwRestart();
+}
+
+$('#btn-search-zoom-in').addEventListener('click', () => setSearchZoom(1));
+$('#btn-search-zoom-out').addEventListener('click', () => setSearchZoom(-1));
+// ▶ 那颗不在这儿绑：wallAttach() 会按 PW_TARGETS 把三颗一起绑上（见 common.js），
+// 这里再绑一次就是一次点击触发两回 toggle —— 开了又关，按钮看着像坏的。
+
+/* 双指捏合（手机）。和相册一样绑在**整个滚动容器**上而不是网格上：
+   网格只覆盖到最后一行缩略图为止，下面那片空白属于 #search-view，
+   绑在网格上的话手指落在空白处就完全收不到事件。 */
+const searchViewEl = $('#search-view');
+let searchPinchStart = 0;
+searchViewEl.addEventListener('touchstart', e => {
+  if (e.touches.length !== 2) return;
+  if (e.cancelable) e.preventDefault();   // 赶在浏览器把双指判成整页缩放之前接管
+  searchPinchStart = pinchDist(e);
+}, { passive: false });
+searchViewEl.addEventListener('touchmove', e => {
+  if (e.touches.length !== 2 || !searchPinchStart) return;
+  if (e.cancelable) e.preventDefault();
+  const d = pinchDist(e);
+  const ratio = d / searchPinchStart;
+  if (ratio > 1.18) { setSearchZoom(1); searchPinchStart = d; }
+  else if (ratio < 0.85) { setSearchZoom(-1); searchPinchStart = d; }
+}, { passive: false });
+searchViewEl.addEventListener('touchend', () => { searchPinchStart = 0; }, { passive: true });
+searchViewEl.addEventListener('touchcancel', () => { searchPinchStart = 0; }, { passive: true });
+
+/* 滚轮缩放（桌面）。判据和取舍同相册页那一段，见 wheelZoomMedia 的注释。
+   区别只有一条：搜图是整屏，结果多了是真要往下滚的，所以缩到两头时
+   把滚动还给页面这件事在这里更要紧。 */
+searchViewEl.addEventListener('wheel', e => {
+  if (e.ctrlKey || e.metaKey) return;
+  if (wheelZoomMedia && !wheelZoomMedia.matches) return;
+  if (e.target.closest && e.target.closest('.photo-toolbar')) return;
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  const atMin = searchView.zoom <= 0 && e.deltaY > 0;
+  const atMax = searchView.zoom >= PHOTO_COLS.length - 1 && e.deltaY < 0;
+  if (atMin || atMax) return;
+  e.preventDefault();
+  setSearchZoom(e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+
+syncSearchToolbar();
 
 $('#btn-search').onclick = openPhotoSearch;
 $('#search-back').onclick = closePhotoSearch;
@@ -6968,6 +7111,10 @@ $('#search-scope-cur').onclick = () => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || !searchOpen()) return;
   if (!$('#lightbox').classList.contains('hidden')) return;
+  // 结果墙正在自动播放时，这一下 Esc 是「停播」——common.js 那条 keydown 已经
+  // 接住了。这里再关掉整个搜索页的话，一次 Esc 就把两层一起收了，
+  // 和相册页「Esc 只停播、页面还在」对不上。
+  if (typeof pwOn !== 'undefined' && pwOn && pwTargetKey === 'search') return;
   closePhotoSearch();
 });
 

@@ -1098,6 +1098,11 @@ const PW_TARGETS = {
             panel: '.view-track' },
   detail: { grid: '#media-grid', cell: '.media-item', btn: '#btn-detail-play', view: '#detail-view', tab: 'detail',
             panel: '.view-track' },
+  /* 语义搜图的结果墙。格子和相册页是同一个 .photo-cell，所以这里除了选择器
+     没有别的差异。panel 指向 .search-overlay 本身 —— 它是 position:fixed，
+     本来就是个定位祖先，wallEnsureLayer 那段临时 relative 不会被触发。 */
+  search: { grid: '#search-grid', cell: '.photo-cell', btn: '#btn-search-play', view: '#search-view', tab: null,
+            panel: '.search-overlay' },
 };
 let pwTargetKey = 'albums';
 const pwTarget = () => PW_TARGETS[pwTargetKey];
@@ -1996,7 +2001,11 @@ function pwRestart() {
 function pwSyncVisibility() {
   if (!pwOn) return;
   const view = $(pwTarget().view);
-  const shown = !!view && view.getAttribute('aria-hidden') === 'false';
+  /* 判「没写成 true」而不是「写着 false」：三个 .view 一直带着这个属性，
+     而搜图结果墙的 #search-view 不在 tab 轨道上、压根没人改它 ——
+     按「必须等于 false」算的话，搜图这面墙会被当成切走了，一边 pwOn 为真
+     一边被 pwReset 掐掉，按钮亮着却什么都不放。 */
+  const shown = !!view && view.getAttribute('aria-hidden') !== 'true';
   if (shown) pwRestart();
   else pwReset();
 }

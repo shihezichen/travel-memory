@@ -304,7 +304,30 @@
     </div>
 
     <div id="search-status" class="search-status"></div>
-    <div id="search-grid" class="photo-grid search-grid"></div>
+
+    <!-- 结果墙 = 相册页那面墙的同一套东西：同一个 .photo-toolbar、同一个
+         .photo-grid/.photo-cell、同一套自动播放和缩放手势（见 app.js 的
+         renderSearchGrid / setSearchZoom，以及 common.js 的 PW_TARGETS.search）。
+         少的只有「筛选」和「排序」两组：结果里只有照片，而顺序是相关度定的，
+         按时间重排等于把搜索结果最有用的那条信息扔掉。
+
+         ⚠ 网格外面必须套一层自己会滚的 #search-view，**不能让 #search-grid
+         直接当 flex 子项**。原来就是直接当的，于是网格拿到一个由 flex 定死的
+         高度，grid 的自动行被摊到这个高度上（55 张图时行高只剩 32px），
+         每张照片只露出顶上一条，上下行还互相叠压。相册页没这毛病，正是因为
+         它的网格待在 #albums-view 这个普通块级滚动容器里、高度随内容。 -->
+    <div class="photo-toolbar">
+      <span id="search-count" class="photo-count"></span>
+      <span class="photo-hint">滚轮缩放</span>
+      <div class="photo-tools">
+        <button id="btn-search-play" class="icon-btn" title="自动播放：随机选一张放大铺满，再换下一张" aria-label="自动播放搜索结果墙" aria-pressed="false">▶</button>
+        <button id="btn-search-zoom-out" class="icon-btn" title="缩小（每行更多）">－</button>
+        <button id="btn-search-zoom-in" class="icon-btn" title="放大（每行更少）">＋</button>
+      </div>
+    </div>
+    <div id="search-view" class="search-view" aria-hidden="false">
+      <div id="search-grid" class="photo-grid"></div>
+    </div>
   </div>
 
   <!-- 模态框 -->
