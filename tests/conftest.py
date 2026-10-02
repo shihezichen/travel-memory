@@ -88,6 +88,7 @@ import oss_backfill as _oss_backfill  # noqa: E402
 # 每次上传都会去**生产** uploads/ 里找那个 uuid 文件名，找不到就把索引记成 failed
 # —— 测试于是在一个「索引永远失败」的世界里跑，而这事一声不吭。
 import aiindex as _aiindex  # noqa: E402
+import jevrerank as _jevrerank  # noqa: E402
 
 _ROUTER_MODULES = [_r_agent_api, _r_share, _transcode, _oss_backfill, _aiindex]
 # 每个模块里需要被重定向到 tmp_path 的目录型全局。
@@ -158,6 +159,11 @@ def isolated_env(tmp_path, monkeypatch):
     # 起一个后台线程算 512 维向量 —— 慢，而且会让「这台机器装没装模型」变成测试
     # 结果的一部分。要测索引本身的用例自己把 available/enqueue 换回去。
     monkeypatch.setattr(_aiindex, "enqueue", lambda media_id, filename: False)
+    # 检索这条链路上的两张加速缓存按用例清空。它们都是进程级的，不清的话
+    # 上一个用例喂给假 Jev 的回答会原样飘进下一个用例，而下一个用例换了
+    # 另一个假 _post —— 结果是测试互相污染，还极难查。
+    _aiindex.clear_query_cache()
+    _jevrerank.clear_cache()
     monkeypatch.setattr(media_mod, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(media_mod, "THUMB_DIR", thumbs)
 

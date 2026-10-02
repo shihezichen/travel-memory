@@ -227,6 +227,41 @@ def _load_vectors():
     return out
 
 
+# 查询向量缓存。一次搜索的耗时里，文本编码这一趟 ONNX 实测 60~200ms，
+# 而同一个搜索词被反复编码是常态 —— 改一下行程范围、拖一下相关度线之后
+# 再搜一次、翻完一遍回头再搜，问的都是同一句话。词条就几十个字，
+# 存 256 条也只有几百 KB。
+#
+# 不设 TTL，也不用随索引作废：同一段文字经同一个模型编出来的向量是定值，
+# 和库里有哪些照片无关（那是 _CACHE 那一层的事）。
+_TEXT_CACHE = {}
+_TEXT_CACHE_MAX = int(os.environ.get("TM_AI_QUERY_CACHE", "256"))
+_TEXT_CACHE_LOCK = threading.Lock()
+
+
+def _encode_query(query: str):
+    """把搜索词编成向量，同一句话只编一次。"""
+    import clipmodel
+    with _TEXT_CACHE_LOCK:
+        v = _TEXT_CACHE.get(query)
+    if v is not None:
+        return v
+    v = clipmodel.encode_texts([query])[0]
+    with _TEXT_CACHE_LOCK:
+        # 满了整批扔掉而不是按 LRU 淘汰：这是纯粹的加速缓存，扔错了最坏
+        # 也只是多编一次。为此引进一个 OrderedDict 和一套淘汰逻辑不划算。
+        if len(_TEXT_CACHE) >= _TEXT_CACHE_MAX:
+            _TEXT_CACHE.clear()
+        _TEXT_CACHE[query] = v
+    return v
+
+
+def clear_query_cache():
+    """测试用。生产上没人调 —— 向量不会过期，见 _TEXT_CACHE 的注释。"""
+    with _TEXT_CACHE_LOCK:
+        _TEXT_CACHE.clear()
+
+
 def search(user_id: int, query: str, limit: int = 30, min_score: float = 0.0,
            trip_ids=None):
     """语义检索。返回 [{media_id, filename, score}]，已按用户隔离、已去重。
@@ -242,7 +277,6 @@ def search(user_id: int, query: str, limit: int = 30, min_score: float = 0.0,
         return []
 
     import numpy as np
-    import clipmodel
 
     media_ids, user_ids, row_trips, filenames, M = _load_vectors()
     if len(media_ids) == 0:
@@ -254,7 +288,7 @@ def search(user_id: int, query: str, limit: int = 30, min_score: float = 0.0,
     if not mine.any():
         return []
 
-    q = clipmodel.encode_texts([query])[0]
+    q = _encode_query(query)
     sim = M @ q
     sim[~mine] = -2.0                       # 别人的照片直接排到最后，不参与 topk
 

@@ -189,3 +189,40 @@ def test_media_list_carries_server_computed_urls(auth_client, seeded_trip, jpeg_
     m = items[0]
     assert m["url"].endswith("/uploads/" + m["filename"])
     assert m["thumb_url"].endswith("/uploads/thumbs/" + m["thumb_filename"])
+
+
+# ---------------- 相册墙那一格的几档尺寸 ----------------
+# 搜图结果墙早就在用 srcset 挑档（手机上一格 95px，240 那档就够，拿 512 长边的
+# 缩略图顶上去是白下 4.8 倍的字节）。相册墙比结果墙更吃亏 —— 结果墙最多 60 格，
+# 相册墙是整趟旅行，所以这条接口也得把档位带出来。
+def test_trip_media_carries_wall_srcset_for_photos(auth_client, seeded_trip,
+                                                   jpeg_bytes, monkeypatch):
+    monkeypatch.setattr(app_mod, "media_srcset",
+                        lambda fn, thumb=None: [{"w": 240, "url": "https://cdn/" + fn}])
+    tid = seeded_trip["trip_id"]
+    _upload(auth_client, seeded_trip["point_ids"][0], content=jpeg_bytes())
+    it = auth_client.get(f"/api/trips/{tid}/media").json()["items"][0]
+    assert it["srcset"] == [{"w": 240, "url": "https://cdn/" + it["filename"]}]
+
+
+def test_trip_media_gives_videos_no_srcset(auth_client, seeded_trip, monkeypatch):
+    """视频不给档位。960 那一档是**从原图出**的，而视频的「原图」是 mp4 ——
+    让 OSS 的图片处理去缩它只会得到一个 400，整格裂图。视频照旧走 thumb_url。"""
+    import db
+    monkeypatch.setattr(app_mod, "media_srcset",
+                        lambda fn, thumb=None: [{"w": 240, "url": "https://cdn/" + fn}])
+    tid = seeded_trip["trip_id"]
+    (Path(app_mod.UPLOAD_DIR) / "v.mp4").write_bytes(b"fake video bytes")
+    db.add_media(seeded_trip["point_ids"][0], "video", "v.mp4", None)
+    it = auth_client.get(f"/api/trips/{tid}/media").json()["items"][0]
+    assert it["type"] == "video" and it["srcset"] == []
+
+
+def test_srcset_absent_without_oss_changes_nothing(auth_client, seeded_trip, jpeg_bytes):
+    """没配 OSS（本地开发/测试）时档位是空的，前端照旧用 thumb_url ——
+    行为必须和加这个字段之前一字不差。"""
+    tid = seeded_trip["trip_id"]
+    _upload(auth_client, seeded_trip["point_ids"][0], content=jpeg_bytes())
+    it = auth_client.get(f"/api/trips/{tid}/media").json()["items"][0]
+    assert it["srcset"] == []
+    assert it["thumb_url"].startswith("/uploads/thumbs/")

@@ -298,3 +298,65 @@ def test_other_peoples_trip_ids_buy_you_nothing(auth_client, other_client,
     assert aiindex.search(other_client.user["id"], "海边日落",
                           trip_ids=[c["t1"], c["t2"]]) == []
 
+
+
+# ---------------- 判过就记住：同一句话不重复问 Jev ----------------
+# 精判是整条检索链路里唯一按秒计的那一段（一批几十上百个候选、并发 HTTP、
+# 最坏吃满 BUDGET 的 8 秒）。而用户的真实动作是**反复问同一句话** —— 换个
+# 行程范围再搜、拖完相关度线再搜、从灯箱退回来再搜。这些重来的每一次，
+# query 和送进去的画面描述都一字不差，答案当然也一样。
+def test_same_query_twice_asks_jev_only_once(auth_client, fake_recall, jev_on,
+                                             two_photos, monkeypatch):
+    calls = []
+
+    def _post(state, questions):
+        calls.append(state.get("image_description"))
+        return _answers(3, 0.8)
+
+    monkeypatch.setattr(jevrerank, "_post", _post)
+    first = auth_client.get("/api/search/photos", params={"q": "西湖"}).json()
+    n = len(calls)
+    assert n >= 3                      # 一次意图分类 + 两张候选
+
+    second = auth_client.get("/api/search/photos", params={"q": "西湖"}).json()
+    assert len(calls) == n              # 第二趟一次网络都没发
+    # 省掉调用不等于省掉结果：两次的排序、张数、judged 必须一模一样。
+    assert second["reranked"] is True and second["judged"] == first["judged"]
+    assert [x["media_id"] for x in second["results"]] == \
+           [x["media_id"] for x in first["results"]]
+
+
+def test_a_different_query_is_judged_again(auth_client, fake_recall, jev_on,
+                                           two_photos, monkeypatch):
+    """缓存的键里带着 query —— 换个说法必须重新问，不能把上一句的答案套上去。"""
+    calls = []
+    monkeypatch.setattr(jevrerank, "_post",
+                        lambda state, q: (calls.append(state.get("query")),
+                                          _answers(3, 0.8))[1])
+    auth_client.get("/api/search/photos", params={"q": "西湖"})
+    n = len(calls)
+    auth_client.get("/api/search/photos", params={"q": "雷峰塔的剪影"})
+    assert len(calls) > n
+
+
+def test_a_failed_judgement_is_not_remembered(auth_client, fake_recall, jev_on,
+                                              two_photos, monkeypatch):
+    """判失败的不进缓存 —— 网络抖一下就把「这张判不了」记一辈子，那是把
+    一次偶发故障焊成了永久状态。"""
+    calls = []
+    state = {"boom": True}
+
+    def _post(st, questions):
+        calls.append(1)
+        if state["boom"]:
+            raise RuntimeError("connection reset by peer")
+        return _answers(3, 0.8)
+
+    monkeypatch.setattr(jevrerank, "_post", _post)
+    assert auth_client.get("/api/search/photos",
+                           params={"q": "西湖"}).json()["reranked"] is False
+    n = len(calls)
+    state["boom"] = False
+    body = auth_client.get("/api/search/photos", params={"q": "西湖"}).json()
+    assert len(calls) > n               # 重试了，没把失败记下来
+    assert body["reranked"] is True

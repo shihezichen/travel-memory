@@ -2136,6 +2136,11 @@ def api_trip_media(request: Request, trip_id: int):
             "url": media_url(f"/uploads/{m['filename']}"),
             "thumb_url": (media_url(f"/uploads/thumbs/{m['thumb_filename']}")
                           if m.get("thumb_filename") else None),
+            # 相册墙那一格的几档尺寸，和搜图结果墙同一套（见 config.media_srcset）。
+            # **只给照片**：960 那一档是从原图出的，而视频的「原图」是 mp4，
+            # 让 OSS 的图片处理去缩它只会得到一个 400。视频照旧走 thumb_url。
+            "srcset": (media_srcset(m["filename"], m.get("thumb_filename"))
+                       if m["type"] == "photo" else []),
             # 优先 EXIF 拍摄时间，缺失时退到上传时间（排序/分组都用它）
             "taken_at": m.get("exif_time") or m.get("created_at"),
             "caption": m.get("caption") or "",

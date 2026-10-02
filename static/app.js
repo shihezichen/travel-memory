@@ -4220,6 +4220,59 @@ async function loadAlbums() {
 
 // 工具栏按钮状态跟着 photoView 走（刷新/切行程后保持上次的选择）
 
+/* ---- 相册墙的加载提速：srcset / 首屏优先 / 空闲预取 ---------------------
+   和搜图结果墙同一套做法（见 searchApplySrc 上面那段长注释，三条原因在这面
+   墙上一字不差地成立：缩略图比格子大一个数量级、签名 URL 每次都变所以从没
+   命中过缓存、整面墙都是 lazy 所以首屏永远先白一片）。
+   相册墙其实比结果墙更吃亏 —— 结果墙最多 60 格，相册墙是整趟旅行。
+
+   唯一的区别在 sizes：结果墙是整屏覆盖层，一格就是 100vw/列数；相册墙在
+   右侧面板里，得按**量出来的网格宽度**算 —— 照抄 100vw 会让浏览器以为一格
+   有两倍宽，直接挑最大那一档，白下载一遍。 */
+const ALBUM_EAGER_ROWS = 3;     // 首屏这几行不走 lazy，直接高优先级拉
+// 预取的上限。一个行程几百张是常事，全都预取等于把 lazy 这件事整个废掉 ——
+// 省下的是「滚到那儿才开始等」，花出去的是几十 MB 和一堆解码，不划算。
+// 往下滚三四屏的量就够接上用户的手速，再远的交回给 lazy。
+const ALBUM_PREFETCH_MAX = 120;
+
+function albumSizesAttr(cols) {
+  const grid = $('#photo-grid');
+  const w = (grid && grid.clientWidth) || window.innerWidth;
+  return Math.max(60, Math.round(w / cols)) + 'px';
+}
+
+function albumApplySrc(img, m, cols) {
+  if (m.srcset && m.srcset.length) {
+    img.sizes = albumSizesAttr(cols);
+    img.srcset = m.srcset.map(v => v.url + ' ' + v.w + 'w').join(', ');
+    // src 仍要给：srcset 整条挂了（OSS 抽风）时它是回退，也是 onerror 的判据。
+    img.src = m.srcset[0].url;
+  } else {
+    img.src = m.thumb_url || m.url;
+  }
+}
+
+/* 首屏之外的那些，趁主线程空下来先拉进缓存。用的是和格子**同一套**
+   srcset+sizes，浏览器挑中的档位一致，缓存条目能直接复用 —— 随手预取一个
+   240 的话，等真滚到那儿浏览器要的是 480，白下一遍。
+   没有图可拉的（视频占位格）跳过。 */
+let albumPrefetchTimer = 0;
+function albumPrefetch() {
+  clearTimeout(albumPrefetchTimer);
+  const cols = PHOTO_COLS[photoView.zoom];
+  const from = cols * ALBUM_EAGER_ROWS;
+  const rest = photoShown.slice(from, from + ALBUM_PREFETCH_MAX)
+    .filter(m => m.thumb_url || (m.srcset && m.srcset.length));
+  if (!rest.length) return;
+  const run = () => rest.forEach(m => {
+    const im = new Image();
+    im.decoding = 'async';
+    albumApplySrc(im, m, cols);
+  });
+  if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 1500 });
+  else albumPrefetchTimer = setTimeout(run, 400);
+}
+
 function renderPhotoGrid() {
   const grid = $('#photo-grid');
   const list = photoItems.filter(m => photoView.filter === 'all' || m.type === photoView.filter);
@@ -4247,17 +4300,26 @@ function renderPhotoGrid() {
       : '<div class="empty-hint">该类型下没有内容</div>';
     return;
   }
+  const cols = PHOTO_COLS[photoView.zoom];
+  const eagerN = cols * ALBUM_EAGER_ROWS;
   photoShown.forEach((m, idx) => {
     const cell = el('div', 'photo-cell');
     cell.title = [m.caption, m.point_name, (m.taken_at || '').slice(0, 16)]
       .filter(Boolean).join(' · ');
     if (m.thumb_url || m.type === 'photo') {
       const img = el('img');
-      img.src = m.thumb_url || m.url;
-      img.loading = 'lazy';
+      albumApplySrc(img, m, cols);
+      // 首屏那几行不走 lazy：它们本来就在视野里，等 IntersectionObserver
+      // 回调只是白等一拍，人看到的就是「先白一片，再一张张冒」。
+      img.loading = idx < eagerN ? 'eager' : 'lazy';
+      img.fetchPriority = idx < eagerN ? 'high' : 'low';
       img.decoding = 'async';
-      // 缩略图丢失时回退原图，避免整片空白
-      img.onerror = () => { if (img.src !== location.origin + m.url) img.src = m.url; };
+      // 缩略图/缩放档整条挂了才回退原图。要先把 srcset 摘掉，否则浏览器仍按
+      // srcset 挑，src 这一改根本不生效（原来写的 location.origin + m.url 在
+      // 签名直链那条路上永远不相等，等于这个兜底从来没真正生效过）。
+      img.onerror = () => {
+        if (m.url && img.src !== m.url) { img.removeAttribute('srcset'); img.src = m.url; }
+      };
       cell.appendChild(img);
     } else {
       cell.appendChild(el('div', 'photo-cell-blank', '🎬'));
@@ -4284,6 +4346,7 @@ function renderPhotoGrid() {
     };
     grid.appendChild(cell);
   });
+  albumPrefetch();                    // 首屏之外的那些趁空闲先拉进缓存
   // 新网格铺好了，接着放（没在播就是个空操作）
   if (typeof pwRestart === 'function' && pwTargetKey === 'albums') pwRestart();
 }
@@ -4307,6 +4370,12 @@ function setPhotoZoom(delta) {
   flipGrid(grid, function () {
     grid.style.setProperty('--photo-cols', PHOTO_COLS[next]);
   });
+  // 格子宽度变了，srcset 的挑档依据（sizes）跟着改，否则放大之后浏览器仍按
+  // 旧列数认为 240 那档够用，图就是糊的。已经加载好的不会被降级，只有确实
+  // 需要更大一档时才会再请求一次。
+  const sizes = albumSizesAttr(PHOTO_COLS[next]);
+  grid.querySelectorAll('img[srcset]').forEach(img => { img.sizes = sizes; });
+  albumPrefetch();                    // 档位变了，预取的也该换成新档位
   // 列数变了 = 格子边长和整面墙的尺寸都变了，起点几何当场作废。
   // 不停播，从新几何重起一拍（见 common.js pwRestart）。
   if (typeof pwRestart === 'function') pwRestart();
@@ -6962,6 +7031,14 @@ async function runPhotoSearch() {
     type: 'photo',                         // 索引的只有照片，视频抽帧是二期的事
     taken_at: r.exif_time,
   }));
+  // 行程范围是**硬约束**：勾了「关西赏樱」就不该在墙上看见独库公路的照片。
+  // 后端已经在向量矩阵那一层按 trip_ids 掩过一道（见 aiindex.search），这里
+  // 按勾选再过一遍。不是因为不信后端，而是这两道的失效方式不一样 ——
+  // 服务端跑的是旧进程、参数拼串拼丢了、哪天多出一条别的召回通路，都会让
+  // 掩码那道形同虚设，而用户看到的是「我明明只选了这一条」。
+  // 实际踩过一次：前端已经在发 trips=，服务端进程还是加这个参数之前那版，
+  // 于是界面写着「限 1 条行程」、墙上却是全部三条行程的 55 张。
+  searchAll = searchKeepInScope(searchAll);
   searchReranked = !!body.reranked;
   searchJudged = body.judged || 0;
   // 轨迹编号/配色按**全量**结果定，不按切完线的 —— 否则拖一下滑杆，
@@ -6975,28 +7052,46 @@ async function runPhotoSearch() {
   setSearchStatus(esc(searchStatusBits().join(' · ')));
 }
 
+/* 勾了哪几条行程，墙上就只能有哪几条行程的照片。没有行程 id 的一律留下 ——
+   那是数据缺失，不是「属于别的行程」，挡掉只会让人以为图丢了。 */
+function searchKeepInScope(list) {
+  const scope = new Set([...searchScope].map(Number));
+  const kept = list.filter(m => m.trip_id == null || scope.has(Number(m.trip_id)));
+  if (kept.length !== list.length) {
+    console.warn('[搜图] ' + (list.length - kept.length) + ' 条结果不在勾选的行程里，已丢弃');
+  }
+  return kept;
+}
+
 /* 状态行的那几段。单独拎出来是因为拖滑杆时要原地重写一次（张数变了），
-   而那时候 body 早就不在手上了。 */
+   而那时候 body 早就不在手上了。
+
+   **只说用户用得上的**。这行字一度是「55 张 · 限 1 条行程 · 本次未精判，
+   分数为 CLIP 原始相似度 · 只看 ≥ 0.33 · 索引中 17/72」—— 后面三段是给调参
+   的人看的：对着相册找照片的人读不懂「精判」「CLIP」，也不需要知道分数是
+   哪个量纲的（真要调，上面那条滑杆自己就写着阈值），更猜不出 17 和 72
+   分别是什么。留下的两件事都是用户问得出口的：搜到几张、搜的是哪儿，
+   外加一句「还有照片没整理完所以现在搜不全」。 */
 function searchStatusBits() {
-  const cfg = searchCutCfg();
   const bits = [];
   bits.push(searchResults.length + ' 张');
-  bits.push(searchScope.size === allTrips.length ? '全部行程'
-    : '限 ' + searchScope.size + ' 条行程');
-  if (searchReranked) {
-    bits.push('已精判 ' + searchJudged + ' 张（0~1 融合分）');
-  } else {
-    // 量纲必须写明。不写的话，用户会拿这个 0.36 去和精判那档的 0.5 比，
-    // 得出「这次搜得更差」的结论 —— 其实两个数根本不在一个刻度上。
-    bits.push('本次未精判，分数为 CLIP 原始相似度');
-  }
-  bits.push('只看 ≥ ' + searchCut().toFixed(cfg.digits)
-    + (searchHidden ? '（低于的 ' + searchHidden + ' 张已隐藏）' : ''));
-  // 回填还没跑完时必须说一声：此刻搜不到不代表那张照片不在，可能只是还没进索引。
-  if (searchStats && searchStats.indexed < searchStats.photos) {
-    bits.push('索引中 ' + searchStats.indexed + '/' + searchStats.photos);
-  }
+  bits.push(searchScopeLabel());
+  // 回填还没跑完时必须说一声：此刻搜不到不代表那张照片不在，可能只是还没算完。
+  const left = searchStats ? (searchStats.photos - searchStats.indexed) : 0;
+  if (left > 0) bits.push('还有 ' + left + ' 张照片在整理，暂时搜不到');
   return bits;
+}
+
+/* 搜的是哪儿。只勾了一条就直接把行程名写出来 —— 「限 1 条行程」要人自己
+   回头去看上面哪个格子是亮的，名字一写，这行字就自己说清楚了。 */
+function searchScopeLabel() {
+  if (!allTrips.length || searchScope.size >= allTrips.length) return '全部行程';
+  if (searchScope.size === 1) {
+    const id = [...searchScope][0];
+    const t = allTrips.find(x => Number(x.id) === id);
+    if (t && t.name) return '只搜「' + t.name + '」';
+  }
+  return '限 ' + searchScope.size + ' 条行程';
 }
 
 /* ---- 加载提速：srcset / 首屏优先 / 空闲预取 -----------------------------

@@ -137,7 +137,11 @@ def test_cut_slider_refilters_in_place_without_a_new_request(wall):
     assert page.count("#search-grid .photo-cell") == 0
     assert page.visible("#search-grid .empty-hint")
     assert "相关度" in page.text("#search-grid .empty-hint")
-    assert "已隐藏" in page.text("#search-status")
+    # 状态行只说人话：搜到几张 + 搜的是哪儿。阈值、量纲、「已隐藏多少张」
+    # 这些调参口径不再往这儿塞 —— 那条滑杆自己就写着阈值（见 searchStatusBits）。
+    status = page.text("#search-status")
+    assert status.startswith("0 张")
+    assert "精判" not in status and "CLIP" not in status
 
     # 「推荐」把它拉回默认值；再推到最低档，照片全回来
     page.click("#search-cut-reset")
@@ -178,3 +182,33 @@ def test_first_screen_is_eager_and_the_rest_stays_lazy(wall):
     # 本地分发（E2E 里 MEDIA_BASE_URL 为空）没有 OSS 图片处理，srcset 该是空的；
     # 有 OSS 的那条路由单元测试钉（tests/unit/test_media_url.py）。
     assert page.eval("""(searchResults[0].srcset || []).length""") == 0
+
+
+def test_status_line_speaks_plain_chinese(wall):
+    """状态行不许出现只有开发看得懂的词。
+
+    用户的原话是「文字过长，且太过专业，用户看不懂」—— 这条把它钉死：
+    精判 / CLIP / 相似度 / 融合分 这几个词只要回到这行字里就红。
+    """
+    status = wall.text("#search-status")
+    assert "张" in status
+    for jargon in ("精判", "CLIP", "相似度", "融合分", "索引中"):
+        assert jargon not in status, status
+
+
+def test_results_outside_the_checked_trips_are_dropped(wall):
+    """勾选之外的行程，哪怕后端给回来了也不许上墙。
+
+    这是前端这一道守卫（后端那道在 tests/api/test_search_photos.py）。两道
+    都要有：实际踩过一次「前端已经在发 trips=、服务端还是加这个参数之前那版」，
+    界面写着限一条行程、墙上却是全部三条的 55 张。
+    """
+    kept = wall.eval("""(() => {
+        const mine = [...searchScope][0];
+        return searchKeepInScope([
+            {media_id: 1, trip_id: mine},
+            {media_id: 2, trip_id: mine + 90000},
+            {media_id: 3, trip_id: null},
+        ]).map(m => m.media_id);
+    })()""")
+    assert kept == [1, 3]

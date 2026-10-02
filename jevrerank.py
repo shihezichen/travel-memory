@@ -377,31 +377,89 @@ def rerank(query: str, hits: list, meta: dict, limit: int = 20) -> dict:
             "intent": intent, "reason": None}
 
 
+# ---------------------------------------------------------------- 判过就记住
+
+# 精判是整条搜索链路里唯一的网络调用，也是唯一按秒计的那一段：一批 55~200 个
+# 候选、20 路并发、单次 70~500ms，最坏吃满 BUDGET 的 8 秒。而用户在搜索框里
+# 的真实动作是**反复问同一句话** —— 换个行程范围再搜、拖完相关度线觉得不对再
+# 搜一次、从灯箱退回来再搜一次。这些重来的每一次，问的 query 和送进去的画面
+# 描述都一字不差，Jev 的回答当然也一样。
+#
+# 键是 (query, 画面描述)。描述一改键就不一样，缓存自然失效，所以不需要 TTL ——
+# 「问题没变、材料没变」这两条一成立，答案过多久都是那个答案。
+# 意图分类单独一张表：它只依赖 query，和候选无关。
+#
+# 只缓存**成功**的回答。失败（网络抖动、返回形状不对）不进表，下次照常重试。
+_ANS_CACHE = {}
+_INTENT_CACHE = {}
+_CACHE_MAX = int(os.environ.get("TM_JEV_CACHE", "4096"))
+_CACHE_LOCK = threading.Lock()
+
+
+def _cache_put(table: dict, key, val):
+    with _CACHE_LOCK:
+        # 满了整批扔掉，理由同 aiindex._TEXT_CACHE：纯加速缓存，扔错最坏是多问一次。
+        if len(table) >= _CACHE_MAX:
+            table.clear()
+        table[key] = val
+
+
+def clear_cache():
+    """测试用，也留给排查时手动打通。生产上不需要 —— 键里带着描述，内容一改就失效。"""
+    with _CACHE_LOCK:
+        _ANS_CACHE.clear()
+        _INTENT_CACHE.clear()
+
+
 def _intent(query: str):
     """搜索词本身的类别。失败就返回 None —— 没有 bonus 而已，不影响主排序。"""
+    with _CACHE_LOCK:
+        if query in _INTENT_CACHE:
+            return _INTENT_CACHE[query]
     try:
         a = _post({"query": query}, _intent_questions(query))
-        return _answer_choice(a.get("category"))
     except Exception as e:                                # noqa: BLE001
         log.info("Jev 意图分类失败，跳过 category 加分: %s", e)
         return None
+    c = _answer_choice(a.get("category"))
+    _cache_put(_INTENT_CACHE, query, c)
+    return c
 
 
 def _judge_all(query: str, items: list) -> dict:
-    """并发判一批。返回 {原下标: answers}，判失败的下标直接不出现在结果里。"""
+    """并发判一批。返回 {原下标: answers}，判失败的下标直接不出现在结果里。
+
+    判过的直接从缓存出，一次网络都不发（见上面 _ANS_CACHE）。
+    """
     questions = _candidate_questions(query)
     out = {}
+    todo = []
+    with _CACHE_LOCK:
+        for i, d in items:
+            hit = _ANS_CACHE.get((query, d))
+            if hit is None:
+                todo.append((i, d))
+            else:
+                out[i] = hit
+    if not todo:
+        log.info("Jev 精判全部命中缓存（%s 条），本轮零调用", len(items))
+        return out
+    if len(todo) < len(items):
+        log.info("Jev 精判命中缓存 %s/%s", len(items) - len(todo), len(items))
+
+    desc_of = dict(todo)
     pool = ThreadPoolExecutor(max_workers=max(1, CONCURRENCY),
                               thread_name_prefix="jev")
     try:
         futs = {pool.submit(_post,
                             {"image_description": d, "query": query}, questions): i
-                for i, d in items}
+                for i, d in todo}
         fails = 0
         for fut in as_completed(futs, timeout=BUDGET):
             i = futs[fut]
             try:
                 out[i] = fut.result()
+                _cache_put(_ANS_CACHE, (query, desc_of[i]), out[i])
             except Exception as e:                        # noqa: BLE001
                 fails += 1
                 if fails <= 3:                            # 200 张全挂时别刷 200 行日志
@@ -410,7 +468,7 @@ def _judge_all(query: str, items: list) -> dict:
             log.warning("Jev 精判 %s/%s 失败，这些候选退回 CLIP 分", fails, len(futs))
     except TimeoutError:
         log.warning("Jev 精判超出总预算 %.1fs，已判 %s/%s，其余退回 CLIP 分",
-                    BUDGET, len(out), len(items))
+                    BUDGET, len(out), len(todo))
     except Exception as e:                                # noqa: BLE001
         log.warning("Jev 精判整体失败，全部退回 CLIP 分: %s", e)
     finally:
