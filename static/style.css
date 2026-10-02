@@ -2833,7 +2833,11 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
 .search-cut-reset {
   flex: none; border: 0; background: transparent; padding: 0;
   color: var(--primary); font-size: 12.5px; cursor: pointer;
+  min-width: 2.6em; text-align: right;   /* 换词时不让左边的尺子跟着跳 */
 }
+/* 已经停在推荐值上时没什么好点的，调成说明文字的色；
+   拖开了才变主色 —— 颜色本身就是「这儿可以点回去」的提示。 */
+.search-cut-reset.at-def { color: var(--muted); }
 .search-filter-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 行程图例：几号色 = 哪条行程。和格子左下角那枚圆点同一套编号和配色。 */
@@ -2883,14 +2887,15 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
 }
 
 @media (max-width: 768px) {
-  /* 其余 .topbtn 在小屏上全被收进「更多」，搜索是例外（见 index.html 的注释）。
-     选择器写到 .topbar 这一层，是为了压过上面那条 .topbtn{display:none}。 */
-  .topbar .btn.topbtn.btn-search {
-    display: inline-flex; align-items: center; justify-content: center;
-    flex-shrink: 0; width: 38px; height: 38px; padding: 0;
-    border-radius: 9px;
-  }
-  .topbar .btn.topbtn.btn-search .tbi { width: 19px; height: 19px; vertical-align: 0; }
+  /* 搜图入口在小屏上和其余 .topbtn 一样收进「更多」菜单（在那里排第一项）。
+     一块屏统共就那么宽，顶栏多一枚按钮就少一截行程名，而行程是主角；
+     菜单里那条「搜照片」已经是一眼能找到的入口，不算藏两层。
+     桌面端顶栏不挤，放大镜照旧留着。 */
+  .topbar .btn.topbtn.btn-search { display: none; }
+  /* 尺子右边那句说明（「精判融合分，推荐 0.50」）在手机上收掉：
+     横着一行本来就快放不下，而它要说的「推荐值是多少」已经由右边
+     那枚会变脸的档位按钮（最宽/宽松/推荐/严格/最严）表达了。 */
+  .search-filter-note { display: none; }
   .search-chip { max-width: 60vw; }
   /* 和相册同一个理由：手机上捏合就够了，－/＋ 只是占地方（元素留在 DOM 里，
      syncSearchToolbar 还要读写它们的 disabled） */

@@ -141,3 +141,75 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ---------------------------------------------------------------- 第 6 屏：三联图
+# 上面那套 JOBS 是"一张原图裁进一个容器"，这一屏不一样：它要把**三张真机截图
+# 并排拼成一张**（聊天 → 轨迹 → 分享卡），所以单独一个函数，不走 JOBS。
+#
+# 为什么要拼：这一屏讲的是一条链路，而不是一个界面。只放聊天截图看不出结果，
+# 只放轨迹图看不出它是"说出来的"。三张摆一排、中间两个箭头，一眼就是因果。
+#
+# 比例：
+#   · PC 1920x1080（16:9），放三张；
+#   · 手机 1000x750（**4:3，不是 1000x1000**）。手机上 .stage 的容器就是 4/3，
+#     直接出 4:3 就等于 cover 不裁不切。前面几屏出方图是因为它们复用同一套
+#     cover() 流程，这屏没这个包袱。手机上只放前两张 —— 三张挤进 1000 宽
+#     每张只剩 300 出头，截图上的字全糊了，分享卡那张挪到 .slide-cap 里讲。
+TRIPTYCH_BG = (0x0D, 0x0D, 0x11)
+TRIPTYCH_SRC = ["P5-chat.jpg", "P5-track.jpg", "P5-card.png"]
+
+
+def _rounded(im, radius, border=(255, 255, 255, 36)):
+    """给面板切圆角 + 描一圈淡边，贴上去才像"一块屏"而不是"一块色块"。"""
+    from PIL import ImageDraw
+    im = im.convert("RGBA")
+    mask = Image.new("L", im.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, im.size[0] - 1, im.size[1] - 1],
+                                           radius=radius, fill=255)
+    im.putalpha(mask)
+    ImageDraw.Draw(im).rounded_rectangle([0, 0, im.size[0] - 1, im.size[1] - 1],
+                                         radius=radius, outline=border, width=2)
+    return im
+
+
+def _arrow(draw, cx, cy, size, color=(255, 138, 0, 170)):
+    """两段线 + 一个三角，不依赖字体 —— 服务器上没有中文字体也能跑。"""
+    draw.line([(cx - size, cy), (cx + size * 0.35, cy)], fill=color, width=max(3, size // 7))
+    draw.polygon([(cx + size, cy), (cx + size * 0.25, cy - size * 0.45),
+                  (cx + size * 0.25, cy + size * 0.45)], fill=color)
+
+
+def triptych(tag, canvas, n_panels, pad, gap, radius):
+    from PIL import ImageDraw
+    cw, ch = canvas
+    srcs = []
+    for name in TRIPTYCH_SRC[:n_panels]:
+        with Image.open(os.path.join(SRC, name)) as raw:
+            srcs.append(raw.convert("RGB"))
+    # 先按"高度占满"算，太宽就按宽度回退 —— 两个方向都兜住，换图不用重算。
+    h = ch - pad * 2
+    def total(h):
+        return sum(int(round(im.width * h / im.height)) for im in srcs) + gap * (n_panels - 1)
+    if total(h) > cw - pad * 2:
+        h = int(h * (cw - pad * 2) / total(h))
+    widths = [int(round(im.width * h / im.height)) for im in srcs]
+    out = Image.new("RGBA", canvas, TRIPTYCH_BG + (255,))
+    x = (cw - total(h)) // 2
+    y = (ch - h) // 2
+    draw = ImageDraw.Draw(out)
+    for i, (im, w) in enumerate(zip(srcs, widths)):
+        panel = _rounded(im.resize((w, h), Image.LANCZOS), radius)
+        out.alpha_composite(panel, (x, y))
+        x += w
+        if i < n_panels - 1:
+            _arrow(draw, x + gap // 2, ch // 2, gap * 0.3)
+            x += gap
+    dst = os.path.join(OUT, f"slide-agent-{tag}.webp")
+    out.convert("RGB").save(dst, "WEBP", quality=QUALITY, method=6)
+    print(f"{dst}  {os.path.getsize(dst) // 1024} KB  {cw}x{ch}  面板高 {h}")
+
+
+def make_triptych():
+    triptych("pc", (1920, 1080), 3, pad=56, gap=84, radius=16)
+    triptych("m", (1000, 750), 2, pad=34, gap=58, radius=12)

@@ -97,9 +97,9 @@
            根本没有，会掉成豆腐块；而这几个动作（编辑/重算/分享/导入导出）
            恰恰都是"有通行画法"的，用线条图标一眼就认得。
            每个按钮都补 aria-label —— 只剩图形之后，读屏得靠它。 -->
-      <!-- 搜图入口。**手机端也留着**（见 style.css 里 .topbtn.btn-search 的覆盖）：
-           其余顶栏按钮在小屏上全收进「更多」，但搜索是高频的读操作，
-           藏两层以后基本等于没有。模型没装时 JS 会把它整个摘掉。 -->
+      <!-- 搜图入口。**只在桌面端显示**（见 style.css 里 .topbtn.btn-search 的移动端覆盖）：
+           小屏上它和其余顶栏按钮一样收进「更多」菜单（排在第一项），
+           顶栏那点宽度留给行程名。模型没装时 JS 会把它整个摘掉。 -->
       <button id="btn-search" class="btn topbtn btn-icon btn-search hidden" title="按画面内容搜照片" aria-label="搜照片">
         <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
       </button>
@@ -314,7 +314,10 @@
       <label class="search-filter-lbl" for="search-cut">相关度 ≥ <b id="search-cut-val">0.50</b></label>
       <input id="search-cut" class="search-cut" type="range" min="0" max="0.95" step="0.05" value="0.5"
              aria-label="相关度下限">
-      <button id="search-cut-reset" class="search-cut-reset" type="button" title="回到推荐阈值">推荐</button>
+      <!-- 文字不是死的：syncSearchCutReset 会按当前切线相对推荐值的偏移换词
+           （最宽/宽松/推荐/严格/最严），点击始终是「回到推荐阈值」。
+           初始就是推荐档，所以 at-def 先带上，免得第一眼闪一下颜色。 -->
+      <button id="search-cut-reset" class="search-cut-reset at-def" type="button" title="当前就是推荐阈值">推荐</button>
       <span id="search-filter-note" class="search-filter-note"></span>
     </div>
 

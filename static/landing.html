@@ -256,8 +256,32 @@ h2{font-size:clamp(28px,4.2vw,46px);line-height:1.12;font-weight:720;letter-spac
 .demo-box{margin-top:24px;border-radius:12px;border:1px solid var(--line);
   background:#0C0C10;padding:16px;overflow:hidden}
 
+/* 03/分享 右边那张卡的配图。
+   原来这里是一块 112px 的白底 + 手绘二维码 SVG —— 反馈是「太简单，
+   体现不出分享有多方便」。手绘码既不是真东西，也看不出分享出去的那张卡
+   上到底印了什么，等于让人自己脑补。换成**真实分享卡**（原图
+   assets/landing-src/P5-card.png，按页面的深色家族重排，见
+   tools/make-share-card.py）之后，标题、日期里程统计、带 21 个编号点的
+   轨迹缩略图、能长按识别的二维码，一眼全在。
+
+   **宽度卡在 310px**：.c-3 的内容宽约 506px，这张图是 0.72 的竖版，
+   按 310 算高约 430px —— 再宽就会把这张卡顶得比左边那张说明卡高出一截，
+   bento 一行里两张卡的高度就对不齐了。
+
+   阴影用 filter:drop-shadow 而不是 box-shadow：图片自己带圆角、**四角是
+   透明的**，box-shadow 是按元素矩形框画的，会在透明的角外面露出一圈直角
+   影子；drop-shadow 跟着 alpha 走，形状才对得上。 */
+.share-card{display:block;width:100%;max-width:310px;height:auto;
+  filter:drop-shadow(0 24px 46px rgba(0,0,0,.72))}
+
 /* 相册墙示意 */
 .album{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+/* 语义搜图那张卡里的「命中结果」行：复用 .album 的格子，只是排成一行 8 张。
+   **不写成内联样式**是有原因的 —— 内联会盖过下面手机断点里那条
+   `.album{grid-template-columns:repeat(4,1fr)}`，8 格挤进手机宽度每格只剩
+   40 px，照片看不出是什么。写成同权重的类规则、并且放在那条手机覆盖**之前**，
+   手机上就自动退回 4 列两行，不用再为它单独写一条媒体查询。 */
+.search-hits{grid-template-columns:repeat(8,1fr);margin-top:12px}
 /* 照片墙**不做渐现**：它一直在，不参与收尾动画（用户 2026-09-17 明确）。
    大图盖满时看到的不是「墙隐藏了」，而是墙被大图挡住了 ——
    只要大图一进收尾就放开 `[data-on]` 的 opacity:1（见下方
@@ -708,7 +732,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
 }
 
 /* ---------- 首屏轮播 ---------- */
-/* 5 屏横着排成一条轨道，靠 translate3d 整条平移 —— 也就是"上一张往左移出
+/* 6 屏横着排成一条轨道，靠 translate3d 整条平移 —— 也就是"上一张往左移出
    屏幕、下一张从右边移进来"的跟手效果。
 
    这里是**第三次**改这套轮播，前两次的教训都写在这儿，别再走回头路：
@@ -1282,9 +1306,9 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
     <!-- 去掉「不做广告推荐」之后，宽窄两版文案一模一样，合成一条即可 -->
     <h1>把一趟旅行，<br>变成<span class="grad">能重新走一遍</span>的记忆</h1>
     <p class="sub">
-      <span class="only-pc">地图上的真实路线、每个落脚点的照片与心情、一键回放的那一天 ——
-      以及一个让 AI 直接读懂这些记忆的接口。</span>
-      <span class="only-m">真实路线、每个落脚点的照片，一键回放那一天。还有一个 AI 读得懂的记忆接口。</span>
+      <span class="only-pc">地图上的真实路线、每个落脚点的照片与心情、一句话就能找出来的那张照片 ——
+      以及一个让 AI 读得懂、也写得进的记忆接口。</span>
+      <span class="only-m">真实路线、一句话找照片、一键回放那一天。还有一个 AI 读得懂、也写得进的接口。</span>
     </p>
     <div class="cta-row">
       <button class="btn btn-primary btn-lg" data-demo>一键体验，无需注册</button>
@@ -1301,9 +1325,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         style="color:var(--fg-2);text-decoration:underline;text-underline-offset:3px">登录</a></span>
     </p>
 
-    <!-- 产品示意：5 屏轮播，每屏讲一件事。
+    <!-- 产品示意：6 屏轮播，每屏讲一件事。
          第 1 / 5 屏是**手绘 SVG 示意**（抽象概念用插画讲更清楚，也更轻）；
-         第 2 / 3 / 4 屏是**演示账号真机截图**（改自 P2/P3/P4，见 tools/make-slides.py）。
+         第 2 / 3 / 4 屏是**演示账号真机截图**（改自 P2/P3/P4，见 tools/make-slides.py）；
+         第 6 屏是三张真机截图拼成的一条链路（P5-*，同一个脚本的 make_triptych()）。
 
          **每屏都出 PC / 手机两个版本**：容器在桌面上是 16/9、手机上被压成 4/3，
          同一张 16:9 的图 cover 进 4:3 会左右各切掉一大块（图上的人、二维码、
@@ -1509,6 +1534,26 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
             <small>通过智能体，询问旅程细节，添加照片等</small></p>
         </div>
 
+        <!-- 第六屏：智能体建轨迹 —— 三张真机截图拼成的一条链路
+             （聊天 → 轨迹 → 分享卡，由 tools/make-slides.py 的 make_triptych() 生成）。
+             上一屏讲的是"问"，这一屏讲的是"做"：同一个接口，一边能查，一边能建。
+             **用真机截图而不是插画**：上一屏已经有一屏自绘的 MCP 示意了，
+             连着两屏插画说服力反而下降 —— 这屏要的就是"这真的跑通了"。
+             手机版只拼前两张（见 make-slides.py 里的注释），第三张在文案里交代。 -->
+        <div class="stage carousel-slide" data-slide="5" data-promo-open tabindex="0"
+             role="button" aria-label="把行程文字发给智能体，自动生成轨迹并出分享卡，点开看演示">
+          <div class="stage-shot">
+            <img class="shot-img only-pc" loading="lazy" width="1920" height="1080"
+                 src="/static/promo/slide-agent-pc.webp"
+                 alt="把一份川西自驾行程发给智能体，它通过 MCP 生成 21 个点的轨迹，并输出带二维码的分享卡">
+            <img class="shot-img only-m" loading="lazy" width="1000" height="750"
+                 src="/static/promo/slide-agent-m.webp"
+                 alt="把行程文字发给智能体，自动生成地图轨迹">
+          </div>
+          <p class="slide-cap">把行程发给 AI，轨迹自己长出来
+            <small>一段行程文字 → 21 个点、4,863 km 的轨迹 → 带二维码的分享卡</small></p>
+        </div>
+
         </div><!-- /carousel-track -->
        </div><!-- /carousel-clip -->
 
@@ -1561,10 +1606,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
          压在 6 个字以内：中文单字按字号等宽算，6 字 ×36px=216px 是安全线，
          下面的数字就是这么定的，改标题前先量一量。 -->
     <div class="marquee-row reveal">
-      <div><b>路线自动还原</b><span>点几个落脚点，真正开过的那条路自己长出来</span></div>
-      <div><b>照片交给它</b><span>上传后自动归入相册，无需手动整理</span></div>
-      <div><b>想找就能找</b><span>一句话问出来，问细节、加照片都行</span></div>
+      <div><b>路线自动还原</b><span>点几个落脚点，真正开过的那条路自动补齐</span></div>
+      <div><b>一句话找照片</b><span>把画面说出来，不用记哪天、哪一趟</span></div>
       <div><b>免注册分享</b><span>发条链接过去，不用注册、不用装 App</span></div>
+      <div><b>一句话建行程</b><span>行程文字丢给 AI，整条轨迹自己长出来</span></div>
     </div>
   </div>
 </section>
@@ -1640,6 +1685,11 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         <h3>路线回放</h3>
         <p>沿着真实路线把整趟行程放一遍，速度可调。它能把那一天带回来，一堆静止的照片做不到。</p>
       </div>
+      <div class="card c-2 reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 17l4-9 5 5 4-8 5 12z"/></svg></div>
+        <h3>足迹热力图</h3>
+        <p>所有行程叠在一起：这些年你到过的地方，一张图看完。</p>
+      </div>
       <div class="card c-6 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg></div>
         <h3>相册墙</h3>
@@ -1670,12 +1720,50 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
         </div>
       </div>
       </div>
+
+      <!-- 语义搜图。**位置是想过的**：它接在相册墙后面，因为这一节开头那句
+           「照片堆在相册里翻不动」正是它要解的题 —— 上一张卡把照片铺成一面墙，
+           这张卡回答「墙太大了怎么办」。放到 01/记录 里不对（它不是录入环节），
+           单开一节也不对（回看照片本来就是这一节的事）。
+
+           **这里原本多出一个 `</div>`**（在 .demo-box、.card 之后还有一个），
+           它把 .bento 提前关掉了，后面两张卡因此掉到网格外面、各占一整行。
+           顺手删掉 —— 不删的话新加的这张也会掉出去。 -->
+      <div class="card c-6 reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg></div>
+        <h3>一句话把照片找出来</h3>
+        <p>搜「海边日落」「雪山草原」「沙漠公路」—— 不用记是哪天拍的，也不用记在哪一趟，
+           把画面说出来就行。所有行程一起搜，结果直接铺成一面墙。</p>
+        <div class="demo-box">
+          <!-- 搜索条做成真实界面的样子：左边是词，右边是这次搜的范围和命中数。
+               范围那半句是刻意留的 —— 「跨 4 趟行程」一眼说明这不是在单个
+               相册里筛，是把这些年的照片一起翻。 -->
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+               border-radius:10px;background:rgba(255,255,255,.05);
+               border:1px solid var(--line);font-size:14.5px">
+            <svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;flex:0 0 auto;
+                 fill:none;stroke:var(--brand-1);stroke-width:2;stroke-linecap:round">
+              <circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+            <span style="flex:1;min-width:0">海边日落</span>
+            <span style="font-size:12.5px;color:var(--fg-2);white-space:nowrap">跨 4 趟行程 · 命中 23 张</span>
+          </div>
+          <!-- 结果示意：复用相册墙那套格子（底图由 .album i:nth-child 分配），
+               只取前 8 格排成一行。不加 id，所以照片墙那段 JS 不会碰它（它只认
+               #wall-album）；data-bg 直接写死是因为这一行没有懒加载那层，
+               而这 8 张恰好就是下面照片墙用的同一批文件，不产生额外请求。 -->
+          <div class="album search-hits">
+            <i data-bg></i><i data-bg></i><i data-bg></i><i data-bg></i>
+            <i data-bg></i><i data-bg></i><i data-bg></i><i data-bg></i>
+          </div>
+        </div>
+        <p style="margin-top:18px">
+          <strong style="color:#fff;font-weight:620">搜「海边日落」，不会塞一堆湖边黄昏给你。</strong>
+          翻照片最累的从来不是搜不到，是搜出来上百张、还得自己一张张挑。
+          这里搜完已经替你挑过一遍 —— 像日落但不在海边的，不会混进来。
+          出来的就是能直接发出去的那几张。照片始终在自己的服务器里，不往外传。
+        </p>
       </div>
-      <div class="card c-2 reveal">
-        <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 17l4-9 5 5 4-8 5 12z"/></svg></div>
-        <h3>足迹热力图</h3>
-        <p>所有行程叠在一起：这些年你到过的地方，一张图看完。</p>
-      </div>
+
       <div class="card c-2 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M8 9h8M8 13h5"/></svg></div>
         <h3>照片按地点聚合</h3>
@@ -1686,7 +1774,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
            「回看」这一节从「在站内重新走一遍」一路交代到「拿走之后照样能看」，
            读下来是一条完整的线；页尾也不必再为半句话留一整条带。
            图标换成「下载」那一支（原来的折线图是热力图的，两张卡撞了）。 -->
-      <div class="card c-2 reveal">
+      <div class="card c-4 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v13m0 0l-4.5-4.5M12 16l4.5-4.5M4 20h16"/></svg></div>
         <h3>整趟带走，单张也能存回手机</h3>
         <p>一趟行程导出成一个文件，照片和文字都在里面；只想要某几张，就按原图下载、视频可选清晰度，文件名自动按「日期 + 地点 + 序号」拼好。</p>
@@ -1718,31 +1806,36 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
           链接<strong style="color:#fff;font-weight:620">随时可以收回</strong>，
           也能设过期时间与访问密码。
         </p>
+        <!-- 这段补的是「打开之后能干什么」。原来分享这一节只说到「打开就能看」，
+             收到链接的人并不知道自己拿到的是一张截图还是一张活地图 ——
+             而这恰恰是这个产品和「发九宫格」最大的差别，不该留给人猜。 -->
+        <p style="font-size:16px;margin-top:14px;color:var(--fg-2)">
+          打开是一张<strong style="color:#fff;font-weight:620">活的地图，不是截图</strong>：
+          点任意一个点看当天的照片和笔记，每个点标着海拔、每一段标着里程，
+          也可以按 1x / 2x / 4x 让整条路线自己放一遍。
+        </p>
       </div>
       <div class="card c-3 reveal" style="display:flex;flex-direction:column;justify-content:center;
            align-items:center;text-align:center;gap:16px;
            background:radial-gradient(ellipse 70% 90% at 50% 0%,rgba(255,138,0,.14),transparent 65%),
                       linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.015))">
-        <div style="width:112px;height:112px;border-radius:16px;background:#fff;display:grid;
-             place-items:center;box-shadow:0 18px 50px -14px rgba(0,0,0,.8)">
-          <svg viewBox="0 0 29 29" style="width:82px;height:82px" aria-hidden="true">
-            <rect width="29" height="29" fill="#fff"/>
-            <g fill="#0A0A0C">
-              <path d="M1 1h7v7H1zM3 3h3v3H3zM21 1h7v7h-7zM23 3h3v3h-3zM1 21h7v7H1zM3 23h3v3H3z"/>
-              <path d="M10 1h2v2h-2zM13 1h2v4h-2zM16 2h2v2h-2zM10 4h4v2h-4zM17 5h2v3h-2z
-                       M10 7h2v2h-2zM13 6h2v3h-2zM1 10h2v2H1zM4 10h3v2H4zM8 11h2v2H8z
-                       M11 10h3v2h-3zM15 10h2v3h-2zM18 10h3v2h-3zM22 10h2v2h-2zM25 11h3v2h-3z
-                       M1 14h4v2H1zM6 13h2v3H6zM9 14h2v2H9zM12 13h2v3h-2zM15 15h3v2h-3z
-                       M19 13h2v3h-2zM22 14h3v2h-3zM26 14h2v2h-2zM10 17h2v3h-2zM13 18h3v2h-3z
-                       M17 17h2v2h-2zM20 18h2v2h-2zM23 17h2v3h-2zM26 18h2v2h-2z
-                       M10 21h3v2h-3zM14 21h2v3h-2zM17 22h3v2h-3zM21 21h2v2h-2zM24 21h4v2h-4z
-                       M10 25h2v3h-2zM13 25h4v2h-4zM18 25h3v3h-3zM22 26h2v2h-2zM25 25h3v3h-3z"/>
-            </g>
-          </svg>
-        </div>
+        <!-- 这张图就是 App 真实生成的那张竖版分享卡（按页面深色家族重排，
+             生成脚本 tools/make-share-card.py）。换掉原来那块手绘二维码，
+             是为了让人**不用脑补**就看见分享出去的到底是什么：
+             行程标题、日期里程统计、21 个编号点连成的轨迹缩略图、二维码，
+             一张图全交代完 —— 这正是「分享有多方便」最直接的证据。 -->
+        <img class="share-card" loading="lazy" width="720" height="1000"
+             src="/static/promo/share-card.webp"
+             alt="旅行记忆的竖版分享卡：顶上是行程标题「2026-川西自驾10天 · 成都进出」和「21 个点 · 4,863.5 km · 12 天 19 城」，中间一张标出 21 个编号轨迹点的路线缩略图，底下是长按就能打开行程的二维码">
         <div>
           <div style="font-weight:640;letter-spacing:-.02em">竖版分享卡 + 二维码</div>
-          <p style="font-size:14px;color:var(--fg-2);margin-top:6px">手机上一键存进相册，发朋友圈直接用</p>
+          <!-- 卡片上印了什么，上面那张图已经自己说完了（标题、日期、里程天数城市、
+               轨迹缩略图、二维码），这里就不再用文字复述一遍 —— 改成交代
+               **拿到这张卡之后能干什么**：存相册、发群里，对方扫一下进的是活地图
+               而不是一张截图。这才是它和「随手截个图」的区别。 -->
+          <p style="font-size:14px;color:var(--fg-2);margin-top:6px">
+            存进相册、发到群里都行；对方长按识别二维码，
+            就进到上面那张可点、可放、带海拔和里程的活地图</p>
         </div>
       </div>
     </div>
@@ -1754,13 +1847,56 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;margin-top:110px}
   <div class="wrap">
     <div class="sec-head center reveal">
       <p class="kicker">04 / 开放接口</p>
-      <h2>让你的 AI 助手，<br>替你翻这些记忆</h2>
+      <!-- 原来这里写的是「替你翻这些记忆」—— 只说了「读」。但接口本来就是双向的：
+           40 个工具里建行程、加点、改状态、发分享链接全都有，智能体不止会查，
+           还能**替你把一趟行程从零建出来**。这是整页最容易被低估的一块，
+           所以标题改成「翻得动，也建得出」，下面第一张卡专门讲「建」。 -->
+      <h2>让你的 AI 助手，<br>既翻得动，也建得出</h2>
       <p style="margin-left:auto;margin-right:auto">
-        接上 OpenClaw龙虾、WorkBuddy 或任何支持 <strong style="color:#fff;font-weight:620">MCP</strong> 的智能体，直接问就行。
+        接上 Hermes、OpenClaw龙虾、WorkBuddy 或任何支持 <strong style="color:#fff;font-weight:620">MCP</strong> 的智能体，
+        40 个工具一次挂上 —— 查、建、改、分享，都能交给它。
       </p>
     </div>
 
     <div class="bento">
+      <!-- 「把行程文字变成轨迹」这张放整行、排在问答前面：对第一次看到的人来说，
+           「我把攻略贴过去，它把路线画出来」比「我可以问它问题」更有画面感，
+           也更能说明这接口不是只读的。 -->
+      <div class="card c-6 reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h7M4 11h9M4 16h5"/><path d="M15 17.5l3.5 3 2.5-9"/><circle cx="18.5" cy="20.5" r="1.6"/></svg></div>
+        <h3>攻略复制过去，路线自己就画好了</h3>
+        <p>出发前群里商量出来的，无非是那么一段话：第几天从哪到哪、住哪儿、开多少公里。
+           整段复制、发给 AI，然后就可以去忙别的了。回头打开旅行记忆，
+           路线已经在地图上 —— 每天去哪、怎么走、全程多少公里，一条不落。
+           那种对着地图一个一个点地名的活，不用再干了。</p>
+        <div class="demo-box">
+          <div class="chat">
+            <div class="msg me">帮我把这份行程放到旅行记忆里 ——<br>
+              「川西自驾 10 天 · 成都进出（9/19–9/30）」成都 → 四姑娘山 → 丹巴 → 新都桥 →
+              甘孜 → 色达 → 观音桥 → 桃坪羌寨 → 成都……</div>
+            <!-- 这一行是「智能体」和「聊天机器人」的分界：它没在描述怎么做，它是真去做了。
+                 原来这儿写的是 create_trip() → geocode() ×21 的调用链 —— 准确，但那是
+                 讲给开发者听的。换成用户看得懂的四步 + 「21 个地名」这个数字：
+                 要的效果是「这件体力活确实被代劳了」，不是「它调了哪几个函数」。 -->
+            <div class="codeline" style="margin-top:4px">
+              <span class="k">处理中</span> 认出 21 个地名 → 挨个定位 → 按天连成线路 → 生成分享链接
+              &nbsp;·&nbsp; <span class="k">✓</span> 你一次地图都不用点
+            </div>
+            <div class="msg ai" style="margin-top:4px">
+              <b>2026-川西自驾10天 · 成都进出</b>
+              建好了：21 个轨迹点、总里程 4,863.5 km、12 天 19 城，已按天排好，
+              每个点都带海拔。只读链接和竖版二维码卡片也生成了，发给同行的人即可。
+            </div>
+          </div>
+        </div>
+        <p style="margin-top:18px">
+          <strong style="color:#fff;font-weight:620">行程、分享、分享图，一句话串到底。</strong>
+          让它把行程「分享出去」，拿到的就是上面 03 里那张竖版卡 ——
+          同行的人长按二维码进来，看到的是可点、可放、带海拔和里程的那张活地图，
+          不用注册、不用装 App。
+        </p>
+      </div>
+
       <div class="card c-3 reveal">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></svg></div>
         <h3>自然问答，操作旅程</h3>

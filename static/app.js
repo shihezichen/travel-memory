@@ -4598,7 +4598,8 @@ function chooseShareOptions(hasExisting) {
             </button>`).join('')}
         </div>
         <div class="share-opt-title">访问密码（可选）</div>
-        <input type="password" class="share-pwd-input" id="share-pwd" placeholder="留空 = 无需密码" autocomplete="off">
+        <input type="text" class="share-pwd-input" id="share-pwd" placeholder="留空 = 无需密码"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" value="">
         <div class="share-opt-note">留空则任何拿到链接的人都能直接查看；设置后需输入密码才能访问。</div>
         <div class="modal-actions">
           <button type="button" class="btn" data-cancel>取消</button>
@@ -4619,6 +4620,15 @@ function chooseShareOptions(hasExisting) {
     });
 
     const input = ov.querySelector('#share-pwd');
+    /* 故意用 type=text 而不是 type=password，两个理由：
+       1) 这串密码本来就要跟链接一起发给别人，自己都看不见只会输错，
+          遮成星号防的是「身边有人偷看」，而这个场景根本不存在；
+       2) password 框会被浏览器/密码管理器自动灌上登录密码，结果是用户什么
+          都没填，分享链接却带上了一个连自己都不知道的口令。
+       分享默认**无密码**，所以还得硬清一次：autocomplete=off 不是所有浏览器
+       都认，挂上 DOM 后的那一帧才是自动填充已经发生完的时刻。 */
+    input.value = '';
+    requestAnimationFrame(() => { if (input.value) input.value = ''; });
     const done = (val) => { ov.remove(); resolve(val); };
     const submit = () => done({ days, password: input.value.trim() });
     ov.querySelector('[data-ok]').onclick = submit;
@@ -7306,6 +7316,38 @@ function applySearchCut() {
   searchHidden = searchAll.length - searchResults.length;
 }
 
+/* 尺子右边那枚按钮的脸。它的**功能**始终是「点一下回到推荐阈值」，
+   但永远写死「推荐」会骗人：拖到最左最右它还是那两个字，看上去像是在说
+   「当前就是推荐档」。所以改成报**当前档位**：往左越松、往右越严。
+   偏移按 min~def 和 def~max 两段各自归一，这样两档分数（精判融合分 /
+   CLIP 余弦）量纲差很远也能共用同一套说法。手机上旁边那句文字说明是隐的
+   （见 style.css 的 .search-filter-note），这枚标签就是唯一的档位指示。 */
+function searchCutLabel(cut) {
+  const c = searchCutCfg();
+  const v = Number(cut);
+  if (!Number.isFinite(v) || Math.abs(v - c.def) < c.step / 2) return '推荐';
+  const r = v < c.def
+    ? (v - c.def) / Math.max(c.def - c.min, 1e-6)
+    : (v - c.def) / Math.max(c.max - c.def, 1e-6);
+  if (r <= -0.6) return '最宽';
+  if (r < 0)     return '宽松';
+  if (r >= 0.6)  return '最严';
+  return '严格';
+}
+
+function syncSearchCutReset(cut) {
+  const btn = $('#search-cut-reset');
+  if (!btn) return;
+  const c = searchCutCfg();
+  const lbl = searchCutLabel(cut);
+  const atDef = lbl === '推荐';
+  btn.textContent = lbl;
+  btn.classList.toggle('at-def', atDef);
+  btn.title = atDef ? '当前就是推荐阈值'
+                    : '当前档位：' + lbl + '，点一下回到推荐 ' + c.def.toFixed(c.digits);
+  btn.setAttribute('aria-label', btn.title);
+}
+
 function syncSearchFilter() {
   const box = $('#search-filter');
   if (!searchAll.length) { box.classList.add('hidden'); return; }
@@ -7315,6 +7357,7 @@ function syncSearchFilter() {
   sl.min = c.min; sl.max = c.max; sl.step = c.step;
   sl.value = searchCut();
   $('#search-cut-val').textContent = searchCut().toFixed(c.digits);
+  syncSearchCutReset(searchCut());
   $('#search-filter-note').textContent = searchReranked
     ? '精判融合分，推荐 ' + c.def.toFixed(c.digits)
     : 'CLIP 原始相似度，整体只在 0.25~0.45 之间，推荐 ' + c.def.toFixed(c.digits);
@@ -7325,6 +7368,7 @@ function syncSearchFilter() {
 function onSearchCutInput(v) {
   setSearchCut(v);
   $('#search-cut-val').textContent = Number(v).toFixed(searchCutCfg().digits);
+  syncSearchCutReset(v);
   applySearchCut();
   renderSearchGrid();
   searchPrefetch();
