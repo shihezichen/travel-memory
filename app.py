@@ -68,7 +68,7 @@ from routers.agent_api import router as agent_api_router
 from routers.console import router as console_router
 from routers.share import router as share_router
 
-from config import BASE, AMAP_KEY, AMAP_SECURITY, OSRM_URL, OSRM_TIMEOUT, MEDIA_BASE_URL, media_url  # noqa: F401
+from config import BASE, AMAP_KEY, AMAP_SECURITY, OSRM_URL, OSRM_TIMEOUT, MEDIA_BASE_URL, media_url, media_srcset  # noqa: F401
 UPLOAD_DIR = BASE / "uploads"
 # 全新克隆没有 uploads/（它在 .gitignore 里），而下面 app.mount 的 StaticFiles
 # 在目录不存在时会直接抛异常 —— 服务连启动都启动不了。这里先建好。
@@ -2098,6 +2098,11 @@ def api_search_photos(request: Request, q: str = "", limit: int = 30,
             "url": media_url(f"/uploads/{h['filename']}"),
             "thumb_url": (media_url(f"/uploads/thumbs/{m['thumb_filename']}")
                           if m.get("thumb_filename") else None),
+            # 墙上那一格的几档尺寸（OSS 服务端缩好的 webp）。前端拼成 srcset，
+            # 由浏览器按格子实际宽度挑 —— 手机上一格 95px，取 240 那档就够，
+            # 不必把 512 长边、40~60KB 的缩略图整张拖下来再缩着画。
+            # OSS 没配时是空列表，前端自动退回 thumb_url，行为不变。
+            "srcset": media_srcset(h["filename"], m.get("thumb_filename")),
         })
     return {"enabled": True, "results": out, "count": len(out), "q": q,
             "trips": tids,

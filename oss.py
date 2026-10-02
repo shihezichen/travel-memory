@@ -140,16 +140,23 @@ def _signature(sk: str, method: str, date_or_expires: str, content_type: str,
 
 
 def sign_url(method: str, key: str, params: dict = None, content_type: str = "",
-             expires_in: int = URL_TTL) -> str:
+             expires_in: int = URL_TTL, expires_at: int = None) -> str:
     """签一个给**浏览器**直接用的临时 URL。
 
     浏览器发请求时必须原样带上这里签进去的 Content-Type，否则签名对不上（403）。
+
+    expires_at 给定时用它当绝对过期时刻，不再按 `now + expires_in` 算。
+    这是给**图片**用的：Expires 进签名，now 每次都不一样 → 同一张图每次刷新
+    拿到的 URL 都不同 → 浏览器缓存键跟着变 → 明明 Cache-Control 写了一天，
+    实际一次都没命中过。调用方（config.media_url）把过期时刻对齐到固定格点，
+    同一个窗口内签出来的 URL 一字不差，缓存这才有意义。
     """
     c = conf()
     if not c.ok:
         raise OSSError("OSS 未配置")
     import time
-    expires = str(int(time.time()) + int(expires_in))
+    expires = str(int(expires_at) if expires_at is not None
+                  else int(time.time()) + int(expires_in))
     sig = _signature(c.sk, method.upper(), expires, content_type, "",
                      _canonical_resource(c.bucket, key, params))
     qs = dict(params or {})

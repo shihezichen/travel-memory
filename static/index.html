@@ -305,6 +305,23 @@
 
     <div id="search-status" class="search-status"></div>
 
+    <!-- 相关度切线。两档默认值不同，因为**两种分数不是一个量纲**（见 app.js 的
+         SEARCH_CUT）：精判过的是 0~1 的融合分，没精判的是 CLIP 余弦，整批挤在
+         0.2~0.4。滑杆的 min/max/step 也跟着换，不然在 CLIP 那档拖一格就全没了。
+         拖动只是在**已有结果**上重新切，不重新发请求 —— 后端那趟已经把该捞的
+         都捞回来了，为了调一下线再等一次精判没道理。 -->
+    <div id="search-filter" class="search-filter hidden">
+      <label class="search-filter-lbl" for="search-cut">相关度 ≥ <b id="search-cut-val">0.50</b></label>
+      <input id="search-cut" class="search-cut" type="range" min="0" max="0.95" step="0.05" value="0.5"
+             aria-label="相关度下限">
+      <button id="search-cut-reset" class="search-cut-reset" type="button" title="回到推荐阈值">推荐</button>
+      <span id="search-filter-note" class="search-filter-note"></span>
+    </div>
+
+    <!-- 跨行程搜出来的东西混在一面墙上，图例把「几号色 = 哪条行程」说清楚。
+         只搜一条行程时整条不出现 —— 没有要区分的东西，留着只占地方。 -->
+    <div id="search-legend" class="search-legend hidden"></div>
+
     <!-- 结果墙 = 相册页那面墙的同一套东西：同一个 .photo-toolbar、同一个
          .photo-grid/.photo-cell、同一套自动播放和缩放手势（见 app.js 的
          renderSearchGrid / setSearchZoom，以及 common.js 的 PW_TARGETS.search）。

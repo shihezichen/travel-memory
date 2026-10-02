@@ -6783,22 +6783,53 @@ function closeTopLayer() {
 let searchAvailable = false;   // 模型装没装，/api/search/status 说了算
 let searchStats = null;        // 索引进度，用来在状态行里说明「还没索引完」
 let searchScope = new Set();   // 勾中的行程 id
-let searchResults = [];        // 最近一次结果（已规整成媒体对象，灯箱直接用）
+let searchAll = [];            // 后端这一次给回来的全部结果，**没切过线**
+let searchResults = [];        // 过完分数线、墙上真正在显示的那些（灯箱按它翻页）
+let searchReranked = false;    // 这批分数是精判融合分，还是 CLIP 原始相似度
 let searchReqSeq = 0;          // 防竞态：旧请求回来得晚就丢掉
 let searchHidden = 0;          // 上一次被分数线挡掉的张数，状态行里要说一声
+let searchJudged = 0;          // 这一批里精判真正判过几张（状态行用）
+let searchTripMark = new Map();// trip_id -> {idx, color, name}，格子左下角那枚点
 const SEARCH_LIMIT = 60;       // 一次要多少张。照片墙一屏 3~6 列，60 张够翻几屏
 
-/* 结果墙只留这个分数以上的（用户 2026-10-02 要求）。
+/* 相关度切线。**精判与否各一条**，因为两种分数根本不是一个量纲 ——
+   拿同一个数去切，必然有一边是错的。
 
-   ⚠ 这条线**只对精判过的那一版分数成立**。两种分数根本不是一个量纲：
-     - reranked=true：score 是 clip_norm / relevance / is_match / category
-       四项加权融合出来的 0~1 分，实测「雪山」是 0.93 / 0.80 / 0.60 / …，
-       0.5 正好切在「确实是雪山」和「沾点边」之间，是条好线；
-     - reranked=false（精判没跑成，退回 CLIP 原始顺序）：score 是余弦相似度，
-       整批都挤在 0.30~0.40，**最高的那张也到不了 0.5**。这时候照样切 0.5，
-       每一次搜索都会得到一面空墙 —— 看着像搜索坏了，其实是量纲对不上。
-   所以没精判的那次不切线，改在状态行里写明「本次未精判」。 */
-const SEARCH_MIN_SCORE = 0.5;
+   ① reranked=true：score 是 clip_norm / relevance / is_match / category
+      四项加权融合出来的 0~1 分，天然**双峰**。55 张真实照片上实测：
+          「雪山」13 张落在 0.68~0.93，同批最低的那张 0.374
+          「草原」 6 张落在 0.505~0.849
+          「樱花」      0.968，同批次低 0.295
+      真命中和落选之间隔着 0.37~0.50 这一段空档，0.5 正落在空档中间。
+      再紧一档（0.55）就会切掉「草原」那张 0.505 的真命中 —— 所以是 0.50 不是 0.55。
+
+   ② reranked=false：score 是 Chinese-CLIP 的余弦相似度，**整库挤在 0.24~0.45**，
+      最高的那张也够不到 0.5 —— 以前这一档干脆不切线，于是精判一没跑成，
+      墙上就是 60 张「全都沾点边」。
+
+      0.36 这个数是在 55 张真实照片（关西赏樱 17 / 独库公路 11 / 滇藏线 27）
+      上扫出来的。拿 10 个库里真有的 query 和 8 个库里根本没有的 query 对照，
+      平均保留张数：
+          cut   命中类   无命中类   比值
+          0.30   54.1     39.0     1.4×   （等于没筛）
+          0.34   41.1     11.8     3.5×
+          0.36   25.3      3.4     7.4×   ← 取这个
+          0.40    4.7      0.0      ∞     （「樱花」只剩 1 张，切过头了）
+      0.36 上「雪山」留 25 张（滇藏线本来就 27 张雪山）、「北极熊」留 0 张、
+      「书架上的书」留 1 张 —— 该多的多、该空的空，这正是一条阈值该有的样子。
+
+   两档的 min/max/step 也分开：CLIP 那档全程只有 0.2 的跨度，沿用 0.05 的步进
+   拖一格就从「全留」跳到「全没」。切线由用户在滑杆上随时改，改完**只重新切
+   已有结果**，不再发一次请求 —— 后端那趟该捞的都捞回来了。 */
+const SEARCH_CUT = {
+  reranked: { key: 'tm_search_cut_rr',   def: 0.50, min: 0,    max: 0.95, step: 0.05, digits: 2 },
+  clip:     { key: 'tm_search_cut_clip', def: 0.36, min: 0.25, max: 0.45, step: 0.01, digits: 2 },
+};
+
+/* 一格里图片可以取的几档宽度，由后端连 OSS 签名一起算好（见 config.media_srcset）。
+   这里只负责拼成 srcset + sizes，让浏览器按格子**实际**宽度自己挑档。
+   后端没给（OSS 没配、本地开发）就退回 thumb_url，行为和以前一字不差。 */
+const SEARCH_EAGER_ROWS = 3;   // 首屏这几行不走 lazy，直接高优先级拉
 
 function searchOpen() {
   const ov = $('#search-overlay');
@@ -6826,13 +6857,18 @@ function openPhotoSearch() {
   // 人多半已经切到别的行程了，却还在用上一次的范围搜，搜不到又找不出原因。
   searchScope = new Set(currentTripId
     ? [Number(currentTripId)] : allTrips.map(t => Number(t.id)));
+  searchAll = [];
   searchResults = [];
   searchHidden = 0;
+  searchReranked = false;
+  searchTripMark = new Map();
   $('#search-input').value = '';
   $('#search-grid').innerHTML = '';
   wallForgetDetached();
   syncSearchToolbar();
   renderSearchTrips();
+  renderSearchLegend();
+  syncSearchFilter();
   setSearchStatus('');
   $('#search-overlay').classList.remove('hidden');
   $('#search-overlay').setAttribute('aria-hidden', 'false');
@@ -6921,82 +6957,177 @@ async function runPhotoSearch() {
 
   // 规整成媒体对象：灯箱、下载按钮、说明栏都认 id/type/taken_at 这几个键，
   // 而搜索接口给的是 media_id/exif_time，不转一道灯箱里就是一片空白。
-  let all = (body.results || []).map(r => Object.assign({}, r, {
+  searchAll = (body.results || []).map(r => Object.assign({}, r, {
     id: r.media_id,
     type: 'photo',                         // 索引的只有照片，视频抽帧是二期的事
     taken_at: r.exif_time,
   }));
-  // 分数线。只在精判过的那一版分数上切 —— 为什么，见 SEARCH_MIN_SCORE 的注释。
-  if (body.reranked) {
-    const keep = all.filter(m => typeof m.score === 'number' && m.score >= SEARCH_MIN_SCORE);
-    searchHidden = all.length - keep.length;
-    all = keep;
-  } else {
-    searchHidden = 0;
-  }
-  searchResults = all;
+  searchReranked = !!body.reranked;
+  searchJudged = body.judged || 0;
+  // 轨迹编号/配色按**全量**结果定，不按切完线的 —— 否则拖一下滑杆，
+  // 某条行程的照片一旦全被切掉，剩下那些的颜色就会整体往前挪一位。
+  buildSearchTripMarks(searchAll);
+  applySearchCut();                        // 按当前这一档的切线过一遍
+  renderSearchLegend();
+  syncSearchFilter();
   renderSearchGrid();
+  searchPrefetch();                        // 首屏之外的那些趁空闲先拉进缓存
+  setSearchStatus(esc(searchStatusBits().join(' · ')));
+}
 
+/* 状态行的那几段。单独拎出来是因为拖滑杆时要原地重写一次（张数变了），
+   而那时候 body 早就不在手上了。 */
+function searchStatusBits() {
+  const cfg = searchCutCfg();
   const bits = [];
   bits.push(searchResults.length + ' 张');
   bits.push(searchScope.size === allTrips.length ? '全部行程'
     : '限 ' + searchScope.size + ' 条行程');
-  if (body.reranked) {
-    bits.push('已精判 ' + body.judged + ' 张');
-    bits.push('只看 ≥ ' + SEARCH_MIN_SCORE.toFixed(1)
-      + (searchHidden ? '（低于的 ' + searchHidden + ' 张已隐藏）' : ''));
+  if (searchReranked) {
+    bits.push('已精判 ' + searchJudged + ' 张（0~1 融合分）');
   } else {
-    // 没精判就没切线。不写这一句的话，用户会以为「这就是 0.5 以上的全部」，
-    // 而其实这一批是 CLIP 原始分，根本没有一张够得着 0.5。
-    bits.push('本次未精判，分数为 CLIP 原始相似度，未按 0.5 过滤');
+    // 量纲必须写明。不写的话，用户会拿这个 0.36 去和精判那档的 0.5 比，
+    // 得出「这次搜得更差」的结论 —— 其实两个数根本不在一个刻度上。
+    bits.push('本次未精判，分数为 CLIP 原始相似度');
   }
+  bits.push('只看 ≥ ' + searchCut().toFixed(cfg.digits)
+    + (searchHidden ? '（低于的 ' + searchHidden + ' 张已隐藏）' : ''));
   // 回填还没跑完时必须说一声：此刻搜不到不代表那张照片不在，可能只是还没进索引。
   if (searchStats && searchStats.indexed < searchStats.photos) {
     bits.push('索引中 ' + searchStats.indexed + '/' + searchStats.photos);
   }
-  setSearchStatus(esc(bits.join(' · ')));
+  return bits;
+}
+
+/* ---- 加载提速：srcset / 首屏优先 / 空闲预取 -----------------------------
+
+   原来一格就一句 `img.src = m.thumb_url`，三件事一起拖慢它：
+
+   ① **缩略图比格子大一个数量级。** thumbs/ 是 512 长边、40~60KB 的 JPEG，
+      而手机上一格只有 95 CSS px。60 张 = 2.6MB 下载 + 60 次 512² 解码，
+      解码还在主线程上，滚动当场掉帧 —— 用户说的「明显卡顿」就是这个。
+      现在后端按 240/480/960 三档把 OSS 服务端缩好的 webp 一并签回来
+      （见 config.media_srcset），浏览器按 sizes 自己挑。240 那档实测
+      平均 8.9KB，字节少 4.8 倍、解码面积少 4.5 倍。
+
+   ② **签名 URL 每次都变。** Expires 走的是 `now + ttl`，于是同一张图每搜
+      一次就换一个 URL，OSS 那边 Cache-Control 写着一天，实际一次都没命中过。
+      已经在 config._stable_expires 里把过期时刻对齐到 10 分钟的格点，
+      同一窗口内签出来的 URL 一字不差 —— 第二次搜索起，命中的那些直接
+      从磁盘缓存出来。
+
+   ③ **整面墙都是 lazy。** 首屏那几行也要等 IntersectionObserver 回调才开始
+      排队，于是人看到的永远是「先白一片，再一张张冒」。首屏改 eager +
+      fetchPriority=high，屏外的仍旧 lazy，再加一遍空闲预取兜底。 */
+
+function searchSizesAttr(cols) {
+  // 结果墙是整屏覆盖层，一格宽度就是 100vw/列数（gap 2px 忽略不计）。
+  // 这个值必须随缩放改，不然浏览器会按旧列数挑档（见 setSearchZoom）。
+  return 'calc(100vw / ' + cols + ')';
+}
+
+function searchApplySrc(img, m, cols) {
+  if (m.srcset && m.srcset.length) {
+    img.sizes = searchSizesAttr(cols);
+    img.srcset = m.srcset.map(v => v.url + ' ' + v.w + 'w').join(', ');
+    // src 仍要给：srcset 整条挂了（OSS 抽风）时它是回退，也是 onerror 的判据。
+    img.src = m.srcset[0].url;
+  } else {
+    img.src = m.thumb_url || m.url;
+  }
+}
+
+/* 首屏之外的那些，趁主线程空下来先拉进缓存。用的是和格子**同一套**
+   srcset+sizes，浏览器挑中的档位一致，缓存条目能直接复用 ——
+   随手预取一个 240 的话，等真滚到那儿浏览器要的是 480，白下一遍。 */
+let searchPrefetchTimer = 0;
+function searchPrefetch() {
+  clearTimeout(searchPrefetchTimer);
+  const cols = PHOTO_COLS[searchView.zoom];
+  const rest = searchResults.slice(cols * SEARCH_EAGER_ROWS);
+  if (!rest.length) return;
+  const run = () => rest.forEach(m => {
+    const im = new Image();
+    im.decoding = 'async';
+    searchApplySrc(im, m, cols);
+  });
+  if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 1500 });
+  else searchPrefetchTimer = setTimeout(run, 400);
+}
+
+/* 格子窄到放不下文字时给网格打个 .tiny，底栏只留那枚轨迹圆点。
+   判据是**量出来的格子宽**而不是列数：同样 4 列，桌面 1280 下一格 320px、
+   手机 390 下只有 95px，按列数切会在其中一边切错。 */
+function syncSearchDensity() {
+  const grid = $('#search-grid');
+  const cols = PHOTO_COLS[searchView.zoom];
+  const w = (grid.clientWidth || window.innerWidth) / cols;
+  grid.classList.toggle('tiny', w < 118);
 }
 
 /* 结果墙。和 renderPhotoGrid 是同一套做法，连那几条注意事项都一样：
    重建前先把正在播的那一拍清掉（但不停播）、把脱离文档的格子从
    cellWallByCell 里摘掉、列数走 --photo-cols、每格登记进 cellWallByCell
-   以便自动播放拿得到原图地址。结果墙多出来的只有「分数」和「行程 · 地点」
-   两枚角标。 */
+   以便自动播放拿得到原图地址。结果墙多出来的是「分数」角标和底下那条
+   「轨迹圆点 + 行程 · 地点」。 */
 function renderSearchGrid() {
   const grid = $('#search-grid');
   // 下面这句 innerHTML 会把铺满层一起删掉，正在跑的那一轮等于被抽了遮挡层。
   // 只 reset 不 stop：换一批结果不等于用户按了停止，重建完接着放（见末尾 pwRestart）。
   if (typeof pwReset === 'function' && pwOn && pwTargetKey === 'search') pwReset();
   wallForgetDetached();
-  grid.style.setProperty('--photo-cols', PHOTO_COLS[searchView.zoom]);
+  const cols = PHOTO_COLS[searchView.zoom];
+  grid.style.setProperty('--photo-cols', cols);
   grid.innerHTML = '';
+  syncSearchDensity();
   $('#search-count').textContent = searchResults.length ? searchResults.length + ' 张' : '';
   if (!searchResults.length) {
+    const cut = searchCut().toFixed(searchCutCfg().digits);
     grid.appendChild(el('div', 'empty-hint', searchHidden
-      ? ('有 ' + searchHidden + ' 张沾边但都低于 ' + SEARCH_MIN_SCORE.toFixed(1)
-         + ' 分，没有达标的。换个说法试试，或者点「全选」把范围放宽到全部行程。')
+      ? ('有 ' + searchHidden + ' 张沾边但都低于 ' + cut
+         + ' 分。把上面的「相关度 ≥」往左拖一点，或者换个说法、点「全选」放宽范围。')
       : '没搜到。换个说法试试，或者点「全选」把范围放宽到全部行程。'));
     return;
   }
+  const eagerN = cols * SEARCH_EAGER_ROWS;
+  const multiTrip = searchTripMark.size > 1;
   searchResults.forEach((m, idx) => {
     const cell = el('div', 'photo-cell');
     const img = el('img');
-    img.src = m.thumb_url || m.url;
-    img.loading = 'lazy';
+    searchApplySrc(img, m, cols);
+    // 首屏不走 lazy：那几行本来就在视野里，等 observer 回调只是白等一拍。
+    img.loading = idx < eagerN ? 'eager' : 'lazy';
+    img.fetchPriority = idx < eagerN ? 'high' : 'low';
     img.decoding = 'async';
     img.alt = m.caption || m.ai_caption || '';
-    img.onerror = () => { if (m.url && img.src !== m.url) img.src = m.url; };
+    // 缩略图/缩放档整条挂了才回退原图。要先把 srcset 摘掉，
+    // 否则浏览器仍按 srcset 挑，src 这一改根本不生效。
+    img.onerror = () => {
+      if (m.url && img.src !== m.url) { img.removeAttribute('srcset'); img.src = m.url; }
+    };
     cell.appendChild(img);
     // 分数常驻。搜出来的像不像，人自己看得出；分数真正的用处是**排查** ——
-    // 一眼分得出「0.21 勉强沾边」和「0.42 确实对上了」。
+    // 一眼分得出「0.31 勉强沾边」和「0.42 确实对上了」。
     if (typeof m.score === 'number') {
       cell.appendChild(el('span', 'search-cell-score', m.score.toFixed(2)));
     }
-    // 跨行程搜出来的东西混在一面墙上，不写清来历就只能靠猜。行程名放前面：
-    // 「这是哪次旅行」比「这是哪个点」更能帮人定位。
-    const meta = [m.trip_title, m.point_name].filter(Boolean).join(' · ');
-    if (meta) cell.appendChild(el('div', 'search-cell-meta', meta));
-    cell.title = [m.caption, meta, (m.exif_time || '').slice(0, 16)]
+    // 底栏：左边一枚轨迹圆点（跨行程时才有），右边「行程 · 地点」。
+    // 圆点是 flex 的固定子项 —— 格子再窄它也不会被文字挤掉，而文字会先省略、
+    // 再（.tiny 档）整个收掉。用户要的「文字放不下就用图标区分」就是这一层。
+    const mark = searchTripMark.get(m.trip_id);
+    const text = multiTrip ? [m.trip_title, m.point_name].filter(Boolean).join(' · ')
+                           : (m.point_name || '');
+    if ((multiTrip && mark) || text) {
+      const bar = el('div', 'search-cell-meta');
+      if (multiTrip && mark) {
+        const dot = el('i', 'search-trip-dot', String(mark.idx));
+        dot.style.setProperty('--c', mark.color);
+        bar.appendChild(dot);
+      }
+      if (text) bar.appendChild(el('span', 'search-cell-text', text));
+      cell.appendChild(bar);
+    }
+    cell.title = [m.caption, m.trip_title, m.point_name, (m.exif_time || '').slice(0, 16)]
       .filter(Boolean).join(' · ');
     // 自动播放要用它拿原图地址，存一份备查（见 common.js cellWallByCell）
     cellWallByCell.set(cell, m);
@@ -7010,6 +7141,107 @@ function renderSearchGrid() {
   // 新网格铺好了，接着放（没在播就是个空操作）
   if (typeof pwRestart === 'function' && pwTargetKey === 'search') pwRestart();
 }
+
+/* ---- 轨迹标识：一条行程一个编号 + 一种颜色 -----------------------------
+   跨行程搜出来的照片混在一面墙上，不标来历就只能靠猜。文字在大格子上够用，
+   格子一缩就全是省略号 —— 所以真正扛事的是左下角那枚**带编号的圆点**：
+   编号而不是纯色，色弱的人也分得出，截图发给别人也说得清「3 号那条」。
+   颜色与编号在一次搜索内固定（按全量结果的出现顺序定），上面的图例给出对照。 */
+const TRIP_DOT_COLORS = [
+  '#3b82f6', '#f97316', '#10b981', '#e11d48', '#a855f7',
+  '#0ea5e9', '#eab308', '#ec4899', '#84cc16', '#6366f1',
+];
+
+function buildSearchTripMarks(list) {
+  searchTripMark = new Map();
+  list.forEach(m => {
+    const t = m.trip_id;
+    if (t == null || searchTripMark.has(t)) return;
+    const i = searchTripMark.size;
+    searchTripMark.set(t, {
+      idx: i + 1,
+      color: TRIP_DOT_COLORS[i % TRIP_DOT_COLORS.length],
+      name: m.trip_title || ('行程 ' + t),
+    });
+  });
+}
+
+function renderSearchLegend() {
+  const box = $('#search-legend');
+  box.innerHTML = '';
+  // 只有一条行程就没有要区分的东西，整条收起来 —— 留着只占照片墙的地方。
+  if (searchTripMark.size < 2) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  searchTripMark.forEach(mk => {
+    const item = el('span', 'search-legend-item');
+    const dot = el('i', 'search-trip-dot', String(mk.idx));
+    dot.style.setProperty('--c', mk.color);
+    item.appendChild(dot);
+    item.appendChild(el('span', '', mk.name));
+    item.title = mk.name;
+    box.appendChild(item);
+  });
+}
+
+/* ---- 相关度切线：两档阈值 + 滑杆 --------------------------------------
+   两档的由来见顶上 SEARCH_CUT 的注释。这里只做三件事：按当前这一批是不是
+   精判过的选档、把用户调过的值记在 localStorage（两档各记各的）、
+   拖动时**只重新切已有结果**，不再发请求。 */
+function searchCutCfg() {
+  return SEARCH_CUT[searchReranked ? 'reranked' : 'clip'];
+}
+
+function searchCut() {
+  const c = searchCutCfg();
+  let v = NaN;
+  try { v = parseFloat(localStorage.getItem(c.key)); } catch (e) {}
+  if (!Number.isFinite(v)) return c.def;
+  return Math.min(c.max, Math.max(c.min, v));
+}
+
+function setSearchCut(v) {
+  try { localStorage.setItem(searchCutCfg().key, String(v)); } catch (e) {}
+}
+
+function applySearchCut() {
+  const cut = searchCut();
+  // 没有分数的（理论上不该有）一律留下：切线是用来挡低分的，
+  // 不是用来挡「分数字段缺失」这种数据问题的 —— 那样只会让人以为图丢了。
+  searchResults = searchAll.filter(m => typeof m.score !== 'number' || m.score >= cut);
+  searchHidden = searchAll.length - searchResults.length;
+}
+
+function syncSearchFilter() {
+  const box = $('#search-filter');
+  if (!searchAll.length) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const c = searchCutCfg();
+  const sl = $('#search-cut');
+  sl.min = c.min; sl.max = c.max; sl.step = c.step;
+  sl.value = searchCut();
+  $('#search-cut-val').textContent = searchCut().toFixed(c.digits);
+  $('#search-filter-note').textContent = searchReranked
+    ? '精判融合分，推荐 ' + c.def.toFixed(c.digits)
+    : 'CLIP 原始相似度，整体只在 0.25~0.45 之间，推荐 ' + c.def.toFixed(c.digits);
+}
+
+/* 拖滑杆：原地重切 + 重画。不重新请求 —— 后端那趟已经把该捞的都捞回来了，
+   为了挪一下线再等一次 CLIP + 精判（最坏 8 秒）没有道理。 */
+function onSearchCutInput(v) {
+  setSearchCut(v);
+  $('#search-cut-val').textContent = Number(v).toFixed(searchCutCfg().digits);
+  applySearchCut();
+  renderSearchGrid();
+  searchPrefetch();
+  setSearchStatus(esc(searchStatusBits().join(' · ')));
+}
+
+$('#search-cut').addEventListener('input', e => onSearchCutInput(e.target.value));
+$('#search-cut-reset').addEventListener('click', () => {
+  const c = searchCutCfg();
+  $('#search-cut').value = c.def;
+  onSearchCutInput(c.def);
+});
 
 /* ---- 结果墙的缩放：和相册页同一套档位、同一套手势 ----------------------
    档位表共用 PHOTO_COLS，但**档位本身单独存**：搜图是整屏覆盖层，相册在
@@ -7044,6 +7276,12 @@ function setSearchZoom(delta) {
   flipGrid(grid, function () {
     grid.style.setProperty('--photo-cols', PHOTO_COLS[next]);
   });
+  // 格子宽度变了，srcset 的挑档依据（sizes）跟着改，否则放大之后浏览器
+  // 仍按旧列数认为 240 那档够用，图就是糊的。已经加载好的不会被降级，
+  // 只有确实需要更大一档时才会再请求一次。
+  const sizes = searchSizesAttr(PHOTO_COLS[next]);
+  grid.querySelectorAll('img[srcset]').forEach(img => { img.sizes = sizes; });
+  syncSearchDensity();
   // 列数变了 = 起点几何当场作废。不停播，从新几何重起一拍。
   if (typeof pwRestart === 'function' && pwTargetKey === 'search') pwRestart();
 }

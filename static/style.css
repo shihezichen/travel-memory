@@ -2821,16 +2821,60 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
   padding: 0 0 calc(12px + env(safe-area-inset-bottom));
   touch-action: pan-y;   /* 同 .view：纵向滚动给浏览器，双指归我们 */
 }
+/* 相关度切线那一条 */
+.search-filter {
+  flex: none; display: flex; align-items: center; gap: 9px;
+  padding: 0 12px 8px; font-size: 12.5px; color: var(--muted);
+}
+.search-filter.hidden { display: none; }
+.search-filter-lbl { flex: none; white-space: nowrap; }
+.search-filter-lbl b { color: var(--text); font-variant-numeric: tabular-nums; }
+.search-cut { flex: 1; min-width: 80px; max-width: 260px; accent-color: var(--primary); }
+.search-cut-reset {
+  flex: none; border: 0; background: transparent; padding: 0;
+  color: var(--primary); font-size: 12.5px; cursor: pointer;
+}
+.search-filter-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 行程图例：几号色 = 哪条行程。和格子左下角那枚圆点同一套编号和配色。 */
+.search-legend {
+  flex: none; display: flex; flex-wrap: wrap; gap: 6px 12px;
+  padding: 0 12px 8px; font-size: 12px; color: var(--muted);
+}
+.search-legend.hidden { display: none; }
+.search-legend-item { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.search-legend-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+
+/* 轨迹圆点。带编号而不是只有颜色 —— 一来色弱的人分得出，二来格子缩到
+   最小档时文字全藏起来，只剩这枚点，没有编号就真的只能靠色觉硬认。 */
+.search-trip-dot {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--c, #888); color: #fff;
+  font-size: 9px; font-style: normal; font-weight: 700; line-height: 1;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .35);
+}
+
 /* 结果格比相册多一层说明：搜出来的照片横跨好几条行程，不写清楚是哪一次旅行，
-   看到一张海就只能靠猜。常驻而不是悬停才显示 —— 手机没有悬停。 */
+   看到一张海就只能靠猜。常驻而不是悬停才显示 —— 手机没有悬停。
+
+   左下角那枚圆点是**轨迹标识**，文字放不下时它是唯一还认得出来历的东西，
+   所以它和文字是同一条底栏里的两个 flex 子项：点永远不被挤掉、
+   文字自己省略号。.photo-grid.tiny（格子窄到放不下字，由 JS 量出来后打的标）
+   直接把文字收掉，只留点。 */
 .search-cell-meta {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  display: flex; align-items: center; gap: 4px;
   padding: 10px 5px 3px;
   background: linear-gradient(transparent, rgba(0, 0, 0, .62));
   color: #fff; font-size: 10.5px; line-height: 1.3;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   pointer-events: none;
 }
+.search-cell-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photo-grid.tiny .search-cell-text { display: none; }
+/* 格子一窄，分数角标和圆点就会挤在一起打架，分数让位 —— 来历比分数要紧。 */
+.photo-grid.tiny .search-cell-score { display: none; }
+.photo-grid.tiny .search-cell-meta { padding: 6px 3px 2px; }
 .search-cell-score {
   position: absolute; right: 3px; top: 3px; z-index: 4;
   padding: 1px 5px; border-radius: 999px;

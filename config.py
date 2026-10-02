@@ -113,7 +113,27 @@ def _synced_to_oss(path: str) -> bool:
         return True
 
 
-def media_url(path: str, ttl: int | None = None) -> str:
+# 签名 URL 的过期时刻对齐到这么大的格子（秒）。
+#
+# 为什么要对齐：Expires 是签名的一部分，`now + ttl` 里的 now 每次调用都不同，
+# 于是同一张图每刷新一次就换一个 URL，浏览器缓存键跟着变 —— OSS 那边
+# Cache-Control 写着 max-age=86400，实际一次都没命中过。搜图尤其吃亏：
+# 每搜一次就把整面墙重新下载一遍。
+#
+# 只往**后**取整，不往前：remaining ∈ (ttl, ttl+STEP]，保证签出来的链接
+# 至少还有一个完整 ttl 可用。static/common.js 的 tmKeepFresh 和 share.js 的
+# refreshSignatures 都是按「刚签的还有一个 ttl」来算续签时机的，
+# 要是取整把寿命砍短了，那两处会在链接已经 403 之后才去续。
+_EXPIRES_STEP = int(os.environ.get("TRAVEL_MEDIA_URL_STEP", "600"))
+
+
+def _stable_expires(ttl: int) -> int:
+    import time
+    step = max(1, _EXPIRES_STEP)
+    return ((int(time.time()) + int(ttl)) // step + 1) * step
+
+
+def media_url(path: str, ttl: int | None = None, process: str = None) -> str:
     """把站内 /uploads/ 路径转成对外 URL。
 
     只认 /uploads/ 前缀 —— /static/ 是应用自己的 JS/CSS，必须跟着代码版本走，
@@ -138,6 +158,10 @@ def media_url(path: str, ttl: int | None = None) -> str:
 
     签不出来**不当故障处理**：Bucket 还是公共读的部署（以及本地开发）走的就是
     裸链那条分支，不能因为签名不可用就让整个媒体链挂掉。
+
+    process 是 OSS 的 x-oss-process（缩放/转码），会**一起进签名**，所以不能
+    由前端自己往 URL 上拼 —— 拼了签名就对不上。照片墙要的那几档见 media_srcset。
+    裸链分支下 process 被忽略：本机分发没有服务端图片处理这回事。
     """
     if not (MEDIA_BASE_URL and path.startswith("/uploads/")):
         return path
@@ -149,7 +173,11 @@ def media_url(path: str, ttl: int | None = None) -> str:
         import oss
         if oss.conf().ok:
             key = path.lstrip("/")
-            signed = oss.sign_url("GET", key, expires_in=ttl or MEDIA_URL_TTL)
+            life = ttl or MEDIA_URL_TTL
+            signed = oss.sign_url(
+                "GET", key,
+                params={"x-oss-process": process} if process else None,
+                expires_at=_stable_expires(life))
             if signed:
                 return signed
     except Exception:                                     # noqa: BLE001
@@ -157,3 +185,55 @@ def media_url(path: str, ttl: int | None = None) -> str:
         pass
 
     return MEDIA_BASE_URL + path
+
+
+# 墙上一格要的几档宽度。浏览器拿 srcset 自己挑，挑中哪一档由 CSS 的 sizes
+# （= 格子实际宽度 × DPR）决定，所以手机上永远只会去取 240 那一档。
+#
+# 为什么要分档：缩略图是 512 长边、40~60KB 的 JPEG，而墙上一格在手机上只有
+# 95 CSS px。原样铺 60 张 = 2.6MB 下载 + 60 次 512² 解码，滚动当场掉帧。
+# 240 那档实测平均 8.9KB（m_fill 方形裁切 + webp），字节少 4.8 倍、
+# 解码面积少 4.5 倍。
+#
+# 240/480 从**缩略图**再缩（源才 512，OSS 不用去解那张 1.6MB 的原图）；
+# 960 只能从原图出 —— 缩到 2 列时一格有 600+ CSS px，拿 512 的缩略图顶上去是糊的。
+WALL_WIDTHS = ((240, "thumb"), (480, "thumb"), (960, "orig"))
+
+
+def _wall_process(w: int) -> str:
+    """墙上格子的 x-oss-process：方形裁切 + webp。
+
+    m_fill 而不是 resize —— 格子本来就是 `aspect-ratio:1` + `object-fit:cover`，
+    浏览器端裁掉的那部分根本不该下载。方形出图之后两边字节都省，显示效果一字不差。
+    """
+    return "image/resize,m_fill,w_%d,h_%d/format,webp/quality,q_80" % (w, w)
+
+
+def media_srcset(filename: str, thumb_filename: str = None,
+                 ttl: int | None = None) -> list[dict]:
+    """给照片墙的一格算出 srcset 档位：[{"w":240,"url":...}, ...]。
+
+    OSS 没配（本地开发、测试）时返回空列表 —— 调用方照旧用 thumb_url，
+    行为和没有这个函数时完全一样。图片处理是 OSS 服务端的能力，本机分发
+    这条路上没有等价物，硬造一个只会多一份代码两种行为。
+    """
+    try:
+        import oss
+        if not (MEDIA_BASE_URL and oss.conf().ok):
+            return []
+    except Exception:                                     # noqa: BLE001
+        return []
+    out = []
+    for w, src in WALL_WIDTHS:
+        if src == "thumb":
+            if not thumb_filename:
+                continue
+            path = "/uploads/thumbs/" + thumb_filename
+        else:
+            path = "/uploads/" + filename
+        u = media_url(path, ttl=ttl, process=_wall_process(w))
+        # 没同步上去的那些 media_url 会回本机路径，带不了图片处理，
+        # 混进 srcset 只会让浏览器挑到一张没缩过的原图。
+        if u.startswith("http"):
+            out.append({"w": w, "url": u})
+    return out

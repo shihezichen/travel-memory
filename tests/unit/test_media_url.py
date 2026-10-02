@@ -103,9 +103,15 @@ def _with_signing(monkeypatch, tmp_path, base, can_sign, ttl=None):
         ok = can_sign
 
     fake.conf = lambda: _Conf()
-    # 签名函数回一个能一眼认出来的串，免得测试去解析真实签名格式
-    def _sign(method, key, params=None, content_type="", expires_in=0):
-        return f"{base}/{key}?Expires={expires_in}&Signature=FAKE"
+    # 签名函数回一个能一眼认出来的串，免得测试去解析真实签名格式。
+    # expires_at 是图片那条路用的绝对过期时刻（见 config._stable_expires），
+    # 签名里**必须**原样带出来，否则「同一窗口内 URL 不变」这条没法验。
+    def _sign(method, key, params=None, content_type="", expires_in=0,
+              expires_at=None):
+        proc = (params or {}).get("x-oss-process")
+        exp = expires_at if expires_at is not None else expires_in
+        tail = f"&x-oss-process={proc}" if proc else ""
+        return f"{base}/{key}?Expires={exp}&Signature=FAKE{tail}"
     fake.sign_url = _sign
     monkeypatch.setitem(sys.modules, "oss", fake)
     return c
@@ -119,11 +125,76 @@ def test_signed_when_oss_available(monkeypatch, tmp_path):
     assert out.startswith("https://cdn.example.com/uploads/old.jpg?")
 
 
-def test_signed_url_uses_configured_ttl(monkeypatch, tmp_path):
-    """TTL 走 TRAVEL_MEDIA_URL_TTL，默认 30 分钟（网页场景够用且泄露窗口小）。"""
+def _expires_of(url):
+    import re
+    m = re.search(r"Expires=(\d+)", url)
+    assert m, url
+    return int(m.group(1))
+
+
+def test_signed_url_lives_at_least_the_configured_ttl(monkeypatch, tmp_path):
+    """TTL 走 TRAVEL_MEDIA_URL_TTL，默认 30 分钟（网页场景够用且泄露窗口小）。
+
+    签出来的是**绝对过期时刻**，不是 TTL 本身 —— 它被对齐到固定格点，好让
+    同一窗口内每次签出来的 URL 一字不差（见下一条）。对齐只往后取整，
+    所以寿命 ∈ (ttl, ttl+step]：common.js 的 tmKeepFresh 按「刚签的还有一个
+    完整 ttl」算续签时机，取整要是把寿命砍短了，它会在链接已经 403 之后才去续。
+    """
+    import time
     c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
                       can_sign=True, ttl=1234)
-    assert "Expires=1234" in c.media_url("/uploads/old.jpg")
+    now = int(time.time())
+    exp = _expires_of(c.media_url("/uploads/old.jpg"))
+    assert exp > now + 1234
+    assert exp <= now + 1234 + c._EXPIRES_STEP
+    assert exp % c._EXPIRES_STEP == 0
+
+
+def test_same_file_signs_to_the_same_url_within_a_window(monkeypatch, tmp_path):
+    """同一窗口内两次签名必须给出完全一样的 URL。
+
+    这条是**浏览器缓存**的全部前提：Expires 进签名，原来用 `now + ttl`，
+    于是每刷新一次 URL 就换一个、缓存键跟着变 —— OSS 那头 Cache-Control
+    写着 max-age=86400，实际一次都没命中过。搜图尤其吃亏，每搜一次就把
+    整面墙重新下载一遍（实测连签两次 URL 不同，这是「加载卡顿」的主因之一）。
+    """
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
+                      can_sign=True, ttl=1800)
+    assert c.media_url("/uploads/old.jpg") == c.media_url("/uploads/old.jpg")
+
+
+def test_process_goes_into_the_signature(monkeypatch, tmp_path):
+    """x-oss-process 必须跟着一起签 —— 前端自己往 URL 上拼，签名就对不上。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
+                      can_sign=True)
+    out = c.media_url("/uploads/old.jpg", process="image/resize,w_240")
+    assert "x-oss-process=image/resize,w_240" in out
+
+
+def test_srcset_gives_wall_sized_variants(monkeypatch, tmp_path):
+    """照片墙那几档：宽度递增、每档都是签出来的绝对地址。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
+                      can_sign=True)
+    out = c.media_srcset("old.jpg", "old.jpg")
+    assert [v["w"] for v in out] == [w for w, _ in c.WALL_WIDTHS]
+    assert all(v["url"].startswith("https://cdn.example.com") for v in out)
+    # 每一档都带上了自己那组缩放参数，不是同一个地址复制三遍
+    assert len({v["url"] for v in out}) == len(out)
+
+
+def test_srcset_empty_without_oss(monkeypatch, tmp_path):
+    """OSS 没配（本地开发/测试）就回空表，调用方照旧用 thumb_url。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
+                      can_sign=False)
+    assert c.media_srcset("old.jpg", "old.jpg") == []
+
+
+def test_srcset_skips_thumb_variants_without_thumb(monkeypatch, tmp_path):
+    """没有缩略图时只剩原图那一档 —— 不能拿不存在的 thumbs/ 路径去签。"""
+    c = _with_signing(monkeypatch, tmp_path, "https://cdn.example.com",
+                      can_sign=True)
+    out = c.media_srcset("old.jpg", None)
+    assert [v["w"] for v in out] == [w for w, src in c.WALL_WIDTHS if src != "thumb"]
 
 
 def test_falls_back_to_bare_link_when_signing_unavailable(monkeypatch, tmp_path):
