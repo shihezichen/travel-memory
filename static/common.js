@@ -2747,3 +2747,24 @@ function renderRoadLabels(runsBySeg) {
   });
   applyRoadLabelsVisibility();
 }
+
+
+/* ============================================================
+   PWA：注册 Service Worker
+   ------------------------------------------------------------
+   只为「可安装性」——Chrome / Edge 把「注册了带 fetch 监听的 SW」当作
+   可安装条件之一（iOS 的「添加到主屏幕」不看这条）。
+
+   SW 本身**不做任何缓存**（为什么，见 static/sw.js 顶部那一大段），
+   所以在这里注册它不会带来「改了看不到」「删了还在」这类风险。
+   只在安全上下文（https / localhost）注册：局域网 http 地址注册会直接抛错。
+   ============================================================ */
+(function registerTravelMemorySW() {
+  if (!('serviceWorker' in navigator)) return;
+  if (!window.isSecureContext) return;
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {
+      /* 注册失败不影响任何功能，静默忽略 */
+    });
+  });
+})();

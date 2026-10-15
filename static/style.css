@@ -80,7 +80,11 @@ body {
 /* 顶栏 */
 .topbar {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; background: var(--panel);
+  /* 顶部让开刘海 / 状态栏：桌面浏览器 env() 为 0，样式与原来完全一致；
+     装成桌面应用（standalone）或全面屏浏览器下自动顶开，不再被状态栏压住。
+     用 env(..., 0px) 带兜底值，老内核不认时也退回 10px。 */
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
   z-index: 10;
 }

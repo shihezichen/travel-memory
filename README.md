@@ -463,6 +463,32 @@ systemctl --user enable --now travel-memory-demo-reset.timer
 Reset once by hand: `./start.sh --demo` (touches only the demo account). Don't want demo data at
 all: `./start.sh --no-demo`.
 
+## Put it on your home screen (PWA)
+
+No app store, no APK: open the site in a phone browser and choose **Add to Home Screen**.
+You get an icon, a standalone window, and the same tricks the natives get — and it is always
+the current version, because it is the live site (ship a change, it is there next launch).
+
+What is already wired up:
+
+- `static/site.webmanifest`: name, icons (192 / 512 / SVG), `display: standalone`,
+  `start_url: /app` — once installed it opens the app itself, not the landing page;
+- `static/sw.js`: a Service Worker that **deliberately caches nothing**. It exists only to
+  satisfy Chrome / Edge installability (a SW with a `fetch` listener). Because it caches
+  neither assets nor API responses, the usual "edited it and I still see the old one" /
+  "deleted the photo and it is still there" problems cannot happen; the script itself is served
+  `no-cache` so it can always upgrade;
+- `viewport-fit=cover` + `env(safe-area-inset-*)`: the top bar (`.topbar`) and the landing
+  `header` reserve the notch / status bar themselves, so nothing gets clipped once the page runs
+  standalone. On a desktop browser `env()` is 0 and the layout is byte-for-byte what it was.
+
+Want a real **APK** for Android phones (system camera, downloads into the public Downloads
+folder, hardware back)? See
+[travel-memory_android](https://github.com/shihezichen/travel-memory_android). For HarmonyOS,
+see [travel-memory_harmony](https://github.com/shihezichen/travel-memory_harmony). Both shells
+are just WebView / ArkWeb wrappers that load this site — no front-end code is bundled, so
+changes here are completely decoupled from them.
+
 ## Known limits
 
 - **SQLite is single-writer.** WAL is on, so readers and writers no longer block each other and

@@ -535,6 +535,18 @@ app.mount("/static", MdRedirectStaticFiles(directory=BASE / "static"), name="sta
 app.mount("/uploads", UploadStaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
+# Service Worker 必须挂在**根路径**上：放在 /static/ 下的话它的作用域就被限制成
+# /static/，管不到 /app 和 /。文件本身放在 static/ 里只是为了目录整齐。
+# 不缓存（no-cache）：SW 脚本一旦被缓存住，改了也升不了级。
+@app.get("/sw.js", include_in_schema=False)
+async def service_worker():
+    return FileResponse(
+        BASE / "static" / "sw.js",
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
 # ---------- Markdown 在线渲染（/md/<文件名>.md） ----------
 import markdown as md_lib
 

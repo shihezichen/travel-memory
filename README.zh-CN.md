@@ -412,6 +412,28 @@ systemctl --user enable --now travel-memory-demo-reset.timer
 手动重置一次：`./start.sh --demo`（只重置演示账号，不碰其它用户）。
 不需要演示数据就跑 `./start.sh --no-demo`。
 
+## 装到手机桌面（PWA）
+
+不用装 App，用手机浏览器打开站点，选「**添加到主屏幕**」，就能得到一个带自己图标、
+独立窗口运行、和 App 差不多的一等公民入口 —— 而且**永远是最新版**（它加载的就是线上的页面，
+服务器一改，下次打开就是新的）。
+
+适配已经内置：
+
+- `static/site.webmanifest`：名称、图标（192 / 512 / SVG）、`display: standalone`、
+  `start_url: /app`（装到桌面后直接进应用，不再先看落地页）；
+- `static/sw.js`：**故意不缓存任何东西**的 Service Worker，只为满足 Chrome / Edge 的
+  「可安装」条件（注册了带 fetch 监听的 SW）。它不缓存资源和接口，所以不会出现
+  「改了看不到」「照片删了还在」这类问题；脚本本身也以 `no-cache` 下发，升级不受阻；
+- `viewport-fit=cover` + `env(safe-area-inset-*)`：顶栏（`.topbar`）和落地页 `header`
+  会自己让开刘海 / 状态栏，装成独立应用后不会把顶栏压到状态栏底下。桌面浏览器上
+  `env()` 为 0，样式与原来完全一致。
+
+想给 Android 手机一个**真正的 APK**（能调相机、下载直接进「下载」目录、系统返回键），
+见 [travel-memory_android](https://github.com/shihezichen/travel-memory_android)；
+鸿蒙手机见 [travel-memory_harmony](https://github.com/shihezichen/travel-memory_harmony)。
+两个壳都只是 WebView / ArkWeb 外壳，不打包网页代码，所以和这里改动完全解耦。
+
 ## 已知边界
 
 - **SQLite 单写入者。** 开了 WAL，读写不再互斥、写锁只在提交瞬间持有，

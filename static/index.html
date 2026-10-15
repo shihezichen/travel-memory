@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <!-- 明确声明只支持浅色：本站主体是高德的浅色地图（canvas/瓦片），
        浏览器的「强制深色」只会重写我们自己的 CSS 颜色、动不了地图，
        结果就是浅色地图上出现浅色图标。声明后浏览器不再自动变暗。 -->
@@ -13,6 +13,14 @@
   <link rel="apple-touch-icon" href="/static/icon-180.png?v=20260917v8">
   <link rel="manifest" href="/static/site.webmanifest?v=20260917v8">
   <meta name="theme-color" content="#FF8A00">
+  <!-- 装到桌面后以独立窗口运行：iOS 认 apple-*，Android / 桌面认 manifest -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="旅行记忆">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <!-- 顶栏已经自己用 env(safe-area-inset-top) 让开状态栏（见 style.css 的 .topbar）。
+       这枚标记告诉「壳类 App」（例如鸿蒙 ArkWeb 壳）不要再补一次，免得双重留白。 -->
+  <meta name="tm-safe-area" content="1">
   <link rel="stylesheet" href="/static/style.css?v=20260917v8">
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };

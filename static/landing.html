@@ -12,7 +12,18 @@
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="/static/icon-180.png">
+<link rel="manifest" href="/static/site.webmanifest">
 <meta name="theme-color" content="#0A0A0C">
+<!-- 装到桌面后以独立窗口运行：iOS 认 apple-*，Android / 桌面认 manifest。
+     落地页是深色的，所以状态栏用 black-translucent 让背景透上去，
+     由下面 header 的 env(safe-area-inset-top) 负责把内容顶开。 -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="旅行记忆">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- 顶栏已经自己让开状态栏。这枚标记告诉「壳类 App」（例如鸿蒙 ArkWeb 壳）
+     不要再补一次，免得双重留白。 -->
+<meta name="tm-safe-area" content="1">
 <style>
 /* ============================================================
    落地页是一张完全自包含的单页：不加载 style.css、不加载 app.js、
@@ -71,6 +82,10 @@ main,header,footer{position:relative;z-index:1}
 /* ---------- 顶栏 ---------- */
 header{
   position:sticky;top:0;z-index:50;
+  /* 让开刘海 / 状态栏：浏览器里 env() 为 0，样式不变；
+     装成桌面应用（standalone）或全面屏下自动顶开，顶栏不再被状态栏压住。
+     背景本身是半透明 + 毛玻璃，所以状态栏那一条仍然能看到页面背景，观感是连贯的。 */
+  padding-top:env(safe-area-inset-top,0px);
   backdrop-filter:saturate(160%) blur(14px);
   -webkit-backdrop-filter:saturate(160%) blur(14px);
   background:rgba(10,10,12,.62);
@@ -3083,6 +3098,20 @@ document.querySelectorAll('[data-demo]').forEach((btn) => {
   }
 
   later(round, HOLD_STILL);
+})();
+</script>
+
+<!-- PWA：注册 Service Worker（只为可安装性，见 static/sw.js）。
+     落地页是自包含单页、不引 common.js，所以这里内联一份同样的注册。
+     只在安全上下文（https / localhost）注册：局域网 http 地址会直接抛错。 -->
+<script>
+(function () {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {
+      /* 注册失败不影响浏览，静默忽略 */
+    });
+  });
 })();
 </script>
 </body>
