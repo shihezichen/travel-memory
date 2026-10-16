@@ -33,6 +33,8 @@
     document.removeEventListener('keydown', onKey);
     // 用户主动关掉（而不是从卡片进去）时，把本次会话的引导标记也置上，
     // 免得他接下来切个行程、点个按钮，面板又糊回来一次。
+    // 「每次登录都弹」指的是**会话粒度** —— 登录这一次弹一次；
+    // 同一次登录里切行程、切 tab 不再重复弹。
     if (window.__tmWelcomeDismissed) window.__tmWelcomeDismissed();
   }
 

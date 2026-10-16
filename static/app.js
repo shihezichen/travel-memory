@@ -490,12 +490,11 @@ function onLoggedIn() {
     restoreLayerState();
     restoreLightboxState();
     initPhotoSearch();
-    // 起步引导的触发条件（2026-10-16 用户反馈：注册后退出、再登录进来就没弹窗了）：
-    //   · 刚注册完 —— 一定会弹
-    //   · 登录后发现一个行程都没有 —— 也弹（新建的用户如果当初跳过了引导，
-    //     之后登录回来还是空的，至少给一次入口）
-    // 同一个会话只弹一次。
-    if (!welcomeShown && (justRegistered || !(allTrips && allTrips.length))) {
+    // 起步引导：**每次登录都弹**（2026-10-17 用户定的策略）。
+    // 不再判断「是不是刚注册」「有没有行程」—— 对初次使用者友好就该如此，
+    // 老用户回来也能一眼看到入口。同一页面会话内只弹一次，不会在切行程、
+    // 切 tab 时反复糊到脸上（真正「每次登录」的粒度就是 onLoggedIn 这一次）。
+    if (!welcomeShown) {
       justRegistered = false;
       welcomeShown = true;
       openWelcomePanel();
