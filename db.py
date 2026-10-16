@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS media (
     exif_time TEXT,
     exif_lat REAL,
     exif_lng REAL,
+    -- 原始上传文件名（用户手机上的那个名字），去重「缺 EXIF 的照片」靠它。
+    -- 落盘名是 uuid 化的（保证唯一），原名必须单独存一份，否则认不出重复。
+    -- NULL = 历史数据（迁移前上传的），那类照片只能靠 EXIF 或文件指纹判重。
+    orig_name TEXT,
+    -- 文件字节数。与 orig_name 一起做二次确认：两张同名但大小不同的照片
+    -- 是不同的图，只判文件名会把它们误当成重复而丢掉。
+    filesize INTEGER,
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_media_point ON media(point_id);
@@ -366,6 +373,39 @@ def init_db():
     media_cols = [r["name"] for r in conn.execute("PRAGMA table_info(media)")]
     if "caption" not in media_cols:
         conn.execute("ALTER TABLE media ADD COLUMN caption TEXT")
+    # 2026-10-17：给 media 补 orig_name / filesize，用于「无 EXIF 照片按原名判重」。
+    # 历史行的 orig_name 是 NULL —— 迁移时可以从 filename 反推：那一批落盘名就是
+    # 纯 uuid（形如 0320744be5c24fab9ffe7a62f04458aa.jpg），反推不出原名，
+    # 所以留 NULL，判重时遇到 NULL 就跳过（宁可漏判也不误杀）。
+    if "orig_name" not in media_cols:
+        conn.execute("ALTER TABLE media ADD COLUMN orig_name TEXT")
+    if "filesize" not in media_cols:
+        conn.execute("ALTER TABLE media ADD COLUMN filesize INTEGER")
+        # 有条件地回填：按 filename 猜原名 + 按实际文件大小填 filesize
+        try:
+            import os as _os
+            rows = conn.execute(
+                "SELECT id, filename FROM media WHERE filename IS NOT NULL"
+            ).fetchall()
+            up = UPLOAD_ROOT
+            for r in rows:
+                fn = r["filename"]
+                stem, ext = _os.path.splitext(fn)
+                # uuid 是 32 位十六进制，纯 uuid 落盘名的可以断言原名未知
+                guess = None if (len(stem) == 32
+                                 and all(c in "0123456789abcdef" for c in stem)) else fn
+                try:
+                    size = (_up / fn).stat().st_size
+                except Exception:
+                    size = None
+                if guess or size:
+                    conn.execute(
+                        "UPDATE media SET orig_name=COALESCE(?, orig_name), "
+                        "filesize=COALESCE(?, filesize) WHERE id=?",
+                        (guess, size, r["id"]))
+            conn.commit()
+        except Exception:
+            pass    # 回填失败不影响主流程，filesize 留 NULL
     if "sort_order" not in media_cols:
         # 点详情里可以像发朋友圈那样拖拽排序，顺序存这里。
         # 默认 0 = 没排过，此时仍按拍摄时间排（见 list_media 的 ORDER BY）
@@ -1406,12 +1446,23 @@ def get_media(media_id):
 
 
 def add_media(point_id, mtype, filename, thumb_filename=None,
-              exif_time=None, exif_lat=None, exif_lng=None):
+              exif_time=None, exif_lat=None, exif_lng=None,
+              orig_name=None, filesize=None):
+    """插入一条媒体。
+
+    orig_name / filesize 是 2026-10-17 加的：用来给**缺 EXIF 的照片**判重。
+    照片 EXIF 里的时间+坐标是可靠身份；但截图、微信转存这类什么都没有，
+    只能退回「原始文件名 + 文件大小」当身份 —— 两张同名但大小不同的照片
+    仍然是不同的图，只看文件名会误杀。
+    filesize 传 None 时不落库（迁移前的历史行就是这个状态）。
+    """
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO media(point_id, type, filename, thumb_filename, exif_time, exif_lat, exif_lng) "
-        "VALUES(?,?,?,?,?,?,?)",
-        (point_id, mtype, filename, thumb_filename, exif_time, exif_lat, exif_lng),
+        "INSERT INTO media(point_id, type, filename, thumb_filename, exif_time, "
+        "exif_lat, exif_lng, orig_name, filesize) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (point_id, mtype, filename, thumb_filename, exif_time, exif_lat,
+         exif_lng, orig_name, filesize),
     )
     conn.commit()
     mid = cur.lastrowid

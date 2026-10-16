@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+import logging
+import re
 import uuid
 from pathlib import Path
 
@@ -29,6 +31,8 @@ from domain.schemas import wgs84_to_gcj02
 # UPLOAD_DIR 由 media.py 定义（与 app.py 同一份BASE/uploads），直接复用，
 # 不要从 config import —— config 里没有这个符号。
 UPLOAD_DIR = media_mod.UPLOAD_DIR
+
+log = logging.getLogger("travel.photo_trip")
 
 router = APIRouter()
 
@@ -178,14 +182,24 @@ def _parse_uploads(files: list[UploadFile]):
         if not _is_media(f.filename or "x"):
             # 音频/字幕之类确实没有空间信息，不参与
             continue
-        ext = Path(f.filename or "unknown").suffix.lower() or ".jpg"
-        name = f"{uuid.uuid4().hex}{ext}"
+        # 落盘名 = 原文件名 + uuid 后缀。用户提的设计：既保证唯一（同一张
+        # 图可以导很多次），又保留原名信息（便于人工在目录里认出来）。
+        # uuid 放在扩展名之前、连字符分隔，这样从落盘名能反推回原名，
+        # 排查问题时对着 uploads/ 目录也能对上号。
+        orig = Path(f.filename or "unknown").name or "photo"
+        ext = Path(orig).suffix.lower() or ".jpg"
+        stem = Path(orig).stem or "photo"
+        # 原名里可能有路径分隔符/超长/控制字符，清一遍再拼
+        safe_stem = re.sub(r"[\x00-\x1f/\\:*?\"<>|]", "_", stem)[:60].strip() or "photo"
+        name = f"{safe_stem}-{uuid.uuid4().hex[:12]}{ext}"
         src = UPLOAD_DIR / name
         src.write_bytes(raw)
         row = (_read_video_exif(src) if mtype == "video"
                else _read_photo_exif(src))
         row["_src_path"] = str(src)
         row["_mtype"] = mtype
+        row["_orig_name"] = orig
+        row["_filesize"] = len(raw)
         rows.append(row)
         # stored 带上 mtype：建 media 行时要用，写死 photo 会让视频被当成图片存
         # （前端拿不到可播的 srcset）
@@ -204,15 +218,17 @@ def _ensure_orphan_point(trip_id: int, user):
     所以它标记 is_waypoint=1（不参与定线）**并且**名字固定 —— 前端按名字
     识别并从地图上剔除，改名了就失效，这也是为什么这里不把它做成可配置项。
     """
-    from app import db as _db
-    conn = _db.get_conn()
+    # 用模块顶部的 db，不是 `from app import db` —— app.py 会 include_router
+    # 本模块，那样 import 会绕一圈拿不到东西（曾经因此让建池子抛
+    # FOREIGN KEY constraint failed：trip_id 是好的，是 db 拿错了）。
+    conn = db.get_conn()
     row = conn.execute(
         "SELECT id FROM points WHERE trip_id=? AND name=?",
         (trip_id, ORPHAN_POINT_NAME)).fetchone()
     conn.close()
     if row:
         return row["id"]
-    return _db.create_point(trip_id, ORPHAN_POINT_NAME, 0.0, 0.0, None, None,
+    return db.create_point(trip_id, ORPHAN_POINT_NAME, 0.0, 0.0, None, None,
                             "待分配：这些照片缺少拍摄时间或位置，暂存在这里，"
                             "可以手工拖到别的地点",
                             "line", 1)
@@ -225,21 +241,36 @@ def _attach_orphans(trip_id: int, orphans, stored_by_name: dict):
     return added
 
 
-def _dedup_key(exif_time, exif_lat, exif_lng):
+def _dedup_key(exif_time, exif_lat, exif_lng, orig_name=None, filesize=None):
     """照片的去重键。
 
-    **三项全缺的（截图、微信转存）必须用文件名当键，不能用 (None,None,None)。**
-    原来直接拿三元组当键，结果这一批照片的键全都是 (None,None,None)，
-    于是第一张入库、后面每一张都被判成「已存在」而丢弃 —— 一次导入 3 张截图
-    只进了 1 张，而且界面还提示「2 张已存在」，看起来像是正常的去重。
+    分两种身份，**这是准确度的分水岭**：
 
-    有任何一项 EXIF 时用 (time,lat,lng)：那是这张照片的真实身份，
-    同一张照片重复导入一定会命中。
+    1) EXIF 齐全（有拍摄时间，且有坐标）→ 用 ``(时间, 纬度, 经度)``。
+       同一张照片在任何设备上重复导入都必然命中；反过来不同照片撞上
+       同一组时空坐标的概率极低（连拍的两张甚至可能真的相同，那是照片
+       本身就重复，不是误判）。
+
+    2) EXIF 缺失（截图、微信转存、编码器丢元数据的视频）→ 用
+       ``("nofile", 原文件名, 文件大小)``。
+       早先这里直接拿 (None, None, None) 当键，导致**一批截图里只有第一张
+       入库、其余全被当成重复丢弃** —— 而界面还提示「N张已存在」，看着
+       像正常去重。现在靠用户上传时的原始文件名 + 字节数来认。
+
+       为什么还要带上文件大小：不同照片完全可能同名（两张都叫 IMG_001.jpg、
+       从两个不同群里存的）。只比名字会把后来的那张误杀 —— **丢照片比
+       重复照片严重得多**。加上大小之后，「同名 + 同大小」才判为同一张。
+
+    两项都拿不到时（历史数据没有 orig_name）返回 None，调用方跳过判重 ——
+    宁可重复也不误杀。
     """
-    if exif_time is None and exif_lat is None and exif_lng is None:
-        return None          # 交给调用方按文件名处理，见下
-    return (exif_time, exif_lat, exif_lng)
-
+    has_time = exif_time is not None
+    has_geo = (exif_lat is not None and exif_lng is not None)
+    if has_time and has_geo:
+        return (exif_time, exif_lat, exif_lng)
+    if orig_name:
+        return ("nofile", orig_name, filesize)
+    return None
 
 def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
                                 existing: set):
@@ -253,11 +284,10 @@ def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
         name = o["filename"]
         if name not in stored_by_name:
             continue
-        key = _dedup_key(o.get("exif_time"), o.get("exif_lat"), o.get("exif_lng"))
-        # 无 EXIF 的照片没有可靠的身份，退化成按文件名判重（同一张图重复导入
-        # 的文件名当然一样；不同截图名字不同，不会误伤）
+        key = _dedup_key(o.get("exif_time"), o.get("exif_lat"), o.get("exif_lng"),
+                         o.get("_orig_name"), o.get("_filesize"))
         if key is None:
-            key = ("__nofile__", name, "")
+            key = ("nofile", name, o.get("_filesize"))
         if key in existing:
             dupes.append({
                 "filename": name,
@@ -268,14 +298,23 @@ def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
         if not hit:
             continue
         src_path, mt = hit
+        # make_thumb 内部要用 path.stem，**必须传 Path 而不是 str**。
+        # 之前这里直接传字符串，于是所有无 EXIF 的照片建行都抛
+        # AttributeError，又被 except 静默吞掉 —— 表现为「照片一张没进去」。
+        src_path = Path(src_path)
         try:
             thumb = media_mod.make_thumb(src_path, mt)
             mid = db.add_media(pid, mt, name, thumb,
                                o.get("exif_time"), o.get("exif_lat"),
-                               o.get("exif_lng"))
-            existing.add(key)
+                               o.get("exif_lng"),
+                               o.get("_orig_name"), o.get("_filesize"))
+            existing.add(key if key is not None
+                         else ("nofile", name, o.get("_filesize")))
             n += 1
-        except Exception:
+        except Exception as e:                      # noqa: BLE001
+            # 原来这里是裸 except: continue，把真实异常全吞了 —— 照片建不进库
+            # 时界面只看到「0 张已处理」，排查时毫无线索。至少要留日志。
+            log.warning("待分配照片入库失败 %s: %s", name, e)
             continue
     return dupes, n
 
@@ -330,9 +369,10 @@ async def photo_trip_preview(request: Request,
             dupes = []
             for r in rows:
                 key = _dedup_key(r.get("exif_time"), r.get("exif_lat"),
-                                 r.get("exif_lng"))
+                                 r.get("exif_lng"),
+                                 r.get("_orig_name"), r.get("_filesize"))
                 if key is None:
-                    key = ("__nofile__", r["filename"], "")
+                    key = ("nofile", r["filename"], r.get("_filesize"))
                 if key in existing:
                     dupes.append({
                         "filename": r["filename"],
@@ -424,7 +464,8 @@ def _attach_photos_to_points(trip_id: int, plan, rows, stored):
                 thumb = media_mod.make_thumb(src_path, mt)
                 db.add_media(pid, mt, src_path.name, thumb,
                              ph.get("exif_time"), ph.get("exif_lat"),
-                             ph.get("exif_lng"))
+                             ph.get("exif_lng"),
+                             ph.get("_orig_name"), ph.get("_filesize"))
                 n += 1
             except Exception:
                 continue
@@ -490,9 +531,10 @@ async def photo_trip_append(request: Request, trip_id: int,
             fresh = []
             for ph in cluster["photos"]:
                 key = _dedup_key(ph.get("exif_time"), ph.get("exif_lat"),
-                                 ph.get("exif_lng"))
+                                 ph.get("exif_lng"),
+                                 ph.get("_orig_name"), ph.get("_filesize"))
                 if key is None:
-                    key = ("__nofile__", ph["filename"], "")
+                    key = ("nofile", ph["filename"], ph.get("_filesize"))
                 if key in existing:
                     duplicates.append({
                         "filename": ph["filename"],
@@ -519,12 +561,15 @@ async def photo_trip_append(request: Request, trip_id: int,
                     thumb = media_mod.make_thumb(src_path, mt)
                     mid = db.add_media(pid, mt, src_path.name, thumb,
                                        ph.get("exif_time"), ph.get("exif_lat"),
-                                       ph.get("exif_lng"))
+                                       ph.get("exif_lng"),
+                                       ph.get("_orig_name"), ph.get("_filesize"))
                     added_photos += 1
                     k = _dedup_key(ph.get("exif_time"), ph.get("exif_lat"),
-                                   ph.get("exif_lng"))
+                                   ph.get("exif_lng"),
+                                   ph.get("_orig_name"), ph.get("_filesize"))
                     existing.add(k if k is not None
-                                 else ("__nofile__", ph["filename"], ""))
+                                 else ("nofile", ph["filename"],
+                                       ph.get("_filesize")))
                 except Exception:
                     continue
 
@@ -546,10 +591,21 @@ async def photo_trip_append(request: Request, trip_id: int,
 
 
 def _existing_media_keys(trip_id: int):
-    """该行程已有媒体的 (exif_time, lat, lng) 集合，用于导入去重。"""
+    """该行程已有媒体的去重键集合（与 _dedup_key 同一套规则）。
+
+    **集合里两种形态的键都会放进去**：EXIF 齐全的放 (时间,lat,lng)，
+    缺信息的放 ("nofile", 原名, 大小)。所以查询时要两种都算一遍。
+    """
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT m.exif_time, m.exif_lat, m.exif_lng FROM media m "
-        "JOIN points p ON p.id=m.point_id WHERE p.trip_id=?", (trip_id,)).fetchall()
+        "SELECT m.exif_time, m.exif_lat, m.exif_lng, m.orig_name, m.filesize "
+        "FROM media m JOIN points p ON p.id=m.point_id "
+        "WHERE p.trip_id=?", (trip_id,)).fetchall()
     conn.close()
-    return {(r["exif_time"], r["exif_lat"], r["exif_lng"]) for r in rows}
+    keys = set()
+    for r in rows:
+        k = _dedup_key(r["exif_time"], r["exif_lat"], r["exif_lng"],
+                       r["orig_name"], r["filesize"])
+        if k is not None:
+            keys.add(k)
+    return keys
