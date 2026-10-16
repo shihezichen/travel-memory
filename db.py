@@ -770,6 +770,29 @@ def search_trip_media(trip_id, q=None, mtype=None, date_from=None, date_to=None)
 
 
 # ---------- 点 ----------
+# 「待分配照片」池的点名（与 routers/photo_trip_api.py 保持一致）。这个点
+# 没有位置、不参与轨迹，只是给缺时间/缺位置的照片一个落脚处。
+PENDING_POOL_NAME = "\U0001F4F7 待分配照片"
+
+
+def is_pending_pool(point: dict) -> bool:
+    """这个点是不是「待分配照片」池。
+
+    靠名字判���而不是坐标 0,0 —— 赤道与本初子午线附近的真实地点坐标就是
+    0,0，用坐标判断会误伤真地点。
+    """
+    return (point or {}).get("name") == PENDING_POOL_NAME
+
+
+def points_for_map(points):
+    """返回参与地图与轨迹渲染的点：把「待分配照片」池剔除。
+
+    所有对外出口（地图接口、分享页、缩略图、导出、agent API）都该走这个，
+    否则待分配点会以坐标 0,0 出现在地图上，或者被连进折线里算进里程。
+    """
+    return [p for p in (points or []) if not is_pending_pool(p)]
+
+
 def list_points(trip_id):
     conn = get_conn()
     rows = conn.execute(

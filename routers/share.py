@@ -98,7 +98,8 @@ def api_share_view(token: str, password: str = ""):
     trip = db.get_trip(share["trip_id"])
     if not trip:
         raise HTTPException(404, "行程不存在")
-    points = db.list_points(share["trip_id"])
+    # 待分配照片池不进分享页：它没有位置，在地图上只会是个错位的点
+    points = db.points_for_map(db.list_points(share["trip_id"]))
     for p in points:
         # 带上视频清晰度档位，分享页也能选清晰度 / 自动降级
         p["media"] = media.attach_urls(transcode.attach_qualities(db.list_media(p["id"])))
@@ -385,7 +386,7 @@ def api_share_thumbnail(request: Request, token: str, password: str = ""):
     if share.get("has_password"):
         if not db.verify_share_password(token, password):
             return JSONResponse({"error": "wrong_password"}, status_code=403)
-    points = db.list_points(share["trip_id"])
+    points = db.points_for_map(db.list_points(share["trip_id"]))
     # 这是个匿名端点（在 is_public_path 放行名单里），而每次请求都要拉高德底图瓦片、
     # 逐段查 OSRM、再用 PIL 合成一张 155KB 的 PNG（冷路径实测 2.2s）。原来一个缓存头
     # 都没有，等于把爬虫和微信预览的每一次抓取都变成一次全量重算。

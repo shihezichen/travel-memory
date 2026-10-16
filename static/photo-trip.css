@@ -107,3 +107,43 @@
 @media (max-width: 380px) {
   .pt-seg-btn { font-size: 12px; padding: 8px 4px; }
 }
+
+/* ---- 重复照片提示（预览阶段的预警） ---- */
+.pt-dup-warn {
+  margin-top: 8px; padding: 8px 10px;
+  background: #fef7e0; border-left: 3px solid #f9ab00;
+  border-radius: 6px; font-size: 12.5px; color: #8a6d3b; line-height: 1.5;
+}
+.pt-dup-warn strong { color: #7a5c00; }
+.pt-dup-warn-sub { margin-top: 2px; opacity: .85; }
+
+/* ---- 追加后的结果面板（长驻，可核对） ---- */
+.pt-dup-report {
+  position: fixed; right: 16px; bottom: 16px; z-index: 300;
+  max-width: 380px; max-height: 60vh; overflow-y: auto;
+  background: #fff; border: 1px solid #dadce0; border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.18);
+  padding: 14px 16px; font-size: 13px; color: #3c4043; line-height: 1.5;
+}
+.pt-dup-head { font-weight: 500; margin-bottom: 8px; }
+.pt-dup-list { display: flex; flex-direction: column; gap: 3px; }
+.pt-dup-item {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 12px; color: #5f6368;
+}
+.pt-dup-name {
+  flex: 1 1 auto; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.pt-dup-time { flex: 0 0 auto; color: #80868b; }
+.pt-dup-more { margin-top: 6px; font-size: 12px; color: #80868b; }
+.pt-dup-close {
+  margin-top: 10px; width: 100%; padding: 7px;
+  font-size: 13px; font-family: inherit; cursor: pointer;
+  background: #f1f3f4; border: none; border-radius: 7px; color: #3c4043;
+}
+.pt-dup-close:hover { background: #e8eaed; }
+
+@media (max-width: 600px) {
+  .pt-dup-report { left: 12px; right: 12px; max-width: none; }
+}

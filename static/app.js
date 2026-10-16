@@ -949,7 +949,13 @@ async function fillElevations(tripId) {
 
 function renderMap(points) {
   clearMap();
-  lastPoints = points || [];
+  // 「待分配照片」池不是真地点：坐标 0,0，画在地图上是错位的点，进了折线
+  // 还会被算进里程。后端也过滤了一遍（分享页/导出），这里是双保险 —— 万一
+  // 某个老接口没过滤，也不会把用户带到几内亚湾去。
+  const allPoints = points || [];
+  const mapPoints = allPoints.filter((p) => !p.is_pending_pool);
+  lastPoints = mapPoints;
+  points = mapPoints;
   if (points.length === 0) return;
   const seq = ++renderSeq;
 

@@ -204,6 +204,10 @@
     if (cur && trips.some(t => t.id === Number(cur))) sel.value = String(cur);
     sel.dataset.filled = '1';
     setStatus('');
+    // 换行程 =换了一批「已存在」的基准，照片若已选就重新预检一次
+    sel.addEventListener('change', () => {
+      if (state.files.length) setFiles(state.files);
+    });
   }
 
   function close() {
@@ -235,6 +239,12 @@
 
     const fd = new FormData();
     photos.forEach(f => fd.append('files', f, f.name));
+    // 追加模式下把目标行程告诉后端，让它顺手比对「哪些已经存在」——
+    // 在用户点确认之前就把这件事说出来，比事后补救友好得多。
+    if (state.mode === 'append') {
+      const tid = modal.querySelector('#pt-trip-pick').value;
+      if (tid) fd.append('trip_id', tid);
+    }
     try {
       const r = await fetch(API_PREVIEW, {
         method: 'POST', body: fd, credentials: 'same-origin',
@@ -242,6 +252,8 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       state.plan = data.plan;
+      state.previewDupCount = data.duplicate_count;
+      state.previewDupPhotos = data.duplicate_photos || [];
       renderPreview(data);
     } catch (err) {
       setStatus('解析失败：' + err.message, 'err');
@@ -260,7 +272,7 @@
     st.className = 'pt-status' + (cls ? ' ' + cls : '');
   }
 
-  function renderPreview(data) {
+function renderPreview(data) {
     const plan = data.plan || {};
     const s = plan.stats || {};
     const pv = modal.querySelector('#pt-preview');
@@ -305,6 +317,20 @@
         + `会放到「📷 待分配照片」，你可以稍后手工分配到具体地点。`));
     }
 
+    // 重复照片（追加模式）：在确认按钮之前就说清楚，别让用户点了才知道白点。
+    const dupN = state.previewDupCount;
+    if (dupN != null && dupN > 0) {
+      const box = el('div', 'pt-dup-warn');
+      box.appendChild(el('strong', null,
+        `其中 ${dupN} 张照片在这个行程里已经有了`));
+      const sample = (state.previewDupPhotos || []).slice(0, 3)
+        .map((d) => d.filename).join('、');
+      box.appendChild(el('div', 'pt-dup-warn-sub',
+        dupN === 1 ? '重复的照片不会被再次上传。'
+                   : `重复的照片不会被再次上传${sample ? `（如 ${sample}${dupN > 3 ? ' 等' : ''}）` : ''}`));
+      pv.appendChild(box);
+    }
+
     const unnamed = data.named_count != null
       ? (plan.points || []).length - data.named_count : 0;
     if (unnamed > 0) {
@@ -315,6 +341,79 @@
     ok.disabled = false;
     ok.textContent = state.mode === 'append' ? '追加到行程' : '生成轨迹';
     setStatus('');
+  }
+
+  // ---------- 追加结果：把「重复」这件事说清楚 ----------
+  //
+  // 为什么值得单独写一段（2026-10-16 用户反馈）：原先这里只 toast 一句
+  // 「已追加 2 个轨迹点」，但用户拖进来 9 张、结果一张没进去 —— 他完全
+  // 不知道发生了什么，只能怀疑功能坏了。实际上是 9 张全都在这个行程里了，
+  // 服务端按 (拍摄时间, 坐标) 去重后全部跳过，这是**正确行为**，
+  // 但从界面看就是「说添加了却没反应」。
+  //
+  // 现在分三种情况，每种都把账算清楚：
+  //   · 全部重复   → 明确说「9 张都已存在，一张都没有上传」，并列出前几张
+  //   · 部分重复   → 分开报「新增 N 张 / 跳过 M 张」，重复的列出来
+  //   · 无重复     → 正常报新增
+  function reportAppendResult(data) {
+    const added = data.added_photos || 0;
+    const dupes = data.duplicate_photos || [];
+    const dupeCount = dupes.length;
+    const orphanAdded = data.orphan_count || 0;
+
+    const parts = [];
+    if (added > 0) parts.push(`新增 ${added} 张照片`);
+    if (orphanAdded > 0) parts.push(`${orphanAdded} 张放入待分配`);
+    if (dupeCount > 0) parts.push(`${dupeCount} 张已存在、未重复上传`);
+
+    if (!parts.length) {
+      notify('没有可添加的照片');
+      return;
+    }
+
+    notify(parts.join(' · '));
+
+    // 全部被跳过时，光靠 toast 太短（而且 toast 会自动消失）—— 再补一个
+    // 长驻的结果面板，把重复的照片逐条列出来，用户可以核对是不是同一批。
+    if (data.nothing_added && dupeCount > 0) {
+      showDupReport(dupes);
+    } else if (dupeCount > 0) {
+      showDupReport(dupes, false);
+    }
+  }
+
+  function showDupReport(dupes, replace) {
+    // 挂在页面上而不是弹窗里：弹窗已经close了，重新打开反而绕。
+    let box = document.getElementById('pt-dup-report');
+    if (!box) {
+      box = el('div', 'pt-dup-report');
+      box.id = 'pt-dup-report';
+      document.body.appendChild(box);
+    }
+    box.innerHTML = '';
+    const head = el('div', 'pt-dup-head',
+      `以下 ${dupes.length} 张照片在这个行程里已经有了，本次没有重复上传：`);
+    box.appendChild(head);
+    const list = el('div', 'pt-dup-list');
+    // 一次最多列 12 条，剩下折叠成一行 —— 有 60 张重复时不至于刷屏
+    dupes.slice(0, 12).forEach((d) => {
+      const row = el('div', 'pt-dup-item');
+      row.appendChild(el('span', 'pt-dup-name', d.filename || '(未命名)'));
+      if (d.time) row.appendChild(el('span', 'pt-dup-time', d.time));
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+    if (dupes.length > 12) {
+      box.appendChild(el('div', 'pt-dup-more', `…另有 ${dupes.length - 12} 张`));
+    }
+    box.appendChild(el('button', 'pt-dup-close', '知道了'));
+
+    const closeBtn = box.querySelector('.pt-dup-close');
+    closeBtn.addEventListener('click', () => box.remove());
+
+    box.classList.remove('hidden');
+    // 过一会儿淡出，但别自动消失得那么快——用户要能读完
+    void replace;
   }
 
   // ---------- 确认生成 ----------
@@ -358,11 +457,11 @@
       const data = await r.json();
 
       const s = data.stats || {};
-      const msg = state.mode === 'append'
-        ? `已追加 ${data.added_points || 0} 个轨迹点`
-          + (data.skipped_photos ? `，跳过 ${data.skipped_photos} 张重复照片` : '')
-        : `已生成行程：${s.point_count} 个轨迹点 / ${s.usable} 张照片`;
-      notify(msg);
+      if (state.mode === 'append') {
+        reportAppendResult(data);
+      } else {
+        notify(`已生成行程：${s.point_count} 个轨迹点 / ${s.usable} 张照片`);
+      }
 
       const tid = state.mode === 'append' ? state.tripId : data.trip_id;
       close();

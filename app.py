@@ -806,7 +806,8 @@ def api_export_trip(request: Request, trip_id: int):
     trip = db.get_trip(trip_id)
     if not trip:
         raise HTTPException(404, "行程不存在")
-    points = db.list_points(trip_id)
+    # 待分配照片池不导出：它没有位置，导进别的系统也用不了
+    points = db.points_for_map(db.list_points(trip_id))
     payload = {
         "format": "travel-memory",
         "version": 1,
@@ -1024,6 +1025,7 @@ def api_list_points(request: Request, trip_id: int):
         c = counts.get(p["id"], {})
         p["photo_count"] = c.get("photo", 0)
         p["video_count"] = c.get("video", 0)
+        p["is_pending_pool"] = db.is_pending_pool(p)
     return points
 
 

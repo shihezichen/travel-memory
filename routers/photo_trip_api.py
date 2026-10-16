@@ -88,7 +88,16 @@ def _parse_uploads(files: list[UploadFile]):
 
 
 def _ensure_orphan_point(trip_id: int, user):
-    """建（或复用）「待分配照片」轨迹点。它不参与路线规划，坐标给 0。"""
+    """建（或复用）「待分配照片」轨迹点。
+
+    这个点**不是一个真正的地点**：
+      · 没有位置（坐标 0,0，只是个占位）
+      · 不参与路线规划（前端靠 is_pending_pool 把它排除在地图与折线之外）
+      · 只是给缺时间/缺位置的照片一个落脚处，等用户手工分配
+
+    所以它标记 is_waypoint=1（不参与定线）**并且**名字固定 —— 前端按名字
+    识别并从地图上剔除，改名了就失效，这也是为什么这里不把它做成可配置项。
+    """
     from app import db as _db
     conn = _db.get_conn()
     row = conn.execute(
@@ -98,19 +107,36 @@ def _ensure_orphan_point(trip_id: int, user):
     if row:
         return row["id"]
     return _db.create_point(trip_id, ORPHAN_POINT_NAME, 0.0, 0.0, None, None,
-                            "由照片生成轨迹时暂存缺少时间或位置的图片，可手工移到别的地点",
+                            "待分配：这些照片缺少拍摄时间或位置，暂存在这里，"
+                            "可以手工拖到别的地点",
                             "line", 1)
 
 
 def _attach_orphans(trip_id: int, orphans, stored_by_name: dict):
-    """把无 GPS/无时间的照片建成 media，挂在「待分配」点上。"""
+    """把无 GPS/无时间的照片建成 media，挂在「待分配」点上。返回新增数量。"""
+    added, _ = _attach_orphans_with_report(trip_id, orphans, stored_by_name,
+                                           _existing_media_keys(trip_id))
+    return added
+
+
+def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
+                                existing: set):
+    """同上，但额外报告哪些是重复的。返回 (重复明细, 实际新增数)。"""
     if not orphans:
-        return 0
+        return [], 0
     pid = _ensure_orphan_point(trip_id, None)
     n = 0
+    dupes = []
     for o in orphans:
         name = o["filename"]
         if name not in stored_by_name:
+            continue
+        key = (o.get("exif_time"), o.get("exif_lat"), o.get("exif_lng"))
+        if key in existing:
+            dupes.append({
+                "filename": name,
+                "time": (o.get("exif_time") or "")[:16].replace("T", " "),
+            })
             continue
         src_path = Path(stored_by_name[name])
         try:
@@ -118,16 +144,24 @@ def _attach_orphans(trip_id: int, orphans, stored_by_name: dict):
             mid = db.add_media(pid, "photo", name, thumb,
                                o.get("exif_time"), o.get("exif_lat"),
                                o.get("exif_lng"))
+            existing.add(key)
             n += 1
         except Exception:
             continue
-    return n
+    return dupes, n
 
 
 @router.post("/api/photo-trip/preview")
 async def photo_trip_preview(request: Request,
-                             files: list[UploadFile] = File(...)):
-    """解析照片 → 规划轨迹。**不写库**，只返回蓝图给用户确认。"""
+                             files: list[UploadFile] = File(...),
+                             trip_id: str = Form("")):
+    """解析照片 → 规划轨迹。**不写库**，只返回蓝图让用户确认。
+
+    2026-10-16 增加 `trip_id`：追加模式下把它一起传上来，服务端顺手比对
+    「哪些照片这个行程已经有了」，把重复数在**确认之前**就告诉用户。
+    之前只有 append 的响应里才有skipped_photos，用户点完按钮看到
+    「已追加 0 个点」却不知道为什么，像是坏了。
+    """
     rows, stored = _parse_uploads(files)
     if not rows:
         raise HTTPException(400, "没有可用的照片（仅支持带 EXIF 的照片文件）")
@@ -152,10 +186,34 @@ async def photo_trip_preview(request: Request,
                 p["coord_sys"] = "gcj02"
                 p["named"] = False
 
-    # 预览态的照片还没建 media 行，返回上传后的临时文件名供后续 create 使用
+    # 预览态的照片还没建media 行，返回上传后的临时文件名供后续 create 使用
     plan["stored"] = [{"filename": n} for n, _ in stored]
     plan["named_count"] = sum(1 for p in pts if p.get("named", True))
-    return {"plan": plan}
+
+    out = {"plan": plan}
+
+    # 追加模式：顺便报重复（不写库，只是比对）
+    if trip_id:
+        try:
+            tid = int(trip_id)
+            _require_owner(request, tid)
+            existing = _existing_media_keys(tid)
+            dupes = []
+            for r in rows:
+                key = (r.get("exif_time"), r.get("exif_lat"), r.get("exif_lng"))
+                if key in existing:
+                    dupes.append({
+                        "filename": r["filename"],
+                        "time": (r.get("exif_time") or "")[:16].replace("T", " "),
+                    })
+            out["duplicate_count"] = len(dupes)
+            out["checked_count"] = len(rows)
+            out["duplicate_photos"] = dupes[:12]
+        except Exception:
+            # 预检失败不该阻断预览 —— 只是少一条提示而已
+            out["duplicate_count"] = None
+
+    return out
 
 
 @router.post("/api/photo-trip/create")
@@ -249,7 +307,17 @@ def _trip_point_ids(trip_id: int):
 @router.post("/api/trips/{trip_id}/photo-trip/append")
 async def photo_trip_append(request: Request, trip_id: int,
                             files: list[UploadFile] = File(...)):
-    """往已有行程追加照片，扩充轨迹。新点按时间插到正确位置。"""
+    """往已有行程追加照片，扩充轨迹。新点按时间插到正确位置。
+
+    **去重要看得见**（2026-10-16 改）：原先返回 `skipped_photos` 一个数字，
+    前端 toast 只说「已追加 N 个轨迹点」，用户看到 0 个点被加进去却没有任何
+    解释，只能猜是不是坏了。现在返回结构化的重复清单（哪些照片、按什么判定），
+    由前端明确告知「这些照片已存在，未重复上传」。
+
+    去重键仍沿用 (exif_time, lat, lng)：同一张照片重复导入一定命中；同一个
+    景点同一秒拍的两张不同照片会被误判成重复，这是刻意的取舍——宁可漏一张，
+    也不要重复添加让相册出现重影。
+    """
     _require_owner(request, trip_id)
     if not db.get_trip(trip_id):
         raise HTTPException(404, "行程不存在")
@@ -262,7 +330,10 @@ async def photo_trip_append(request: Request, trip_id: int,
     pts = plan["points"]
 
     existing = _existing_media_keys(trip_id)
-    added_points, skipped = 0, 0
+    added_points = 0
+    added_photos = 0
+    # 重复照片明细：[{filename, time_label}]，前端要逐条告知用户
+    duplicates: list = []
 
     if pts:
         coords = [(p["wgs_lng"], p["wgs_lat"]) for p in pts]
@@ -280,10 +351,17 @@ async def photo_trip_append(request: Request, trip_id: int,
         stored_paths = {Path(p).name: p for _, p in stored}
         for cid, p in enumerate(pts):
             cluster = clusters[cid] if cid < len(clusters) else {"photos": []}
-            fresh = [ph for ph in cluster["photos"]
-                     if (ph.get("exif_time"), ph.get("exif_lat"), ph.get("exif_lng"))
-                     not in existing]
-            skipped += len(cluster["photos"]) - len(fresh)
+            fresh = []
+            for ph in cluster["photos"]:
+                key = (ph.get("exif_time"), ph.get("exif_lat"), ph.get("exif_lng"))
+                if key in existing:
+                    duplicates.append({
+                        "filename": ph["filename"],
+                        "time": ph.get("_dt").strftime("%Y-%m-%d %H:%M")
+                                if ph.get("_dt") else "",
+                    })
+                    continue
+                fresh.append(ph)
             if not fresh:
                 continue
             pid = db.create_point(trip_id, p["name"], p["gcj_lat"], p["gcj_lng"],
@@ -299,17 +377,27 @@ async def photo_trip_append(request: Request, trip_id: int,
                     mid = db.add_media(pid, "photo", src_path.name, thumb,
                                        ph.get("exif_time"), ph.get("exif_lat"),
                                        ph.get("exif_lng"))
+                    added_photos += 1
                     existing.add((ph.get("exif_time"), ph.get("exif_lat"),
                                   ph.get("exif_lng")))
                 except Exception:
                     continue
 
-    orphan_n = _attach_orphans(trip_id, plan["orphans"],
-                              {Path(p).name: p for _, p in stored})
+    orphan_dupes, orphan_added = _attach_orphans_with_report(
+        trip_id, plan["orphans"], {Path(p).name: p for _, p in stored}, existing)
 
-    return {"trip_id": trip_id, "stats": plan["stats"],
-            "added_points": added_points, "skipped_photos": skipped,
-            "orphan_count": orphan_n}
+    return {
+        "trip_id": trip_id,
+        "stats": plan["stats"],
+        "added_points": added_points,
+        "added_photos": added_photos,
+        "duplicate_photos": duplicates + orphan_dupes,
+        "orphan_count": orphan_added,
+        # 全量都没进去时给一个明确标志，前端据此显示「全部已存在」而不是
+        # 「已追加 0 个点」这种容易被当成出错的话
+        "nothing_added": added_points == 0 and orphan_added == 0
+                          and bool(duplicates or orphan_dupes),
+    }
 
 
 def _existing_media_keys(trip_id: int):
