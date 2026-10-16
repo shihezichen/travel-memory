@@ -18,9 +18,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="旅行记忆">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <!-- 顶栏已经自己用 env(safe-area-inset-top) 让开状态栏（见 style.css 的 .topbar）。
-       这枚标记告诉「壳类 App」（例如鸿蒙 ArkWeb 壳）不要再补一次，免得双重留白。 -->
-  <meta name="tm-safe-area" content="1">
+<!-- 安全区：网页侧只靠 CSS env(safe-area-inset-*)，而它在原生 WebView 壳里恒为 0；
+     故声明 content="none" 明确告诉壳「网页处理不了，请注入 padding」。两端壳（Android WebView / 鸿蒙 ArkWeb）
+     看到本标记不等于1 就会注入。iOS Safari 与 Chrome PWA 里 env() 正常，无需壳参与。 -->
   <link rel="stylesheet" href="/static/style.css?v=20261016v1">
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
@@ -170,7 +170,7 @@
     <div class="lightbox-counter" id="lightbox-counter"></div>
   </div>
 
-  <script src="/static/safearea.js?v=20261016v1"></script>
+  <script src="/static/shell-inset.js?v=20261016v2"></script>
   <script src="/static/common.js?v=20261016v1"></script>
   <script src="/static/share.js?v=20261016v1"></script>
 </body>
