@@ -2768,27 +2768,3 @@ function renderRoadLabels(runsBySeg) {
     });
   });
 })();
-
-// ---- 照片生成轨迹（photo-trip.js 提供 window.PhotoTrip.open） ----
-document.addEventListener('DOMContentLoaded', function () {
-  // 顶栏入口：新建行程
-  var b1 = document.getElementById('btn-photo-trip');
-  if (b1) {
-    b1.addEventListener('click', function () {
-      if (window.PhotoTrip) window.PhotoTrip.open('create');
-    });
-  }
-  // 悬浮加号：双击 = 往当前行程追加照片。
-  // 为什么用双击而不是长按：长按在移动端会和地图拖动手势打架；
-  // 双击不冲突，且这个入口本来就是进阶用法，不该抢主路径。
-  var b2 = document.getElementById('btn-add-point');
-  if (b2) {
-    b2.setAttribute('title', '添加地点（双击：按照片生成轨迹）');
-    b2.addEventListener('dblclick', function () {
-      var tid = (typeof currentTripId !== 'undefined' && currentTripId)
-              || window.currentTripId || null;
-      if (!tid) { if (window.toast) window.toast('请先打开一个行程'); return; }
-      if (window.PhotoTrip) window.PhotoTrip.open('append', tid);
-    });
-  }
-});

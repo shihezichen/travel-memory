@@ -35,6 +35,20 @@
     return n;
   }
 
+  // 提示条。本项目的提示函数叫 tmToast（定义在 common.js），**不是** toast。
+  // 这里做一层兜底：万一将来改名，也不至于让「生成成功」这种时刻直接抛错。
+  function notify(text) {
+    if (typeof window.tmToast === 'function') {
+      window.tmToast(text);
+    } else if (typeof window.toast === 'function') {
+      window.toast(text);
+    }
+    // 都没有就退回弹窗自己的状态行，保证用户至少看得到结果
+    if (typeof window.tmToast !== 'function' && typeof window.toast !== 'function') {
+      setStatus(text);
+    }
+  }
+
   function fmtSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1048576) return (bytes / 1024).toFixed(0) + ' KB';
@@ -269,16 +283,20 @@
         ? `已追加 ${data.added_points || 0} 个轨迹点`
           + (data.skipped_photos ? `，跳过 ${data.skipped_photos} 张重复照片` : '')
         : `已生成行程：${s.point_count} 个轨迹点 / ${s.usable} 张照片`;
-      toast(msg);
+      notify(msg);
 
       const tid = state.mode === 'append' ? state.tripId : data.trip_id;
       close();
-      // 切到新行程并刷新，让用户直接看到结果
-      if (tid && typeof window.loadTrip === 'function') {
-        try { await window.loadTrip(tid); } catch (e) { /* 刷新兜底 */ }
-      } else {
-        location.reload();
+
+      // 切到新行程让用户直接看到结果。
+      // selectTrip / currentTripId 都定义在 app.js 里，而 app.js 的 <script>
+      // 排在 photo-trip.js **之后**（index.html 405~407 行），但那时 app.js
+      // 已经加载完毕，所以运行时能拿到。仍然做存在性判断：万一加载顺序变了，
+      // 退化成刷新页面，至少结果不会丢。
+      if (tid && typeof window.selectTrip === 'function') {
+        try { await window.selectTrip(tid); return; } catch (e) { /* 落下去刷新 */ }
       }
+      location.reload();
     } catch (err) {
       setStatus('生成失败：' + err.message, 'err');
       state.busy = false;

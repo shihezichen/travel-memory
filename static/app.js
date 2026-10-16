@@ -7551,3 +7551,30 @@ ensureAuth().then(ok => {
   // 登录成功后才恢复图层勾选与灯箱（未登录时恢复会触发接口报错/弹窗）
   if (ok) { restoreLayerState(); restoreLightboxState(); initPhotoSearch(); }
 });
+
+// ---- 照片生成轨迹入口 ----
+// 为什么绑定在这里而不是 common.js：currentTripId / selectTrip 都是
+// app.js 的顶层函数，挂在别的文件里拿不到（跨 <script> 的顶层 const/let
+// 不挂在 window 上，只有 function 声明才会）。
+document.addEventListener('DOMContentLoaded', function () {
+  // 顶栏入口：新建行程
+  var b1 = document.getElementById('btn-photo-trip');
+  if (b1) {
+    b1.addEventListener('click', function () {
+      if (window.PhotoTrip) window.PhotoTrip.open('create');
+    });
+  }
+  // 悬浮加号：双击 = 往当前行程追加照片。
+  // 用双击而非长按：长按在移动端会和地图拖动手势打架。
+  var b2 = document.getElementById('btn-add-point');
+  if (b2) {
+    b2.setAttribute('title', '添加地点（双击：按照片生成轨迹）');
+    b2.addEventListener('dblclick', function () {
+      if (typeof currentTripId === 'undefined' || !currentTripId) {
+        tmToast('请先打开一个行程');
+        return;
+      }
+      if (window.PhotoTrip) window.PhotoTrip.open('append', currentTripId);
+    });
+  }
+});
