@@ -1,0 +1,15 @@
+[Unit]
+Description=Travel Memory — uploads/ 增量同步到阿里云 OSS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/travel-memory-standby
+ExecStart=/root/travel-memory-standby/ops/sync-oss.sh
+# 脚本用 SuccessExitStatus 表达「部分失败不影响整体」，1 也算成功
+SuccessExitStatus=0 1
+# 同步要读uploads/（1003:1003），root 直读即可
+User=root
+Nice=10
+IOSchedulingClass=idle

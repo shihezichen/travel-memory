@@ -67,6 +67,11 @@ ops/*
 # 里面的文件再怎么否定都恢复不回来。
 !ops/sync-oss.sh
 !ops/oss_referenced_names.py
+# systemd unit 模板：热备机 clone 下来就能直接 enable，不用手抄。
+# top001 用system 级（它以 root 跑），lenserver 那份是 user 级。
+!ops/systemd/
+!ops/systemd/*.service
+!ops/systemd/*.timer
 
 backup.sh
 switch-to-domain.sh

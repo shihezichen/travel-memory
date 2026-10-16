@@ -1,0 +1,12 @@
+[Unit]
+Description=Travel Memory — 每 5 分钟把新产生的媒体推到 OSS
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+# 错过的（比如关机期间）开机后补一次
+Persistent=true
+
+[Install]
+WantedBy=timers.target
