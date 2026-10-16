@@ -81,3 +81,29 @@
   .pt-point { font-size: 12px; gap: 6px; }
   .pt-pdate { font-size: 11px; }
 }
+/* ---- 模式切换（新建 / 追加）分段控件 ---- */
+.pt-mode-row { margin-bottom: 4px; }
+.pt-segmented {
+  display: flex; gap: 2px; padding: 3px;
+  background: #f1f3f4; border-radius: 9px;
+}
+.pt-seg-btn {
+  flex: 1 1 0; min-width: 0;
+  padding: 8px 6px; font-size: 13px; font-family: inherit;
+  color: #5f6368; background: transparent;
+  border: none; border-radius: 7px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background .15s, color .15s;
+}
+.pt-seg-btn:hover { background: rgba(0,0,0,.04); }
+.pt-seg-btn.active {
+  background: #fff; color: #1a73e8; font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+}
+.pt-field { margin-top: 12px; }
+.pt-field.hidden { display: none; }
+
+/* ---- 小屏：分段按钮文案缩短的替代方案 ---- */
+@media (max-width: 380px) {
+  .pt-seg-btn { font-size: 12px; padding: 8px 4px; }
+}

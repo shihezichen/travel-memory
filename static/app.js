@@ -5193,6 +5193,9 @@ function openMoreSheet() {
     + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
   const ICON = {
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    // 照片轨迹：山形起伏 + 中间分隔线，一眼能认出是「按顺序串起来的行程」
+    photos: '<path d="M3 7l4-2 5 2 5-2 4 2v10l-4 2-5-2-5 2-4-2z"/>'
+          + '<path d="M7 5v10"/><path d="M17 5v10"/>',
     edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
     // 分享：方框 + 向上箭头，iOS/Safari/微信浏览器里通用的「分享」形态
     share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>'
@@ -5214,6 +5217,9 @@ function openMoreSheet() {
     ...(searchAvailable
       ? [{ ico: svg(ICON.search), lbl: '搜照片', fn: openPhotoSearch }] : []),
     { ico: svg(ICON.plus),     lbl: '新建行程',     fn: openNewTrip },
+    // 照片轨迹紧跟「新建行程」：两者都是「造一个行程出来」，放一起好找。
+    // 顶栏那枚按钮在窄屏会被 .topbtn{display:none} 收掉，所以手机端必须从这里进。
+    { ico: svg(ICON.photos),   lbl: '照片生成轨迹', fn: () => window.PhotoTrip && window.PhotoTrip.open('create') },
     { ico: svg(ICON.edit),     lbl: '编辑行程信息', fn: openEditTrip },
     { ico: svg(ICON.share),    lbl: '分享当前行程', fn: shareTrip },
     { ico: svg(ICON.refresh),  lbl: '重新计算路线', fn: () => $('#btn-recalc').click() },
@@ -7552,29 +7558,17 @@ ensureAuth().then(ok => {
   if (ok) { restoreLayerState(); restoreLightboxState(); initPhotoSearch(); }
 });
 
-// ---- 照片生成轨迹入口 ----
-// 为什么绑定在这里而不是 common.js：currentTripId / selectTrip 都是
-// app.js 的顶层函数，挂在别的文件里拿不到（跨 <script> 的顶层 const/let
-// 不挂在 window 上，只有 function 声明才会）。
+// ---------- 照片生成轨迹 ----------
+// 桌面：顶栏「照片轨迹」按钮直接打开弹窗（弹窗内可选新建或追加）
+// 手机：顶栏按钮被 .topbtn{display:none} 收进「更多」菜单，那里另有一个入口
+// （见 openMoreSheet 的菜单项），所以这里只管桌面那个按钮。
+// 移动端那个「＋」按钮的双击入口已移除 —— 顶栏/菜单里都有一级入口，
+// 双击既不直观也和地图手势冲突，留着只会让人误触。
 document.addEventListener('DOMContentLoaded', function () {
-  // 顶栏入口：新建行程
-  var b1 = document.getElementById('btn-photo-trip');
-  if (b1) {
-    b1.addEventListener('click', function () {
+  var b = document.getElementById('btn-photo-trip');
+  if (b) {
+    b.addEventListener('click', function () {
       if (window.PhotoTrip) window.PhotoTrip.open('create');
-    });
-  }
-  // 悬浮加号：双击 = 往当前行程追加照片。
-  // 用双击而非长按：长按在移动端会和地图拖动手势打架。
-  var b2 = document.getElementById('btn-add-point');
-  if (b2) {
-    b2.setAttribute('title', '添加地点（双击：按照片生成轨迹）');
-    b2.addEventListener('dblclick', function () {
-      if (typeof currentTripId === 'undefined' || !currentTripId) {
-        tmToast('请先打开一个行程');
-        return;
-      }
-      if (window.PhotoTrip) window.PhotoTrip.open('append', currentTripId);
     });
   }
 });

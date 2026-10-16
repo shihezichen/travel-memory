@@ -1,10 +1,14 @@
 /* 照片 → 轨迹：前端交互
    ============================================================================
-   两个入口，一个共用弹窗：
-     · 顶栏「照片生成轨迹」→ 新建行程（mode=create）
-     · 面板悬浮加号的长按/双击 → 往当前行程追加（mode=append）
+   入口（两端都有）：
+     · 桌面顶栏「照片轨迹」按钮
+     · 手机「更多」菜单里的「照片轨迹」（顶栏按钮在窄屏会全部收进这个菜单）
 
-   流程是「选照片 → 服务端解析 EXIF → 预览轨迹点 → 确认生成」三步走。
+   两种模式：
+     新建行程 —— 填行程名 + 选照片 → 预览 → 生成
+     追加到既有行程 —— 选行程 + 选照片 → 预览 → 追加（轨迹按时间插到对应位置）
+
+   流程是「选照片 → 服务端解析 EXIF → 预览轨迹点 → 确认生成」。
    预览这一步刻意放在写库之前：逆地理编码要打网络，用户看到点名列得不好
    可以直接改行程名或取消，不会留下一堆垃圾行程。
 
@@ -24,6 +28,7 @@
     files: [],           // File[]
     plan: null,          // 服务端返回的 plan
     tripId: null,        // append 模式下的目标行程
+    trips: [],           // 既有行程列表
     busy: false,
   };
 
@@ -42,9 +47,7 @@
       window.tmToast(text);
     } else if (typeof window.toast === 'function') {
       window.toast(text);
-    }
-    // 都没有就退回弹窗自己的状态行，保证用户至少看得到结果
-    if (typeof window.tmToast !== 'function' && typeof window.toast !== 'function') {
+    } else {
       setStatus(text);
     }
   }
@@ -55,6 +58,15 @@
     return (bytes / 1048576).toFixed(1) + ' MB';
   }
 
+  async function loadTrips() {
+    if (state.trips.length) return state.trips;
+    try {
+      const r = await fetch('/api/trips', { credentials: 'same-origin' });
+      if (r.ok) state.trips = await r.json();
+    } catch (e) { /* 拉不到就让用户走新建 */ }
+    return state.trips;
+  }
+
   // ---------- 弹窗 DOM ----------
   function buildModal() {
     const wrap = el('div', 'pt-modal hidden');
@@ -63,13 +75,25 @@
       <div class="pt-box" role="dialog" aria-modal="true" aria-labelledby="pt-title">
         <h2 id="pt-title">照片生成轨迹</h2>
 
-        <div class="pt-mode" id="pt-mode-row">
-          <label class="pt-label">行程名称</label>
+        <div class="pt-mode-row">
+          <div class="pt-segmented" id="pt-seg" role="tablist">
+            <button type="button" class="pt-seg-btn active" data-mode="create"
+                    role="tab" aria-selected="true">新建行程</button>
+            <button type="button" class="pt-seg-btn" data-mode="append"
+                    role="tab" aria-selected="false">追加到既有行程</button>
+          </div>
+        </div>
+
+        <div class="pt-field" id="pt-field-new">
+          <label class="pt-label" for="pt-trip-name">行程名称</label>
           <input type="text" id="pt-trip-name" class="pt-input"
                  placeholder="例如：2026 杭州周末" maxlength="60">
-          <p class="pt-hint" id="pt-append-hint" style="display:none">
-            照片会追加到当前行程，轨迹按时间自动插到对应位置。
-          </p>
+        </div>
+
+        <div class="pt-field hidden" id="pt-field-pick">
+          <label class="pt-label" for="pt-trip-pick">选择行程</label>
+          <select id="pt-trip-pick" class="pt-input"></select>
+          <p class="pt-hint">照片会追加到这个行程，轨迹按拍摄时间插到对应位置。</p>
         </div>
 
         <div class="pt-drop" id="pt-drop" tabindex="0"
@@ -123,7 +147,12 @@
         if (fs && fs.length) setFiles(Array.from(fs));
       });
 
-      //点遮罩关闭
+      // 模式切换
+      modal.querySelectorAll('.pt-seg-btn').forEach(b => {
+        b.addEventListener('click', () => switchMode(b.dataset.mode));
+      });
+
+      // 点遮罩关闭
       modal.addEventListener('click', (e) => {
         if (e.target === modal) close();
       });
@@ -131,6 +160,50 @@
       modal.querySelector('#pt-ok').addEventListener('click', submit);
     }
     return modal;
+  }
+
+  function switchMode(mode) {
+    state.mode = mode === 'append' ? 'append' : 'create';
+    modal.querySelectorAll('.pt-seg-btn').forEach(b => {
+      const on = b.dataset.mode === state.mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    modal.querySelector('#pt-field-new').classList.toggle('hidden', state.mode !== 'create');
+    modal.querySelector('#pt-field-pick').classList.toggle('hidden', state.mode !== 'append');
+    modal.querySelector('#pt-ok').textContent =
+      state.mode === 'append' ? '追加到行程' : '生成轨迹';
+    if (state.mode === 'append') fillTripSelect();
+    setStatus('');
+  }
+
+  async function fillTripSelect() {
+    const sel = modal.querySelector('#pt-trip-pick');
+    if (sel.dataset.filled) return;
+    setStatus('正在读取行程列表…');
+    const trips = await loadTrips();
+    sel.innerHTML = '';
+    if (!trips.length) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '（还没有行程，请先新建）';
+      sel.appendChild(o);
+      sel.disabled = true;
+      setStatus('你还没有任何行程，请切到「新建行程」模式。', 'err');
+      return;
+    }
+    sel.disabled = false;
+    trips.forEach(t => {
+      const o = document.createElement('option');
+      o.value = String(t.id);
+      const d = t.start_date ? ` · ${t.start_date}` : '';
+      o.textContent = (t.name || '未命名') + d;
+      sel.appendChild(o);
+    });
+    // 默认选中当前行程（若在列表里）
+    const cur = window.currentTripId;
+    if (cur && trips.some(t => t.id === Number(cur))) sel.value = String(cur);
+    sel.dataset.filled = '1';
+    setStatus('');
   }
 
   function close() {
@@ -194,18 +267,19 @@
     const ok = modal.querySelector('#pt-ok');
     pv.innerHTML = '';
 
+    const verb = state.mode === 'append' ? '将追加' : '将生成';
+
     if (!s.usable) {
       setStatus(`读了 ${s.photo_total || 0} 张，但没有一张同时有拍摄时间和 GPS。`
         + '截图、微信保存的图通常没有 GPS，这类照片会进「待分配」。', 'err');
       ok.disabled = !state.files.length;
-      ok.textContent = '仅导入照片';
+      ok.textContent = state.mode === 'append' ? '仅导入照片' : '仅导入照片';
       return;
     }
 
     const summary = el('div', 'pt-summary');
-    summary.appendChild(el('span', null,
-      `${s.usable} 张可用照片`));
-    summary.appendChild(el('span', null, ` → ${s.point_count} 个轨迹点`));
+    summary.appendChild(el('span', null, `${verb} ${s.point_count} 个轨迹点`));
+    summary.appendChild(el('span', null, ` · ${s.usable} 张可用照片`));
     if (s.date_from) {
       summary.appendChild(el('span', null,
         ` · ${s.date_from}${s.date_from !== s.date_to ? ' ~ ' + s.date_to : ''}`));
@@ -226,10 +300,9 @@
 
     // 无 GPS / 无时间的照片，明确告知去向
     if (s.orphan) {
-      const warn = el('div', 'pt-orphan-note',
+      pv.appendChild(el('div', 'pt-orphan-note',
         `另有 ${s.orphan} 张照片缺少拍摄时间或 GPS（多为截图），`
-        + `会放到「📷 待分配照片」，你可以稍后手工分配到具体地点。`);
-      pv.appendChild(warn);
+        + `会放到「📷 待分配照片」，你可以稍后手工分配到具体地点。`));
     }
 
     const unnamed = data.named_count != null
@@ -257,18 +330,24 @@
       const fd = new FormData();
       state.files.forEach(f => fd.append('files', f, f.name));
 
-      let url, name;
-      if (state.mode === 'append' && state.tripId) {
-        url = `/api/trips/${state.tripId}/photo-trip/append`;
-        name = '';
+      let url;
+      if (state.mode === 'append') {
+        const tid = modal.querySelector('#pt-trip-pick').value;
+        if (!tid) {
+          setStatus('请先选择要追加到的行程', 'err');
+          state.busy = false; ok.disabled = false; ok.textContent = old;
+          return;
+        }
+        url = `/api/trips/${tid}/photo-trip/append`;
+        state.tripId = tid;
       } else {
-        url = API_CREATE;
-        name = (modal.querySelector('#pt-trip-name').value || '').trim();
+        const name = (modal.querySelector('#pt-trip-name').value || '').trim();
         if (!name) {
           setStatus('请先给行程起个名字', 'err');
           state.busy = false; ok.disabled = false; ok.textContent = old;
           return;
         }
+        url = API_CREATE;
         fd.append('trip_name', name);
       }
 
@@ -287,12 +366,10 @@
 
       const tid = state.mode === 'append' ? state.tripId : data.trip_id;
       close();
+      state.trips = [];   // 行程列表可能变了，下次进弹窗重新拉
 
-      // 切到新行程让用户直接看到结果。
-      // selectTrip / currentTripId 都定义在 app.js 里，而 app.js 的 <script>
-      // 排在 photo-trip.js **之后**（index.html 405~407 行），但那时 app.js
-      // 已经加载完毕，所以运行时能拿到。仍然做存在性判断：万一加载顺序变了，
-      // 退化成刷新页面，至少结果不会丢。
+      // 切到新行程让用户直接看到结果。selectTrip 是 app.js 的顶层 function，
+      // 运行时能拿到；仍做存在性判断，失败就退回刷新。
       if (tid && typeof window.selectTrip === 'function') {
         try { await window.selectTrip(tid); return; } catch (e) { /* 落下去刷新 */ }
       }
@@ -307,33 +384,24 @@
   // ---------- 对外入口 ----------
   function open(mode, tripId) {
     const m = ensureModal();
-    state.mode = mode === 'append' ? 'append' : 'create';
-    state.tripId = tripId || null;
-    state.plan = null;
     state.files = [];
+    state.plan = null;
+    state.busy = false;
+    if (tripId) state.tripId = tripId;
 
-    m.querySelector('#pt-title').textContent =
-      state.mode === 'append' ? '照片追加到当前行程' : '照片生成轨迹';
-    const nameRow = m.querySelector('#pt-mode-row');
-    const nameInput = m.querySelector('#pt-trip-name');
-    const hint = m.querySelector('#pt-append-hint');
-    if (state.mode === 'append') {
-      nameInput.style.display = 'none';
-      hint.style.display = '';
-      nameRow.querySelector('.pt-label').textContent = '';
-    } else {
-      nameInput.style.display = '';
-      hint.style.display = 'none';
-      nameRow.querySelector('.pt-label').textContent = '行程名称';
-      if (!nameInput.value) {
-        const d = new Date();
-        nameInput.value = `${d.getFullYear()} 照片轨迹`;
-      }
-    }
+    m.querySelector('#pt-title').textContent = '照片生成轨迹';
     m.querySelector('#pt-preview').innerHTML = '';
     m.querySelector('#pt-status').textContent = '';
     m.querySelector('#pt-ok').disabled = true;
     m.classList.remove('hidden');
+
+    // 默认模式：传了 tripId 就直接进追加，否则新建
+    switchMode(mode === 'append' || tripId ? 'append' : 'create');
+
+    if (state.mode === 'create') {
+      const d = new Date();
+      m.querySelector('#pt-trip-name').value = `${d.getFullYear()} 照片轨迹`;
+    }
   }
 
   window.PhotoTrip = { open };
