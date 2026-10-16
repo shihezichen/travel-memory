@@ -1187,6 +1187,54 @@ def api_reorder_points(request: Request, trip_id: int, ordered_ids: str = Form(.
     return {"ok": True}
 
 
+@app.post("/api/media/move")
+def api_move_media(request: Request,
+                   media_ids: str = Form(""),
+                   target_point_id: int = Form(...)):
+    """把若干条媒体（照片/视频）移动到另一个轨迹点。
+
+    存在的原因：「📷 待分配照片」池里的照片需要被人工安置 —— 有的确实该去某个
+    地点，有的只是误导入想删掉。逐张点开详情再上传一次太绕，一次多选批量处理
+    才是这件事该有的样子。
+
+    三条约束：
+    · **只能移动到自己行程内的点**，且归属校验按第一条媒体做（同一批必然同
+      行程；混批传进来则第一条说了算，多出来的会被下面那层挡住）
+    · **不能移回待分配池** —— 那个池子是「还没安置」的意思，移回去等于没处理
+    · **不跨用户**：目标点必须属于同一用户，否则 404（不泄露存在性）
+    """
+    require_owner(current_user(request), db.get_point_owner_id(target_point_id), "地点")
+    ids = [int(x) for x in (media_ids or "").split(",") if str(x).strip().isdigit()]
+    if not ids:
+        raise HTTPException(400, "没有选中任何照片")
+    if len(ids) > 500:
+        raise HTTPException(400, "一次最多移动 500 张")
+
+    # 目标点不能是待分配池
+    if db.is_pending_pool(db.get_point(target_point_id) or {}):
+        raise HTTPException(400, "不能移动到「待分配照片」")
+
+    moved, skipped = 0, 0
+    for mid in ids:
+        src_trip = db.get_media_trip_id(mid)
+        if not src_trip:
+            skipped += 1
+            continue
+        # 归属校验：每条都查，不能只看第一条 —— 否则可以拿别人行程的 media_id
+        # 试着往自己点里塞
+        owner = db.get_media_owner_id(mid)
+        if not owner or owner != db.get_point_owner_id(target_point_id):
+            skipped += 1
+            continue
+        conn = db.get_conn()
+        conn.execute("UPDATE media SET point_id=? WHERE id=?", (target_point_id, mid))
+        conn.commit()
+        conn.close()
+        moved += 1
+
+    return {"moved": moved, "skipped": skipped}
+
+
 @app.delete("/api/points/{point_id}")
 def api_delete_point(request: Request, point_id: int):
     require_owner(current_user(request), db.get_point_owner_id(point_id), "地点")

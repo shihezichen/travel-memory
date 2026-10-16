@@ -2926,3 +2926,74 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
   .transfer-item { padding: 14px; }
   .transfer-label { font-size: 15px; }
 }
+
+/* ==========================================================================
+   「📷 待分配照片」池的详情页能力
+   ==========================================================================
+   勾选框 / 多选操作栏 / 编辑按钮置灰 / 目标点选择列表。
+   前缀 .pt- 与 photo-trip.js 的弹窗一致，但类名带 pool 以示区分。
+   ========================================================================== */
+
+/* ---- 提示条 ---- */
+.pt-pool-hint {
+  margin: 0 0 8px; padding: 7px 10px;
+  background: #fef7e0; border-radius: 7px;
+  font-size: 12px; color: #8a6d3b; line-height: 1.5;
+}
+
+/* ---- 每格的勾选框 ---- */
+.media-item.pt-pickable { position: relative; cursor: pointer; }
+.pt-pick-box {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  width: 22px; height: 22px; border-radius: 6px;
+  background: rgba(255,255,255,.92);
+  border: 1.5px solid rgba(0,0,0,.28);
+  color: transparent; font-size: 14px; line-height: 19px;
+  text-align: center; pointer-events: none;
+  transition: background .12s, border-color .12s;
+}
+.media-item.is-picked .pt-pick-box {
+  background: var(--primary, #1a73e8);
+  border-color: var(--primary, #1a73e8);
+  color: #fff;
+}
+.media-item.is-picked { outline: 2px solid var(--primary, #1a73e8); outline-offset: -2px; }
+
+/* ---- 批量操作栏 ---- */
+.pt-pool-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 10px; padding: 9px 10px;
+  background: #f8f9fa; border: 1px solid #e8eaed; border-radius: 8px;
+}
+.pt-pool-count { font-size: 13px; color: #5f6368; margin-right: auto; }
+.pt-pool-count b { color: #202124; }
+.pt-pool-bar .btn { padding: 6px 12px; font-size: 13px; }
+.pt-pool-bar .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---- 目标点选择 ---- */
+.pt-move-list { display: flex; flex-direction: column; gap: 6px; }
+.pt-move-item {
+  display: flex; flex-direction: column; align-items: flex-start;
+  width: 100%; padding: 10px 12px; text-align: left;
+  font-family: inherit; cursor: pointer;
+  background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+  transition: border-color .15s, background .15s;
+}
+.pt-move-item:hover { border-color: var(--primary); background: #f5f9ff; }
+.pt-move-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.pt-move-name { font-size: 14px; color: var(--text); }
+.pt-move-sub { font-size: 12px; color: #80868b; margin-top: 1px; }
+
+/* ---- 编辑按钮置灰（待分配池不可改名） ---- */
+.detail-act.is-locked,
+.detail-act:disabled {
+  opacity: .35; cursor: not-allowed; pointer-events: none;
+}
+.detail-act.is-locked { pointer-events: auto; }
+
+@media (max-width: 600px) {
+  /* 手指目标放大到接近移动端推荐值 */
+  .pt-pool-bar .btn { padding: 9px 14px; font-size: 14px; }
+  .pt-move-item { padding: 13px 14px; }
+  .pt-pick-box { width: 26px; height: 26px; line-height: 22px; font-size: 16px; }
+}

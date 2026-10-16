@@ -119,6 +119,22 @@ def _attach_orphans(trip_id: int, orphans, stored_by_name: dict):
     return added
 
 
+def _dedup_key(exif_time, exif_lat, exif_lng):
+    """照片的去重键。
+
+    **三项全缺的（截图、微信转存）必须用文件名当键，不能用 (None,None,None)。**
+    原来直接拿三元组当键，结果这一批照片的键全都是 (None,None,None)，
+    于是第一张入库、后面每一张都被判成「已存在」而丢弃 —— 一次导入 3 张截图
+    只进了 1 张，而且界面还提示「2 张已存在」，看起来像是正常的去重。
+
+    有任何一项 EXIF 时用 (time,lat,lng)：那是这张照片的真实身份，
+    同一张照片重复导入一定会命中。
+    """
+    if exif_time is None and exif_lat is None and exif_lng is None:
+        return None          # 交给调用方按文件名处理，见下
+    return (exif_time, exif_lat, exif_lng)
+
+
 def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
                                 existing: set):
     """同上，但额外报告哪些是重复的。返回 (重复明细, 实际新增数)。"""
@@ -131,7 +147,11 @@ def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
         name = o["filename"]
         if name not in stored_by_name:
             continue
-        key = (o.get("exif_time"), o.get("exif_lat"), o.get("exif_lng"))
+        key = _dedup_key(o.get("exif_time"), o.get("exif_lat"), o.get("exif_lng"))
+        # 无 EXIF 的照片没有可靠的身份，退化成按文件名判重（同一张图重复导入
+        # 的文件名当然一样；不同截图名字不同，不会误伤）
+        if key is None:
+            key = ("__nofile__", name, "")
         if key in existing:
             dupes.append({
                 "filename": name,
@@ -200,7 +220,10 @@ async def photo_trip_preview(request: Request,
             existing = _existing_media_keys(tid)
             dupes = []
             for r in rows:
-                key = (r.get("exif_time"), r.get("exif_lat"), r.get("exif_lng"))
+                key = _dedup_key(r.get("exif_time"), r.get("exif_lat"),
+                                 r.get("exif_lng"))
+                if key is None:
+                    key = ("__nofile__", r["filename"], "")
                 if key in existing:
                     dupes.append({
                         "filename": r["filename"],
@@ -353,7 +376,10 @@ async def photo_trip_append(request: Request, trip_id: int,
             cluster = clusters[cid] if cid < len(clusters) else {"photos": []}
             fresh = []
             for ph in cluster["photos"]:
-                key = (ph.get("exif_time"), ph.get("exif_lat"), ph.get("exif_lng"))
+                key = _dedup_key(ph.get("exif_time"), ph.get("exif_lat"),
+                                 ph.get("exif_lng"))
+                if key is None:
+                    key = ("__nofile__", ph["filename"], "")
                 if key in existing:
                     duplicates.append({
                         "filename": ph["filename"],
@@ -378,8 +404,10 @@ async def photo_trip_append(request: Request, trip_id: int,
                                        ph.get("exif_time"), ph.get("exif_lat"),
                                        ph.get("exif_lng"))
                     added_photos += 1
-                    existing.add((ph.get("exif_time"), ph.get("exif_lat"),
-                                  ph.get("exif_lng")))
+                    k = _dedup_key(ph.get("exif_time"), ph.get("exif_lat"),
+                                   ph.get("exif_lng"))
+                    existing.add(k if k is not None
+                                 else ("__nofile__", ph["filename"], ""))
                 except Exception:
                     continue
 

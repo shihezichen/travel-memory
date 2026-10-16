@@ -36,6 +36,8 @@ let footprintView = null;   // 当前这份数据对应哪个「缩放级别 + �
 let photoLayerData = null;  // 当前行程的照片堆数据缓存（/api/photo-layer?trip_id=，含照片+视频），换行程即失效
 let currentTripId = null;
 let currentPointId = null;
+// 当前详情页是否是「待分配照片」池：决定编辑按钮要不要置灰、是否显示多选 UI
+let currentPointIsPool = false;
 let currentUser = null;  // /api/me 返回（含 last_trip_id：服务端记的上次打开行程）
 let autocomplete = null;
 let searchSeq = 0;     // 地名联想搜索序号，防竞态
@@ -1992,14 +1994,44 @@ async function loadDetail(pointId) {
   $('#detail-date').textContent = fmtDate(point.start_date);
   $('#detail-desc').textContent = point.description || '';
 
-  // 辅助点（纯途经点）没有上传入口——「＋」格由 renderMedia 按 is_waypoint 决定加不加
+  // 换点时把上一个点的多选状态清掉，否则操作栏会带着上一个点的选中项跑过来
+  const wasPool = !!currentPointIsPool;
+  currentPointIsPool = !!point.is_pending_pool;
 
+  const editBtn = $('#btn-edit-point');
+  if (currentPointIsPool) {
+    // 「待分配照片」不能改名：前后端都按这个名字识别它（db.is_pending_pool、
+    // 地图过滤），改名会让整个识别失效。所以明确置灰并说明原因，
+    // 而不是让用户点了才发现没反应。
+    editBtn.disabled = true;
+    editBtn.classList.add('is-locked');
+    editBtn.title = '「待分配照片」是固定的存放点，不能改名';
+    editBtn.setAttribute('aria-disabled', 'true');
+  } else {
+    editBtn.disabled = false;
+    editBtn.classList.remove('is-locked');
+    editBtn.title = '编辑轨迹点';
+    editBtn.removeAttribute('aria-disabled');
+  }
+
+  // 辅助点（纯途经点）没有上传入口——「＋」格由 renderMedia 按 is_waypoint 决定加不加
   if (point.is_waypoint) {
-    const grid = $('#media-grid');
-    grid.innerHTML = '';
-    lightboxMedia = [];
+    // 「待分配照片」池也带 is_waypoint，但它装的就是待安置的照片，必须显示出来，
+    // 所以这里不能像纯途经点那样直接 return。
+    const pureWaypoint = !currentPointIsPool;
+    if (pureWaypoint) {
+      const grid = $('#media-grid');
+      grid.innerHTML = '';
+      lightboxMedia = [];
+      if (window.PendingPool && wasPool) window.PendingPool.exit();
+      return;
+    }
+    if (window.PendingPool && wasPool) window.PendingPool.exit();
+    const poolMedia = await api(`/api/points/${pointId}/media`);
+    renderMedia(poolMedia, { selectable: true });
     return;
   }
+  if (window.PendingPool && wasPool) window.PendingPool.exit();
 
   // 媒体
   const media = await api(`/api/points/${pointId}/media`);
@@ -2044,8 +2076,9 @@ let mediaDragging = false;
 // 由 initTabSwipe 注册：把已经跟手走了一段的 tab 轨道弹回原位并停止接管
 let cancelTabSwipe = function () {};
 
-function renderMedia(media) {
+function renderMedia(media, opts) {
   const grid = $('#media-grid');
+  const selectable = !!(opts && opts.selectable);
   // 这面网格也是一面「相片墙」（见 common.js PW_TARGETS.detail）：
   // 重建会把铺满层一起冲掉，正在播的那一轮等于被抽了遮挡层，先停。
   if (typeof pwReset === 'function' && pwOn && pwTargetKey === 'detail') pwReset();
@@ -2055,16 +2088,20 @@ function renderMedia(media) {
   detailMedia = mergeRecentUploads(currentPointId, media || []);
   lightboxMedia = detailMedia;
   detailMedia.forEach((m) => {
-    grid.appendChild(buildMediaItem(m));
+    grid.appendChild(buildMediaItem(m, { selectable: selectable }));
   });
+  if (selectable && window.PendingPool) {
+    window.PendingPool.enter();
+    ensurePoolSelectHint();
+  }
   // 正在上传的占位格挂回来。少了这一步，上传途中任何一次 loadDetail
   // （点 tab / 横滑切 tab / 删一张图）都会把在传的格子连同上传结果一起丢掉。
   reattachActiveUploads(grid);
   // 「＋」永远排在最后一格；辅助点（纯途经点）不给上传入口
   const pt = (lastPoints || []).find(p => Number(p.id) === Number(currentPointId));
-  if (!pt || !pt.is_waypoint) grid.appendChild(buildMediaAddCell());
+  if (!selectable && (!pt || !pt.is_waypoint)) grid.appendChild(buildMediaAddCell());
   // 上次没传完的（刷新/换设备回来）：异步拉一次，插「未完成的上传」占位格
-  if (!pt || !pt.is_waypoint) refreshResumableCells(currentPointId);
+  if (!selectable && (!pt || !pt.is_waypoint)) refreshResumableCells(currentPointId);
   wallForgetDetached();        // 上一轮的格子已经随 innerHTML='' 脱离文档
   syncDetailPlayBtn();
   // 换点/删图之后接着放（没在播就是个空操作）
@@ -2080,9 +2117,16 @@ function syncDetailPlayBtn() {
   if (typeof pwSetButton === 'function') pwSetButton();
 }
 
-function buildMediaItem(m) {
+function buildMediaItem(m, opts) {
+  const selectable = !!(opts && opts.selectable);
   const item = el('div', 'media-item');
   item.dataset.mid = String(m.id);
+  if (selectable) {
+    // 勾选框压在角上；点击图片切选中而不是开灯箱
+    const box = el('span', 'pt-pick-box');
+    item.appendChild(box);
+    item.classList.add('pt-pickable');
+  }
   const img = el('img');
   // 用服务端算好的地址：刚上传的文件还没同步到 OSS，拼出来的 OSS 地址是 404，
   // 界面上就是一块裂图（照片传完 / 视频转码中最容易撞上）。
@@ -2099,6 +2143,10 @@ function buildMediaItem(m) {
   // 点图看大图。用 detailMedia 现算下标：拖拽排过序后位置会变
   img.onclick = () => {
     if (item.classList.contains('just-dragged')) return;   // 刚拖完那一下不当点击
+    if (selectable && window.PendingPool) {
+      window.PendingPool.toggle(m.id);
+      return;
+    }
     const idx = detailMedia.findIndex(x => Number(x.id) === Number(m.id));
     openLightbox(Math.max(0, idx));
   };
@@ -2165,6 +2213,19 @@ function buildMediaAddCell() {
   cell.appendChild(el('span', 'media-add-plus', '＋'));
   cell.onclick = () => pickMediaFiles();
   return cell;
+}
+
+// 待分配池进详情时提示一句「点图可选中」，否则那面墙看起来和普通照片墙一样，
+// 用户不会想到可以点选。提示条挂在网格上方，进了多选就消失。
+function ensurePoolSelectHint() {
+  if (document.getElementById('pt-pool-hint')) return;
+  const grid = $('#media-grid');
+  if (!grid || !grid.parentElement) return;
+  const hint = el('div', 'pt-pool-hint');
+  hint.id = 'pt-pool-hint';
+  hint.textContent = '点选照片后可批量移动到别的地点，或删除。'
+    + '（缺拍摄信息的照片只能这样识别重复，重复导入不会自动跳过）';
+  grid.parentElement.insertBefore(hint, grid);
 }
 
 // ---------- 选文件：停在上次用过的目录 ----------
