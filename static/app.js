@@ -329,6 +329,9 @@ async function api(url, opts = {}) {
 }
 
 // ---------- 登录 / 认证 ----------
+// 刚注册完这一小段生命周期内为 true，用来触发起步引导面板
+let justRegistered = false;
+
 function showLogin() { $('#login-overlay').classList.remove('hidden'); }
 function hideLogin() { $('#login-overlay').classList.add('hidden'); }
 function setLoginError(msg) {
@@ -445,6 +448,10 @@ $('#register-form').addEventListener('submit', async (e) => {
   fd.append('password', password);
   const res = await fetch('/api/register', { method: 'POST', body: fd });
   if (res.ok) {
+    // 记住「这是刚注册的」，登录动画播完后弹起步引导面板。
+    // 放在内存而不是 sessionStorage：注册完紧接着就是这一次会话，
+    // 刷新一次就该回到正常界面，而不是把面板又弹一遍。
+    justRegistered = true;
     onLoggedIn();
   } else {
     const data = await res.json().catch(() => ({}));
@@ -476,6 +483,12 @@ function onLoggedIn() {
     restoreLayerState();
     restoreLightboxState();
     initPhotoSearch();
+    // 刚注册完 → 弹起步引导。放在数据都加载完之后，免得面板盖在还没画完的
+    // 空界面上（用户会觉得是坏了）。
+    if (justRegistered) {
+      justRegistered = false;
+      openWelcomePanel();
+    }
   });
 }
 
@@ -5181,7 +5194,7 @@ $('#modal-form').addEventListener('submit', async (e) => {
       // 新建完就进去。原来只 loadTrips()，而 loadTrips 会「恢复上次打开的行程」，
       // 于是刚建好的行程明明在列表里、界面却纹丝不动停在旧行程上。
       await loadTrips(createdTripId);
-      if (createdTripId) tmToast('已进入新行程，点右下角「＋」添加第一个地点');
+      if (createdTripId) tmToast('已进入这个行程，点右下角「＋」添加第一个地点');
     } else {
       await loadPoints();
     }
@@ -5191,6 +5204,30 @@ $('#modal-form').addEventListener('submit', async (e) => {
 });
 
 // ---------- 更多操作菜单（移动端底部抽屉） ----------
+// 导入/导出的二级选择（原先是两个平级菜单项，合成一个入口后点这里）。
+// 依然用 openModal 走既有的 modal 壳，所以遮罩点击关闭、Esc、中间标题栏
+// 这些行为都自动继承，不需要另写一套。
+function openTransferSheet() {
+  const items = [
+    { label: '导出当前行程', sub: '生成一个纯文本文件，可保存或发给别人',
+      fn: () => { closeModal(); exportTrip(); } },
+    { label: '从文件导入行程', sub: '选一个之前导出的纯文本文件',
+      fn: () => { closeModal(); $('#import-file-input').click(); } },
+  ];
+  const html = '<div class="transfer-list">' + items.map((it, i) =>
+    `<button type="button" class="transfer-item" data-i="${i}">
+       <span class="transfer-label">${it.label}</span>
+       <span class="transfer-sub">${it.sub}</span>
+     </button>`).join('') + '</div>';
+
+  openModal('导入 / 导出', html);
+  // 用 $ 而不是 $$：本文件只有 $ 这个单元素选择器helper，
+  // 一次性取全部再遍历反而更省。
+  document.querySelectorAll('.transfer-item').forEach((btn) => {
+    btn.onclick = () => items[Number(btn.dataset.i)].fn();
+  });
+}
+
 function openMoreSheet() {
   // 图标用 Feather Icons（MIT）的线条几何内联成 SVG，跟主流 App（微信/抖音/小红书）
   // 的线性图标一致；emoji 在各家系统上长相差异大且偏卡通。
@@ -5199,7 +5236,7 @@ function openMoreSheet() {
     + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
   const ICON = {
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
-    // 照片轨迹：山形起伏 + 中间分隔线，一眼能认出是「按顺序串起来的行程」
+    // 照片行程：山形起伏 + 中间分隔线，一眼能认出是「按顺序串起来的行程」
     photos: '<path d="M3 7l4-2 5 2 5-2 4 2v10l-4 2-5-2-5 2-4-2z"/>'
           + '<path d="M7 5v10"/><path d="M17 5v10"/>',
     edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
@@ -5214,6 +5251,8 @@ function openMoreSheet() {
           + '<polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
     terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
     search: '<circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/>',
+    // 导入导出合并成一个入口：双向箭头，一眼看出「双向搬东西」
+    transfer: '<path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
           + '<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
   };
@@ -5222,15 +5261,16 @@ function openMoreSheet() {
     // 告诉用户「这儿没东西」，不如不摆（和顶栏那枚放大镜同一套判断）。
     ...(searchAvailable
       ? [{ ico: svg(ICON.search), lbl: '搜照片', fn: openPhotoSearch }] : []),
-    { ico: svg(ICON.plus),     lbl: '新建行程',     fn: openNewTrip },
-    // 照片轨迹紧跟「新建行程」：两者都是「造一个行程出来」，放一起好找。
+    { ico: svg(ICON.plus),     lbl: '手工行程',     fn: openNewTrip },
+    // 照片行程紧跟「手工行程」：两者都是「造一个行程出来」，放一起好找。
     // 顶栏那枚按钮在窄屏会被 .topbtn{display:none} 收掉，所以手机端必须从这里进。
-    { ico: svg(ICON.photos),   lbl: '照片生成轨迹', fn: () => window.PhotoTrip && window.PhotoTrip.open('create') },
+    { ico: svg(ICON.photos),   lbl: '照片行程',     fn: () => window.PhotoTrip && window.PhotoTrip.open('create') },
     { ico: svg(ICON.edit),     lbl: '编辑行程信息', fn: openEditTrip },
     { ico: svg(ICON.share),    lbl: '分享当前行程', fn: shareTrip },
     { ico: svg(ICON.refresh),  lbl: '重新计算路线', fn: () => $('#btn-recalc').click() },
-    { ico: svg(ICON.download), lbl: '导出行程',     fn: exportTrip },
-    { ico: svg(ICON.upload),   lbl: '导入行程',     fn: () => $('#import-file-input').click() },
+    // 导入/导出合成一个入口（2026-10-16）：两个都是「把行程搬进搬出」，
+    // 各占一行对只有几项的菜单太奢侈，点开后再选方向更省一步。
+    { ico: svg(ICON.transfer), lbl: '导入导出行程', fn: openTransferSheet },
     // 用真锚点而不是 window.open：手机浏览器（尤其微信内置和 iOS Safari）
     // 会把「非用户手势同步调用」的 window.open 当弹窗拦掉，然后降级成
     // 当前标签导航 —— 地图页就被控制台顶掉了。<a target=_blank> 不受这个限制。

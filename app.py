@@ -446,7 +446,11 @@ def api_register(username: str = Form(""), password: str = Form(""),
     uid = db.create_user(username, password, display_name or username)
     u = db.get_user_by_id(uid)
     sess = db.create_session(uid)
-    resp = JSONResponse({"ok": True, "user": _public_user(u)})
+    # is_new_user=1：前端据此弹出「第一次来？先挑一个开始」的引导面板。
+    # 放在响应里而不是让前端比对行程数，是因为**新注册用户可能已有行程**
+    # （管理员预建、或同名账号被删后重建），而「刚注册」这个事实只有这里知道。
+    resp = JSONResponse({"ok": True, "user": _public_user(u),
+                         "is_new_user": True})
     set_session_cookie(resp, sess)
     return resp
 

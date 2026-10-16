@@ -11,7 +11,7 @@
   <link rel="icon" href="/static/icon.svg?v=20261016v1" type="image/svg+xml">
   <link rel="icon" href="/static/favicon-32.png?v=20261016v1" sizes="32x32">
   <link rel="apple-touch-icon" href="/static/icon-180.png?v=20261016v1">
-  <link rel="manifest" href="/static/site.webmanifest?v=20261016v4">
+  <link rel="manifest" href="/static/site.webmanifest?v=20261016v5">
   <meta name="theme-color" content="#FF8A00">
   <!-- 装到桌面后以独立窗口运行：iOS 认 apple-*，Android / 桌面认 manifest -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -21,7 +21,7 @@
 <!-- 安全区：网页侧只靠 CSS env(safe-area-inset-*)，而它在原生 WebView 壳里恒为 0；
      故声明 content="none" 明确告诉壳「网页处理不了，请注入 padding」。两端壳（Android WebView / 鸿蒙 ArkWeb）
      看到本标记不等于1 就会注入。iOS Safari 与 Chrome PWA 里 env() 正常，无需壳参与。 -->
-  <link rel="stylesheet" href="/static/style.css?v=20261016v4">
+  <link rel="stylesheet" href="/static/style.css?v=20261016v5">
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
     window.MEDIA_BASE = "__MEDIA_BASE__";
@@ -170,8 +170,8 @@
     <div class="lightbox-counter" id="lightbox-counter"></div>
   </div>
 
-  <script src="/static/shell-inset.js?v=20261016v4"></script>
-  <script src="/static/common.js?v=20261016v4"></script>
+  <script src="/static/shell-inset.js?v=20261016v5"></script>
+  <script src="/static/common.js?v=20261016v5"></script>
   <script src="/static/share.js?v=20261016v1"></script>
 </body>
 </html>

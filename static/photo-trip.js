@@ -1,8 +1,8 @@
 /* 照片 → 轨迹：前端交互
    ============================================================================
    入口（两端都有）：
-     · 桌面顶栏「照片轨迹」按钮
-     · 手机「更多」菜单里的「照片轨迹」（顶栏按钮在窄屏会全部收进这个菜单）
+     · 桌面顶栏「照片行程」按钮
+     · 手机「更多」菜单里的「照片行程」（顶栏按钮在窄屏会全部收进这个菜单）
 
    两种模式：
      新建行程 —— 填行程名 + 选照片 → 预览 → 生成
@@ -499,7 +499,7 @@ function renderPreview(data) {
 
     if (state.mode === 'create') {
       const d = new Date();
-      m.querySelector('#pt-trip-name').value = `${d.getFullYear()} 照片轨迹`;
+      m.querySelector('#pt-trip-name').value = `${d.getFullYear()} 照片行程`;
     }
   }
 
