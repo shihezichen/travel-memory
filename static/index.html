@@ -22,6 +22,7 @@
        这枚标记告诉「壳类 App」（例如鸿蒙 ArkWeb 壳）不要再补一次，免得双重留白。 -->
   <meta name="tm-safe-area" content="1">
   <link rel="stylesheet" href="/static/style.css?v=20261016v1">
+  <link rel="stylesheet" href="/static/photo-trip.css?v=20261016v1">
   <script>
     window._AMapSecurityConfig = { securityJsCode: "__AMAP_SECURITY__" };
     window.MEDIA_BASE = "__MEDIA_BASE__";
@@ -111,6 +112,7 @@
       <button id="btn-search" class="btn topbtn btn-icon btn-search hidden" title="按画面内容搜照片" aria-label="搜照片">
         <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
       </button>
+      <button id="btn-photo-trip" class="btn topbtn" title="按照片的拍摄时间与位置自动生成一条轨迹"><svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l4-2 5 2 5-2 4 2v10l-4 2-5-2-5 2-4-2z"/><path d="M7 5v10"/><path d="M17 5v10"/></svg><span>照片轨迹</span></button>
       <button id="btn-new-trip" class="btn topbtn">
         <svg class="tbi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span>新行程</span>
@@ -401,6 +403,7 @@
   __ICP_FOOTER__
 
   <script src="/static/common.js?v=20261016v1"></script>
+  <script src="/static/photo-trip.js?v=20261016v1"></script>
   <script src="/static/app.js?v=20261016v1"></script>
 </body>
 </html>

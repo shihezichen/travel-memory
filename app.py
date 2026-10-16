@@ -67,6 +67,7 @@ from routers import share as share_mod
 from routers.agent_api import router as agent_api_router
 from routers.console import router as console_router
 from routers.share import router as share_router
+from routers import photo_trip_api as photo_trip_mod
 
 from config import BASE, AMAP_KEY, AMAP_SECURITY, OSRM_URL, OSRM_TIMEOUT, MEDIA_BASE_URL, media_url, media_srcset  # noqa: F401
 UPLOAD_DIR = BASE / "uploads"
@@ -699,6 +700,7 @@ def root_verify_txt(fname: str):
 app.include_router(share_router)
 
 
+app.include_router(photo_trip_mod.router)
 # ---------- 路线规划 ----------
 
 @app.get("/api/route")
