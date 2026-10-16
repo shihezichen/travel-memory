@@ -100,3 +100,7 @@ docs/advertising/assets/*.mp4
 # 没有一个字节是手写的，不该让每个 clone 背着 7G。
 .venv-ai/
 models/
+
+# ACME 续期脚本要进版本库：它含「续期后投递到 OSS」的逻辑，而投递方
+# 只有这台机器。证书本体（lego-data/）仍然忽略 —— 私钥绝不能进 git。
+!acme/renew.sh
