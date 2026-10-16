@@ -333,6 +333,11 @@ async function api(url, opts = {}) {
 // ---------- 登录 / 认证 ----------
 // 刚注册完这一小段生命周期内为 true，用来触发起步引导面板
 let justRegistered = false;
+// 本次会话是否已经弹过起步引导：注册成功、或登录后发现一个行程都没有时
+// 都会弹，但同一个会话里只弹一次，避免用户关掉后每次切tab 都被弹回来
+let welcomeShown = false;
+// welcome.js 在用户手动关闭面板时调它
+window.__tmWelcomeDismissed = function () { welcomeShown = true; };
 
 function showLogin() { $('#login-overlay').classList.remove('hidden'); }
 function hideLogin() { $('#login-overlay').classList.add('hidden'); }
@@ -485,10 +490,14 @@ function onLoggedIn() {
     restoreLayerState();
     restoreLightboxState();
     initPhotoSearch();
-    // 刚注册完 → 弹起步引导。放在数据都加载完之后，免得面板盖在还没画完的
-    // 空界面上（用户会觉得是坏了）。
-    if (justRegistered) {
+    // 起步引导的触发条件（2026-10-16 用户反馈：注册后退出、再登录进来就没弹窗了）：
+    //   · 刚注册完 —— 一定会弹
+    //   · 登录后发现一个行程都没有 —— 也弹（新建的用户如果当初跳过了引导，
+    //     之后登录回来还是空的，至少给一次入口）
+    // 同一个会话只弹一次。
+    if (!welcomeShown && (justRegistered || !(allTrips && allTrips.length))) {
       justRegistered = false;
+      welcomeShown = true;
       openWelcomePanel();
     }
   });
@@ -775,7 +784,15 @@ function renderPointList(points) {
 
     // 连线方式切换：按钮放在「两个点之间」的分隔条上（最后一点后无分隔条），
     // 点击弹出与地图点线段一致的面板（选择驾车/直线/路线方案）
-    if (i < points.length - 1) {
+    // 连线方式切换：按钮放在「两个点之间」的分隔条上（最后一点后无分隔条），
+    // 点击弹出与地图点线段一致的面板（选择驾车/直线/路线方案）。
+    //
+    // 「待分配照片」池没有位置，它与下一点之间不存在「路线」这回事 —— 画一条
+    // 规划线、按距离算里程都是错的（那段距离是几内亚湾到西湖）。所以两种情况
+    // 都不出按钮：不显示分隔条，也不显示 🚗/📏。
+    const next = points[i + 1];
+    const segInvolved = p.is_pending_pool || (next && next.is_pending_pool);
+    if (i < points.length - 1 && !segInvolved) {
       const mode = p.route_mode || 'drive';
       const seg = el('div', 'seg-divider');
       seg.dataset.segIndex = String(i);
@@ -4617,16 +4634,9 @@ async function openEditTrip() {
 }
 
 async function deleteCurrentTrip() {
-  if (!await tmConfirm('删除整个行程及其所有地点和媒体？此操作不可恢复！', '删除行程', { danger: true, okText: '删除' })) return;
-  await api(`/api/trips/${currentTripId}`, { method: 'DELETE' });
+  const trip = allTrips.find(t => Number(t.id) === Number(currentTripId));
+  await deleteTripById(currentTripId, trip ? trip.name : '');
   closeModal();
-  // 服务端已在删除时清掉 last_trip_id，本地缓存同步清掉，避免下面 loadTrips 误判
-  if (currentUser && Number(currentUser.last_trip_id) === Number(currentTripId)) {
-    currentUser.last_trip_id = null;
-  }
-  currentTripId = null;
-  currentPointId = null;
-  await loadTrips();
 }
 
 // ---------- 分享 ----------
@@ -6048,6 +6058,86 @@ async function stepTrip(delta) {
 }
 
 // 点行程名弹出卡片选择器：一屏看清每条行程的名字/日期/状态/规模，比原生下拉直观
+// ---------- 左滑删除（手机端） ----------
+// 行程选择浮层里每张卡片左滑露出「删除」，跟短信列表删一条是一个手势。
+// 只在触摸设备上启用（matchMedia 的 hover 判定），PC 端不做这个交互。
+function attachSwipe(wrap) {
+  if (!window.matchMedia('(hover: none) and (pointer: coarse)').matches) return;
+  if (wrap.dataset.swipeReady) return;
+  wrap.dataset.swipeReady = '1';
+
+  let x0 = 0, y0 = 0, dx = 0, dragging = false, decided = false;
+  const DEL_W = 72;
+
+  const open = () => wrap.classList.add('swiped');
+  const shut = () => wrap.classList.remove('swiped');
+
+  wrap.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    x0 = t.clientX; y0 = t.clientY; dx = 0;
+    dragging = true; decided = false;
+    wrap.classList.add('swiping');
+  }, { passive: true });
+
+  wrap.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    const t = e.touches[0];
+    dx = t.clientX - x0;
+    const dy = t.clientY - y0;
+    // 还没判定方向：垂直滑动是滚动列表，交给浏览器
+    if (!decided) {
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        decided = true;
+        if (Math.abs(dy) > Math.abs(dx)) { dragging = false; wrap.classList.remove('swiping'); return; }
+      } else return;
+    }
+    if (e.cancelable) e.preventDefault();
+    // 只允许左滑露出删除；右滑时最多拖到 0
+    wrap.style.transform = `translateX(${-Math.min(DEL_W, Math.max(0, -dx))}px)`;
+  }, { passive: false });
+
+  const finish = () => {
+    wrap.classList.remove('swiping');
+    wrap.style.transform = '';
+    if (!dragging) return;
+    dragging = false;
+    if (-dx > DEL_W * 0.4) open(); else shut();
+  };
+  wrap.addEventListener('touchend', finish);
+  wrap.addEventListener('touchcancel', finish);
+
+  // 已经滑开的，点其他地方收回去
+  wrap.addEventListener('click', (e) => {
+    if (wrap.classList.contains('swiped') && !e.target.closest('.trip-swipe-del')) {
+      shut();
+    }
+  });
+}
+
+// 删除指定行程（滑动删除与详情页的删除按钮共用）
+async function deleteTripById(tripId, tripName) {
+  if (!tripId) return;
+  const label = tripName ? `「${tripName}」` : '这个行程';
+  if (!await tmConfirm(`删除${label}及其所有地点和媒体？此操作不可恢复！`,
+      '删除行程', { danger: true, okText: '删除' })) return;
+  try {
+    await api(`/api/trips/${tripId}`, { method: 'DELETE' });
+  } catch (e) {
+    tmToast('删除失败：' + (e && e.message ? e.message : '未知错误'));
+    return;
+  }
+  // 服务端在删除时清掉 last_trip_id，本地缓存同步清掉，否则下面 loadTrips 误判
+  if (currentUser && Number(currentUser.last_trip_id) === Number(tripId)) {
+    currentUser.last_trip_id = null;
+  }
+  if (Number(currentTripId) === Number(tripId)) {
+    currentTripId = null;
+    currentPointId = null;
+  }
+  tmToast(`已删除${label}`);
+  await loadTrips();
+}
+
 function openTripSheet() {
   if (!allTrips.length) return;
   const mask = document.createElement('div');
@@ -6060,15 +6150,21 @@ function openTripSheet() {
       ? t.start_date + (t.end_date && t.end_date !== t.start_date ? ' ~ ' + t.end_date : '')
       : '未定日期';
     const isCur = Number(t.id) === Number(currentTripId);
+    // 外面包一层 swipe：手机端左滑露出删除键（短信列表那种手势）。
+    // PC 端鼠标没有「左滑」，靠 CSS 在窄屏之外把删除键藏起来，行为不变。
     return `
-      <button type="button" class="trip-sheet-card${isCur ? ' current' : ''}" data-id="${t.id}">
-        <div class="trip-sheet-head">
-          <span class="trip-sheet-name">${esc(t.name)}</span>
-          ${st[0] ? `<span class="trip-sheet-tag ${st[1]}">${st[0]}</span>` : ''}
-          ${isCur ? '<span class="trip-sheet-check">✓</span>' : ''}
-        </div>
-        <div class="trip-sheet-meta">${esc(date)} · 第 ${i + 1} / ${allTrips.length} 条</div>
-      </button>`;
+      <div class="trip-swipe" data-id="${t.id}">
+        <div class="trip-swipe-del" role="button" tabindex="-1"
+             aria-label="删除行程 ${esc(t.name)}">删除</div>
+        <button type="button" class="trip-sheet-card${isCur ? ' current' : ''}" data-id="${t.id}">
+          <div class="trip-sheet-head">
+            <span class="trip-sheet-name">${esc(t.name)}</span>
+            ${st[0] ? `<span class="trip-sheet-tag ${st[1]}">${st[0]}</span>` : ''}
+            ${isCur ? '<span class="trip-sheet-check">✓</span>' : ''}
+          </div>
+          <div class="trip-sheet-meta">${esc(date)} · 第 ${i + 1} / ${allTrips.length} 条</div>
+        </button>
+      </div>`;
   }).join('');
   sheet.innerHTML =
     `<div class="more-sheet-handle"></div>
@@ -6078,6 +6174,17 @@ function openTripSheet() {
   document.body.appendChild(mask);
   const close = () => mask.remove();
   mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
+  sheet.querySelectorAll('.trip-swipe').forEach(wrap => {
+    const del = wrap.querySelector('.trip-swipe-del');
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      const id = Number(wrap.dataset.id);
+      const trip = allTrips.find(x => Number(x.id) === id);
+      close();
+      await deleteTripById(id, trip ? trip.name : '');
+    };
+    attachSwipe(wrap);
+  });
   sheet.querySelectorAll('.trip-sheet-card').forEach(btn => {
     btn.onclick = () => {
       const id = Number(btn.dataset.id);

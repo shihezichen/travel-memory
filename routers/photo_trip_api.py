@@ -42,11 +42,25 @@ MAX_BATCH = 500
 # 从这里 import app 会形成循环依赖（app 又 include_router 本模块），
 # 所以照它的判定规则就地复刻一份，只用于「视频不参与轨迹生成」这一步。
 _VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".flv", ".wmv",
-              ".3gp", ".ts", ".m4a", ".mp3", ".wav"}
+              ".3gp", ".ts", ".m4v"}
+_AUDIO_EXT = {".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".opus"}
 
 
-def _is_photo(filename: str) -> bool:
-    return (Path(filename or "").suffix.lower() not in _VIDEO_EXT)
+def _is_media(filename: str) -> bool:
+    """这个文件是照片或视频吗（都参与轨迹生成）。
+
+    2026-10-16 起视频也收：**手机拍摄的视频同样在 EXIF 里带 GPS 与拍摄时间**
+    （QuickTime/MP4 的 location atom）。之前一律挡掉，理由是「视频没有 EXIF
+    GPS」，那是错的 —— 只有摄像头用编码器参数存的文件才可能没有。
+    纯音频/字幕等仍不接受，它们确实没有空间信息。
+    """
+    return Path(filename or "").suffix.lower() not in _AUDIO_EXT
+
+
+def _media_type_of(filename: str) -> str:
+    """视频返回 'video'，其余按 photo 处理。"""
+    return ("video"
+            if Path(filename or "").suffix.lower() in _VIDEO_EXT else "photo")
 
 
 def _require_owner(request: Request, trip_id: int, what: str = "行程"):
@@ -55,16 +69,104 @@ def _require_owner(request: Request, trip_id: int, what: str = "行程"):
 
 
 def _read_photo_exif(path: Path):
-    """只解析照片，不落media 行。返回 dict，含 filename/exif_time/exif_lat/exif_lng。"""
+    """只解析照片，不落 media 行。返回 dict，含 filename/exif_time/exif_lat/exif_lng。"""
     dt, lat, lng = media_mod.read_exif(path)
     return {"filename": path.name, "exif_time": dt,
             "exif_lat": lat, "exif_lng": lng}
 
 
-def _parse_uploads(files: list[UploadFile]):
-    """把上传的文件落盘 + 读 EXIF。返回 (rows, stored[(ext, raw)])。
+def _read_video_exif(path: Path):
+    """从视频里抽拍摄时间与 GPS。
 
-    **只落盘不建 media 行** —— 建行需要 point_id，而轨迹点还没生成。
+    手机拍的视频（MP4/MOV）把定位放在 moov 的 udta/meta 里：
+    · creation_time —— ISO 8601，如 2026-06-01T09:00:00.000000Z
+    · location       —— ISO 6709 字符串，如 "+30.2459+120.1443/"
+
+    **优先 ffprobe，但必须有 ffmpeg -i 兜底**：imageio_ffmpeg 只带 ffmpeg
+    不带 ffprobe（见 transcode._ffprobe_path 的注释），所以很多部署里
+    ffprobe 根本不存在。只认 ffprobe 的话，视频会被一律判成「缺时间缺位置」
+    而全落进待分配池 —— 那等于这个功能形同虚设。
+    ffmpeg -i 把同样的 tag 打在 stderr 的 Input #0 元数据块里，解析那份即可。
+
+    抽不到就返回全 None —— 它会像缺信息的照片一样落进待分配池。
+    """
+    out = {"filename": path.name, "exif_time": None,
+           "exif_lat": None, "exif_lng": None}
+
+    tags = _probe_video_tags(path)
+    if not tags:
+        return out
+
+    import re as _re
+
+    # 时间：ISO 8601 的前19 个字符转成 EXIF 那套 "YYYY-MM-DDTHH:MM:SS"
+    ct = (tags.get("creation_time") or "").strip()
+    if ct:
+        m = _re.match(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})", ct)
+        if m:
+            out["exif_time"] = "{}-{}-{}T{}:{}:{}".format(*m.groups())
+
+    # 坐标：ISO 6709 "+30.2459+120.1443/" 或 "+30.2459-120.1443/"
+    loc = (tags.get("location")
+           or tags.get("com.apple.quicktime.location.iso6709") or "").strip()
+    m = _re.search(r"([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)", loc)
+    if m:
+        try:
+            out["exif_lat"] = float(m.group(1))
+            out["exif_lng"] = float(m.group(2))
+        except ValueError:
+            pass
+    return out
+
+
+def _probe_video_tags(path: Path) -> dict:
+    """读视频的元数据标签（小写键）。ffprobe 优先，失败/不存在则 ffmpeg -i 兜底。"""
+    # ① ffprobe
+    try:
+        from transcode import _ffprobe_path
+        probe = _ffprobe_path()
+    except Exception:
+        probe = None
+    if probe:
+        try:
+            import json as _json, subprocess as _sp
+            r = _sp.run(
+                [probe, "-v", "error", "-show_streams", "-show_format",
+                 "-of", "json", str(path)],
+                capture_output=True, text=True, timeout=30)
+            data = _json.loads(r.stdout or "{}")
+            tags = {}
+            for st in (data.get("streams") or []):
+                tags.update({str(k).lower(): v for k, v in (st.get("tags") or {}).items()})
+            tags.update({str(k).lower(): v for k, v in
+                         ((data.get("format") or {}).get("tags") or {}).items()})
+            if tags:
+                return tags
+        except Exception:
+            pass
+
+    # ② ffmpeg -i 的 stderr 兜底（imageio_ffmpeg 只带 ffmpeg 的部署靠这条）
+    try:
+        import re as _re, subprocess as _sp
+        from media import _ffmpeg_path
+        r = _sp.run([_ffmpeg_path(), "-hide_banner", "-i", str(path)],
+                    capture_output=True, text=True, timeout=30)
+        text = r.stderr or ""
+        tags = {}
+        #形如：creation_time   : 2026-06-01T09:00:00.000000Z
+        for key in ("creation_time", "location", "com.apple.quicktime.location.iso6709"):
+            m = _re.search(_re.escape(key) + r"\s*:\s*(\S+)", text)
+            if m:
+                tags[key] = m.group(1)
+        return tags
+    except Exception:
+        return {}
+def _parse_uploads(files: list[UploadFile]):
+    """把上传的文件落盘 + 读 EXIF。
+
+    返回 (rows, stored)，stored 每项是 (落盘名, 完整路径, 类型)。
+
+    只落盘不建 media 行 —— 建行需要 point_id，而轨迹点还没生成。
     真正的 media 行在 create/append 阶段才写。
     """
     rows, stored = [], []
@@ -72,18 +174,22 @@ def _parse_uploads(files: list[UploadFile]):
         raw = f.file.read()
         if not raw:
             continue
-        if not _is_photo(f.filename or "x"):
-            # 视频不进轨迹生成：轨迹点靠照片的空间信息，视频没有 EXIF GPS。
-            # 视频仍可事后挂到任意轨迹点上（走正常的 media 上传接口）。
+        mtype = _media_type_of(f.filename or "x")
+        if not _is_media(f.filename or "x"):
+            # 音频/字幕之类确实没有空间信息，不参与
             continue
         ext = Path(f.filename or "unknown").suffix.lower() or ".jpg"
         name = f"{uuid.uuid4().hex}{ext}"
         src = UPLOAD_DIR / name
         src.write_bytes(raw)
-        row = _read_photo_exif(src)
+        row = (_read_video_exif(src) if mtype == "video"
+               else _read_photo_exif(src))
         row["_src_path"] = str(src)
+        row["_mtype"] = mtype
         rows.append(row)
-        stored.append((name, str(src)))
+        # stored 带上 mtype：建 media 行时要用，写死 photo 会让视频被当成图片存
+        # （前端拿不到可播的 srcset）
+        stored.append((name, str(src), mtype))
     return rows, stored
 
 
@@ -158,10 +264,13 @@ def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
                 "time": (o.get("exif_time") or "")[:16].replace("T", " "),
             })
             continue
-        src_path = Path(stored_by_name[name])
+        hit = stored_by_name.get(name)
+        if not hit:
+            continue
+        src_path, mt = hit
         try:
-            thumb = media_mod.make_thumb(src_path, "photo")
-            mid = db.add_media(pid, "photo", name, thumb,
+            thumb = media_mod.make_thumb(src_path, mt)
+            mid = db.add_media(pid, mt, name, thumb,
                                o.get("exif_time"), o.get("exif_lat"),
                                o.get("exif_lng"))
             existing.add(key)
@@ -207,7 +316,7 @@ async def photo_trip_preview(request: Request,
                 p["named"] = False
 
     # 预览态的照片还没建media 行，返回上传后的临时文件名供后续 create 使用
-    plan["stored"] = [{"filename": n} for n, _ in stored]
+    plan["stored"] = [{"filename": n, "type": mt} for n, _, mt in stored]
     plan["named_count"] = sum(1 for p in pts if p.get("named", True))
 
     out = {"plan": plan}
@@ -272,7 +381,7 @@ async def photo_trip_create(request: Request,
         user, trip_name.strip(), stats["date_from"], stats["date_to"],
         f"由 {stats['photo_total']} 张照片自动生成", "planning")
 
-    stored_by_name = {n: p for n, p in stored}
+    stored_by_name = {n: (path, mt) for n, path, mt in stored}
     for p in pts:
         pid = db.create_point(trip_id, p["name"], p["gcj_lat"], p["gcj_lng"],
                               p["date"], None,
@@ -299,17 +408,21 @@ def _attach_photos_to_points(trip_id: int, plan, rows, stored):
     if len(point_ids) != len(clusters):
         return 0
 
-    stored_paths = {Path(p).name: p for _, p in stored}
+    stored_paths = {Path(p).name: (p, mt) for _, p, mt in stored}
     n = 0
     for cid, cluster in enumerate(clusters):
         pid = point_ids[cid]
         for ph in cluster["photos"]:
-            src_path = Path(stored_paths.get(ph["filename"], ""))
+            hit = stored_paths.get(ph["filename"])
+            if not hit:
+                continue
+            src_path = Path(hit[0])
+            mt = hit[1]
             if not src_path.exists():
                 continue
             try:
-                thumb = media_mod.make_thumb(src_path, "photo")
-                db.add_media(pid, "photo", src_path.name, thumb,
+                thumb = media_mod.make_thumb(src_path, mt)
+                db.add_media(pid, mt, src_path.name, thumb,
                              ph.get("exif_time"), ph.get("exif_lat"),
                              ph.get("exif_lng"))
                 n += 1
@@ -371,7 +484,7 @@ async def photo_trip_append(request: Request, trip_id: int,
         usable, _ = photo_trip.classify_photos(rows)
         clusters = photo_trip.cluster_photos(usable)
 
-        stored_paths = {Path(p).name: p for _, p in stored}
+        stored_paths = {Path(p).name: (p, mt) for _, p, mt in stored}
         for cid, p in enumerate(pts):
             cluster = clusters[cid] if cid < len(clusters) else {"photos": []}
             fresh = []
@@ -395,12 +508,16 @@ async def photo_trip_append(request: Request, trip_id: int,
                                   f"照片追加 · {len(fresh)} 张照片", "drive", 0)
             added_points += 1
             for ph in fresh:
-                src_path = Path(stored_paths.get(ph["filename"], ""))
+                hit = stored_paths.get(ph["filename"])
+                if not hit:
+                    continue
+                src_path = Path(hit[0])
+                mt = hit[1]
                 if not src_path.exists():
                     continue
                 try:
-                    thumb = media_mod.make_thumb(src_path, "photo")
-                    mid = db.add_media(pid, "photo", src_path.name, thumb,
+                    thumb = media_mod.make_thumb(src_path, mt)
+                    mid = db.add_media(pid, mt, src_path.name, thumb,
                                        ph.get("exif_time"), ph.get("exif_lat"),
                                        ph.get("exif_lng"))
                     added_photos += 1
@@ -412,7 +529,7 @@ async def photo_trip_append(request: Request, trip_id: int,
                     continue
 
     orphan_dupes, orphan_added = _attach_orphans_with_report(
-        trip_id, plan["orphans"], {Path(p).name: p for _, p in stored}, existing)
+        trip_id, plan["orphans"], {Path(p).name: (p, mt) for _, p, mt in stored}, existing)
 
     return {
         "trip_id": trip_id,

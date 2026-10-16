@@ -99,9 +99,9 @@
         <div class="pt-drop" id="pt-drop" tabindex="0"
              role="button" aria-label="选择或拖入照片">
           <div class="pt-drop-icon">🖼️</div>
-          <div class="pt-drop-main">点击选择照片，或拖到这里</div>
-          <div class="pt-drop-sub">支持一次选多张 · JPG / HEIC / PNG · 读取拍摄时间与 GPS</div>
-          <input type="file" id="pt-file-input" accept="image/*" multiple hidden>
+          <div class="pt-drop-main">点击选择照片/视频，或拖到这里</div>
+          <div class="pt-drop-sub">支持一次选多个 · 照片视频都行 · 自动读取拍摄时间与位置</div>
+          <input type="file" id="pt-file-input" accept="image/*,video/*" multiple hidden>
         </div>
 
         <div class="pt-status" id="pt-status"></div>
@@ -228,9 +228,11 @@
 
   // ---------- 选照片 → 调preview ----------
   async function setFiles(files) {
-    const photos = files.filter(f => f.type.startsWith('image/'));
+    // 照片与视频都收：手机拍的视频同样带拍摄时间和GPS，能和照片一起成点
+    const photos = files.filter((f) =>
+      f.type.startsWith('image/') || f.type.startsWith('video/'));
     if (!photos.length) {
-      setStatus('没识别到图片文件', 'err');
+      setStatus('没识别到图片或视频文件', 'err');
       return;
     }
     state.files = photos;
@@ -291,7 +293,7 @@ function renderPreview(data) {
 
     const summary = el('div', 'pt-summary');
     summary.appendChild(el('span', null, `${verb} ${s.point_count} 个轨迹点`));
-    summary.appendChild(el('span', null, ` · ${s.usable} 张可用照片`));
+    summary.appendChild(el('span', null, ` · ${s.usable} 张照片/视频`));
     if (s.date_from) {
       summary.appendChild(el('span', null,
         ` · ${s.date_from}${s.date_from !== s.date_to ? ' ~ ' + s.date_to : ''}`));
@@ -313,7 +315,7 @@ function renderPreview(data) {
     // 无 GPS / 无时间的照片，明确告知去向
     if (s.orphan) {
       pv.appendChild(el('div', 'pt-orphan-note',
-        `另有 ${s.orphan} 张照片缺少拍摄时间或 GPS（多为截图），`
+        `另有 ${s.orphan} 张缺少拍摄时间或 GPS（多为截图），`
         + `会放到「📷 待分配照片」，你可以稍后手工分配到具体地点。`));
     }
 

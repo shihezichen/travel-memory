@@ -2997,3 +2997,43 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
   .pt-move-item { padding: 13px 14px; }
   .pt-pick-box { width: 26px; height: 26px; line-height: 22px; font-size: 16px; }
 }
+
+/* ---------- 行程卡片左滑删除（手机端） ---------- */
+.trip-swipe {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  /* 只有触摸设备才启用手势；PC 端删除键被下面的媒体查询藏起来 */
+  -webkit-tap-highlight-color: transparent;
+}
+.trip-swipe .trip-sheet-card { position: relative; z-index: 1; margin: 0; }
+.trip-swipe.swiping .trip-sheet-card { transition: none; }
+.trip-swipe .trip-sheet-card { transition: transform .18s ease-out; }
+
+.trip-swipe-del {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 0;
+  width: 72px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 500; color: #fff;
+  background: #d93025; cursor: pointer;
+}
+/* 未滑动时删除键藏在卡片右侧（卡片不透明，盖住它） */
+.trip-swipe:not(.swiped) .trip-swipe-del { opacity: 0; }
+.trip-swipe.swiped .trip-swipe-del { opacity: 1; }
+
+/* PC 端：不提供左滑手势，删除键彻底藏起来（保持原有交互） */
+@media (hover: hover) and (pointer: fine) {
+  .trip-swipe .trip-swipe-del { display: none; }
+}
+
+/* ---------- 欢迎面板：标题在手机端也要两行两字，不要竖成一列 ---------- */
+.wc-t {
+  /* 四个字固定占一行宽度的容器 + 允许在词中间折行：
+     不加约束时，「照片行程」在窄卡片里会被逐字折成四行，
+     而「手工行程」恰好两字一行 —— 视觉上就错位了。
+     这里给标题一个最小宽度并显式允许 break-all，两张卡折行一致。 */
+  min-width: 3.2em;
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.3;
+}

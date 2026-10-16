@@ -31,6 +31,9 @@
     if (overlay) overlay.remove();
     overlay = null;
     document.removeEventListener('keydown', onKey);
+    // 用户主动关掉（而不是从卡片进去）时，把本次会话的引导标记也置上，
+    // 免得他接下来切个行程、点个按钮，面板又糊回来一次。
+    if (window.__tmWelcomeDismissed) window.__tmWelcomeDismissed();
   }
 
   function onKey(e) {
@@ -61,8 +64,7 @@
             </span>
             <span class="wc-t">照片行程</span>
             <span class="wc-d">
-              把手机相册里的照片丢进来，自动读出拍摄时间和位置，
-              聚成一条轨迹
+              根据导入的照片和视频，自动按时间和位置，聚成一条行程轨迹
             </span>
           </button>
 
