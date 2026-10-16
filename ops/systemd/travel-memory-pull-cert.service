@@ -1,0 +1,11 @@
+[Unit]
+Description=Travel Memory — 从 OSS 拉取 top001.xin 证书（lenserver 续期后投递）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/travel-memory-standby
+ExecStart=/root/travel-memory-standby/acme/pull-cert.sh
+SuccessExitStatus=0 1
+User=root
