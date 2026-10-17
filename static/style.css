@@ -2998,13 +2998,6 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
    前缀 .pt- 与 photo-trip.js 的弹窗一致，但类名带 pool 以示区分。
    ========================================================================== */
 
-/* ---- 提示条 ---- */
-.pt-pool-hint {
-  margin: 0 0 8px; padding: 7px 10px;
-  background: #fef7e0; border-radius: 7px;
-  font-size: 12px; color: #8a6d3b; line-height: 1.5;
-}
-
 /* ---- 每格的勾选框 ---- */
 .media-item.pt-pickable { position: relative; cursor: pointer; }
 .pt-pick-box {

@@ -2272,10 +2272,7 @@ function renderMedia(media, opts) {
   detailMedia.forEach((m) => {
     grid.appendChild(buildMediaItem(m, { selectable: selectable }));
   });
-  if (selectable && window.PendingPool) {
-    window.PendingPool.enter();
-    ensurePoolSelectHint();
-  }
+  if (selectable && window.PendingPool) window.PendingPool.enter();
   // 正在上传的占位格挂回来。少了这一步，上传途中任何一次 loadDetail
   // （点 tab / 横滑切 tab / 删一张图）都会把在传的格子连同上传结果一起丢掉。
   reattachActiveUploads(grid);
@@ -2395,19 +2392,6 @@ function buildMediaAddCell() {
   cell.appendChild(el('span', 'media-add-plus', '＋'));
   cell.onclick = () => pickMediaFiles();
   return cell;
-}
-
-// 待分配池进详情时提示一句「点图可选中」，否则那面墙看起来和普通照片墙一样，
-// 用户不会想到可以点选。提示条挂在网格上方，进了多选就消失。
-function ensurePoolSelectHint() {
-  if (document.getElementById('pt-pool-hint')) return;
-  const grid = $('#media-grid');
-  if (!grid || !grid.parentElement) return;
-  const hint = el('div', 'pt-pool-hint');
-  hint.id = 'pt-pool-hint';
-  hint.textContent = '点选照片后可批量移动到别的地点，或删除。'
-    + '（缺拍摄信息的照片只能这样识别重复，重复导入不会自动跳过）';
-  grid.parentElement.insertBefore(hint, grid);
 }
 
 // ---------- 选文件：停在上次用过的目录 ----------

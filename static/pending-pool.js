@@ -11,10 +11,18 @@
    所以详情页里它多两样东西：
      1. 编辑按钮置灰 —— 不是 disabled，是视觉上就表明「这个不能改」，
         并且 title 说清原因，免得用户反复点以为是坏了
-     2. 多选模式 —— 勾选若干张后批量「移动到别的点」或「删除」
+     2. 多选模式 —— 勾选若干张后批量「移动到别的点」
 
    多选只在待分配池里出现：普通轨迹点的照片是「已经安置好的」，没有
    批量搬迁的必要，多加一套 UI 只会让人以为照片能被随便搬走。
+
+   2026-10-17 按用户意见收敛了这一片的 UI：
+     · 底部条只留「移动到…」。原来还有「删除」和「退出多选」两个按钮：
+       删除在每张照片的右上角 × 上已经有了，批量删除是重复入口；
+       多选是进入这个池子就自动开着的状态（见 renderMedia 里的
+       PendingPool.enter），不是用户手动开关的模式，谈不上「退出」。
+     · 网格上方那条「点选照片后可批量移动…」的提示也去掉了：这个点的
+       description 里已经写着「可手工移到别的地点」，两条挨在一起是重复。
    ========================================================================== */
 'use strict';
 
@@ -23,6 +31,9 @@
   let poolMode = false;         // 多选模式是否开着
 
   // ---------- 进入/退出多选 ----------
+  // 进入是自动的（进这个池子的详情即选中态），退出没有按钮：搬完照片、
+  // 或者离开这个点时会自己收掉（doMove / app.js 的切点逻辑调 exit）。
+  // 用户想清空已选，直接再点一下照片取消勾选即可。
   function enterSelectMode() {
     poolMode = true;
     selected = new Set();
@@ -71,20 +82,15 @@
       bar.className = 'pt-pool-bar';
       bar.innerHTML =
         '<span class="pt-pool-count"><b>0</b> 张已选</span>' +
-        '<button type="button" class="btn pt-pool-move">移动到…</button>' +
-        '<button type="button" class="btn btn-danger pt-pool-del">删除</button>' +
-        '<button type="button" class="btn pt-pool-cancel">退出多选</button>';
+        '<button type="button" class="btn pt-pool-move">移动到…</button>';
       grid.parentElement.appendChild(bar);
 
       bar.querySelector('.pt-pool-move').onclick = openMoveSheet;
-      bar.querySelector('.pt-pool-del').onclick = doDelete;
-      bar.querySelector('.pt-pool-cancel').onclick = exitSelectMode;
     }
     const n = selected.size;
     bar.querySelector('.pt-pool-count b').textContent = String(n);
     // 没选中就禁用，避免点出一个「对 0 张照片做操作」的尴尬态
     bar.querySelector('.pt-pool-move').disabled = n === 0;
-    bar.querySelector('.pt-pool-del').disabled = n === 0;
   }
 
   // ---------- 选目标点 ----------
@@ -137,25 +143,6 @@
     } catch (e) {
       tmToast('移动失败：' + (e && e.message ? e.message : '未知错误'));
     }
-  }
-
-  async function doDelete() {
-    const ids = Array.from(selected);
-    if (!ids.length) return;
-    const ok = await tmConfirm(
-      `删除选中的 ${ids.length} 张照片？此操作不可恢复。`,
-      '删除照片', { danger: true, okText: '删除' });
-    if (!ok) return;
-
-    let okCount = 0;
-    for (const id of ids) {
-      try { await api(`/api/media/${id}`, { method: 'DELETE' }); okCount += 1; }
-      catch (e) { /* 单张失败不中断后面的 */ }
-    }
-    tmToast(`已删除 ${okCount} 张照片`);
-    exitSelectMode();
-    await loadDetail(currentPointId);
-    await loadTrips();
   }
 
   // ---------- 对外 ----------
