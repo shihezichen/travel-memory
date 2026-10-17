@@ -58,8 +58,13 @@
 }
 .wc-ico svg { width: 22px; height: 22px; }
 
-.wc-t { font-size: 15px; font-weight: 600; color: #202124; margin-bottom: 5px; }
-.wc-d { font-size: 12.5px; color: #5f6368; line-height: 1.55; }
+.wc-t {
+  display: block; width: 100%;
+  font-size: 15px; font-weight: 600; color: #202124; margin-bottom: 5px;
+  /* 标题永远单行，绝不被压成竖排 */
+  white-space: nowrap; word-break: keep-all; overflow-wrap: normal;
+}
+.wc-d { display: block; width: 100%; font-size: 12.5px; color: #5f6368; line-height: 1.55; }
 
 .wc-skip {
   display: block; width: 100%; margin-top: 18px; padding: 9px;
@@ -69,13 +74,30 @@
 }
 .wc-skip:hover { background: #f8f9fa; color: #5f6368; }
 
-/* 手机：两张卡竖排，按钮更大更好按 */
+/* 手机：两张卡竖排，按钮更大更好按。
+   注意这里保持 column —— 早先改成 row（图标在左、文字在右），
+   文字区宽度被图标挤掉，「照片行程」被压成每行一个字竖排，
+   两张卡折行还不一致。竖排 + 标题独占一行才是稳定的。 */
 @media (max-width: 560px) {
   .wc-box { padding: 24px 18px 16px; border-radius: 12px; }
   .wc-box h2 { font-size: 18px; }
   .wc-cards { flex-direction: column; gap: 10px; }
-  .wc-card { flex-direction: row; align-items: center; gap: 12px; padding: 14px; }
-  .wc-ico { margin-bottom: 0; flex: 0 0 40px; }
-  .wc-body { min-width: 0; }
-  .wc-d { font-size: 12px; }
+  .wc-card { flex-direction: column; align-items: stretch; gap: 0; padding: 16px; }
+  .wc-ico { margin-bottom: 10px; align-self: flex-start; }
+  /* 标题独占一行、绝不折成竖排。welcome.js 里 wc-ico / wc-t / wc-d
+     是三个平级 span（没有 wc-body 包裹），所以靠 display:block
+     让标题与描述各占一行。 */
+  .wc-t {
+    display: block; width: 100%;
+    white-space: nowrap; word-break: keep-all; overflow-wrap: normal;
+    font-size: 16px; margin-bottom: 4px;
+  }
+  .wc-d { display: block; width: 100%; font-size: 12.5px; }
+}
+
+/* 极窄屏（如SE/折叠屏外屏）：卡片内边距再收一点，避免描述挤成两三行 */
+@media (max-width: 360px) {
+  .wc-box { padding: 22px 14px 14px; }
+  .wc-card { padding: 14px; }
+  .wc-t { font-size: 15px; }
 }

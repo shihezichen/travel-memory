@@ -333,11 +333,38 @@ async function api(url, opts = {}) {
 // ---------- 登录 / 认证 ----------
 // 刚注册完这一小段生命周期内为 true，用来触发起步引导面板
 let justRegistered = false;
-// 本次会话是否已经弹过起步引导：注册成功、或登录后发现一个行程都没有时
-// 都会弹，但同一个会话里只弹一次，避免用户关掉后每次切tab 都被弹回来
+// 本次登录是否已经弹过起步引导：登录成功就弹一次，与行程数量、是否刚注册
+// 都无关；同一个会话里只弹一次，避免用户关掉后每次切 tab 都被弹回来
+
 let welcomeShown = false;
 // welcome.js 在用户手动关闭面板时调它
 window.__tmWelcomeDismissed = function () { welcomeShown = true; };
+
+// 「刚登录成功、还没弹过引导」的跨跳转标记。带 ?next= 的登录会先
+// location.replace 跳走，所以要把这个意图用 sessionStorage 带过去，
+// 跳完立刻取用并清掉 —— 保证「弹过之后，直接打开页面/切行程/切 tab
+// 都不再弹」。
+const WELCOME_PENDING_KEY = 'tm_welcome_pending';
+
+// 起步引导的触发点。**只看「本次登录还没弹过」这一件事** —— 不看行程
+// 数量、不看是不是刚注册（2026-10-17 用户定的策略）。全站只有这一处
+// 会弹，将来加入口时都走它，避免又漏一个。
+function maybeShowWelcome() {
+  if (welcomeShown) return;
+  welcomeShown = true;
+  justRegistered = false;
+  if (typeof openWelcomePanel === 'function') openWelcomePanel();
+}
+
+// 接住 ?next= 跳转过来的那次登录：取用即清除。
+function consumePendingWelcome() {
+  let pending = false;
+  try {
+    pending = sessionStorage.getItem(WELCOME_PENDING_KEY) === '1';
+    sessionStorage.removeItem(WELCOME_PENDING_KEY);
+  } catch (e) { /* 隐私模式下 sessionStorage 可能不可写，忽略 */ }
+  if (pending) maybeShowWelcome();
+}
 
 function showLogin() { $('#login-overlay').classList.remove('hidden'); }
 function hideLogin() { $('#login-overlay').classList.add('hidden'); }
@@ -352,6 +379,8 @@ async function ensureAuth() {
     await api('/api/me');
     hideLogin();
     await loadCurrentUser();
+    // ?next= 登录同样是「刚刚登录成功」，在这里补弹一次引导。
+    consumePendingWelcome();
     return true;
   } catch (e) {
     showLogin();
@@ -477,7 +506,13 @@ function pendingNext() {
 
 function onLoggedIn() {
   const next = pendingNext();
-  if (next) { location.replace(next); return; }
+  if (next) {
+    // 跳转前记下「该弹引导」：跳转后走 sessionGate 那条路（不经过
+    // onLoggedIn），直接 return 会把这次登录的弹窗整个吞掉。
+    try { sessionStorage.setItem(WELCOME_PENDING_KEY, '1'); } catch (e) { /* 忽略 */ }
+    location.replace(next);
+    return;
+  }
   setLoginError('');
   $('#login-username').value = '';
   $('#login-password').value = '';
@@ -486,19 +521,20 @@ function onLoggedIn() {
   hideLogin();
   // 登录后同样要恢复图层勾选与灯箱状态。原来只有「打开页面时已登录」那条路径调了，
   // 走登录框进来的用户图层偏好一直没被恢复（照片视频默认开也因此不生效）。
-  loadCurrentUser().then(loadTrips).then(() => {
+  // 起步引导挂在 **finally** 而不是 then：/api/trips 一旦失败（网络抖动、
+  // 500），then 链会整条断掉 —— 用户登录成功了却什么都看不到，恰恰是最
+  // 需要引导的时候。放finally 里，行程无论加载成功还是失败都会弹。
+  loadCurrentUser()
+    .then(loadTrips)
+    .catch(() => { /* 行程拉不到，不该挡住引导 */ })
+    .finally(() => {
     restoreLayerState();
     restoreLightboxState();
     initPhotoSearch();
-    // 起步引导：**每次登录都弹**（2026-10-17 用户定的策略）。
-    // 不再判断「是不是刚注册」「有没有行程」—— 对初次使用者友好就该如此，
-    // 老用户回来也能一眼看到入口。同一页面会话内只弹一次，不会在切行程、
-    // 切 tab 时反复糊到脸上（真正「每次登录」的粒度就是 onLoggedIn 这一次）。
-    if (!welcomeShown) {
-      justRegistered = false;
-      welcomeShown = true;
-      openWelcomePanel();
-    }
+    // 起步引导：**刚登录成功就弹一次**（2026-10-17 用户定的策略）。
+    // 不看行程数量、不看是不是刚注册 —— 只要登录成功且本次还没弹过就弹。
+    // 触发条件收敛在 maybeShowWelcome() 一处，这里只负责调用。
+    maybeShowWelcome();
   });
 }
 
@@ -7766,9 +7802,12 @@ $('#points-view').addEventListener('scroll', savePointListScroll, { passive: tru
 positionViews(currentTab);   // 首屏先把三页在轨道上摆好（不带过渡）
 syncTabIndicator();
 ensureAuth().then(ok => {
+  // 未登录就别拉行程：api() 遇401 会 throw，
+  // 未捕获的 promise rejection 会在每次打开未登录页面时往控制台打红字。
+  // 登录成功后的行程加载走 onLoggedIn()，这里只管「打开页面就已登录」这条。
+  if (!ok) return;
   loadTrips();
-  // 登录成功后才恢复图层勾选与灯箱（未登录时恢复会触发接口报错/弹窗）
-  if (ok) { restoreLayerState(); restoreLightboxState(); initPhotoSearch(); }
+  restoreLayerState(); restoreLightboxState(); initPhotoSearch();
 });
 
 // ---------- 照片生成轨迹 ----------
