@@ -3006,9 +3006,12 @@ body.pw-wall-playing .icp-footer { opacity: 0; visibility: hidden; transition: o
   background: rgba(255,255,255,.92);
   border: 1.5px solid rgba(0,0,0,.28);
   color: transparent; font-size: 14px; line-height: 19px;
-  text-align: center; pointer-events: none;
+  /* 原来这里是 pointer-events: none（只当指示器）。2026-10-17 改成勾选由它
+     自己接管点击，图片点击交还给灯箱 —— 待分配池也要能看大图、能播视频。 */
+  text-align: center; cursor: pointer;
   transition: background .12s, border-color .12s;
 }
+.pt-pick-box:hover { border-color: rgba(0,0,0,.55); background: #fff; }
 .media-item.is-picked .pt-pick-box {
   background: var(--primary, #1a73e8);
   border-color: var(--primary, #1a73e8);

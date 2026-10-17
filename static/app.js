@@ -2301,8 +2301,16 @@ function buildMediaItem(m, opts) {
   const item = el('div', 'media-item');
   item.dataset.mid = String(m.id);
   if (selectable) {
-    // 勾选框压在角上；点击图片切选中而不是开灯箱
+    // 勾选框压在左上角，**由它自己接管点击**（点它=选中/取消）。
+    // 点图片则和别的节点一样开灯箱 —— 2026-10-17 之前是「点图即勾选」，
+    // 结果待分配池里的照片看不了大图、视频也点不开播放，与其余节点不一致。
+    // 两种操作分开：想批量移动点小方框，想看大图/播视频点图本身。
     const box = el('span', 'pt-pick-box');
+    box.title = '选择这张（可批量移动到别的地点）';
+    box.onclick = (e) => {
+      e.stopPropagation();          // 别冒泡到格子，否则会顺带开灯箱
+      if (window.PendingPool) window.PendingPool.toggle(m.id);
+    };
     item.appendChild(box);
     item.classList.add('pt-pickable');
   }
@@ -2319,13 +2327,10 @@ function buildMediaItem(m, opts) {
   item.appendChild(img);
   if (m.type === 'video') item.appendChild(el('span', 'video-badge', '▶'));
 
-  // 点图看大图。用 detailMedia 现算下标：拖拽排过序后位置会变
+  // 点图看大图/播视频。用 detailMedia 现算下标：拖拽排过序后位置会变。
+  // 待分配池里也一样走这条 —— 勾选走左上角的小方框，不再占用图片点击。
   img.onclick = () => {
     if (item.classList.contains('just-dragged')) return;   // 刚拖完那一下不当点击
-    if (selectable && window.PendingPool) {
-      window.PendingPool.toggle(m.id);
-      return;
-    }
     const idx = detailMedia.findIndex(x => Number(x.id) === Number(m.id));
     openLightbox(Math.max(0, idx));
   };
