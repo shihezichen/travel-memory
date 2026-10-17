@@ -1870,7 +1870,7 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
    左上角被清晰度按钮占了、下方是视频原生控制条。44px 是移动端可靠的触摸下限，
    比清晰度按钮大一圈是故意的 —— 它旁边就是关闭，点错代价是关掉灯箱。 */
 .lightbox-download {
-  position: absolute; top: 9px; right: calc(var(--lb-tap) + 11px); z-index: 11;
+  position: absolute; top: calc(9px + env(safe-area-inset-top, 0px)); right: calc(var(--lb-tap) + 11px); z-index: 11;
   width: var(--lb-tap); height: var(--lb-tap); padding: 0;
   display: flex; align-items: center; justify-content: center;
   border: none; background: none; color: #fff;
@@ -1887,7 +1887,7 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
 }
 /* 档位菜单：右上角展开，样式跟清晰度菜单保持一致，只是靠右对齐 */
 .lb-download-menu {
-  position: absolute; top: calc(var(--lb-tap) + 12px); right: 12px; z-index: 12;
+  position: absolute; top: calc(var(--lb-tap) + 12px + env(safe-area-inset-top, 0px)); right: 12px; z-index: 12;
   min-width: 132px; padding: 4px;
   border-radius: 10px; border: 1px solid rgba(255, 255, 255, .18);
   background: rgba(17, 24, 39, .94);
@@ -1915,7 +1915,7 @@ img.lightbox-media, .lb-video-poster { touch-action: none; }
    细边 + 毛玻璃。原来它们一个是 36px 的文字「×」、一个是 44px 的实心圆、
    一个是 5px 内边距的小胶囊，三种大小三种质感，堆在一起就是糊的。 */
 .lightbox-close {
-  position: absolute; top: 9px; right: 9px; z-index: 13;
+  position: absolute; top: calc(9px + env(safe-area-inset-top, 0px)); right: 9px; z-index: 13;
   width: var(--lb-tap); height: var(--lb-tap); padding: 0;
   display: flex; align-items: center; justify-content: center;
   border: none; background: none; color: #fff; cursor: pointer;

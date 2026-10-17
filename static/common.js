@@ -670,20 +670,57 @@ function tmTriggerDownload(m, label) {
       : '微信里无法直接下载。长按图片即可保存到相册', 4000);
     return;
   }
+  const url = tmDownloadUrl(m, label);
+  const name = tmDownloadName(m, label);
+  // 安卓 / 鸿蒙壳里的 WebView 自身没有下载管理器：直接 <a href> 跳「附件头」响应，
+  // 会被系统转去「用 Edge 打开」。改成先 fetch 成 blob，再用 blob: URL 触发下载——
+  // 这一步完全在 WebView 内完成，不再惊动外部浏览器。
+  // iOS 仍走原路：Safari 对 blob: 下载支持不稳，附件头在 Safari 上是被识别的。
+  if (!tmIsIOS()) {
+    tmToast('正在准备下载…');
+    fetch(url, { credentials: 'same-origin' })
+      .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
+      .then(blob => {
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objUrl;
+        a.download = name;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (e) {} }, 4000);
+        tmToast('已开始下载…');
+      })
+      .catch(() => tmDirectDownload(url, name, m.type));
+    return;
+  }
+  tmDirectDownload(url, name, m.type);
+}
+
+// 桌面 / iOS 的兜底：直接锚点跳附件头（服务端 Content-Disposition: attachment 促成下载）。
+function tmDirectDownload(url, name, type) {
   const a = document.createElement('a');
-  a.href = tmDownloadUrl(m, label);
+  a.href = url;
+  a.download = name || '';   // 留空 = 用服务端给的文件名
   a.rel = 'noopener';
-  a.download = '';           // 留空 = 用服务端给的文件名（Content-Disposition）
   document.body.appendChild(a);
   a.click();
   a.remove();
   if (tmIsIOS()) {
-    // iOS Safari 会下进「文件」App 而不是相册，说清楚，省得人以为没成功
     tmToast('已开始下载，可在「文件」App 里查看；想存进相册请长按' +
-      (m.type === 'video' ? '视频' : '图片'), 4000);
+      (type === 'video' ? '视频' : '图片'), 4000);
   } else {
     tmToast('开始下载…');
   }
+}
+
+// 下载落盘用的文件名：去掉已有扩展名再按类型补，避免「a.jpg.mp4」这种叠罗汉。
+function tmDownloadName(m, label) {
+  let base = m.orig_name || ('media_' + m.id);
+  base = base.replace(/\.[^.]+$/, '');
+  const ext = (m.type === 'video') ? '.mp4' : '.jpg';
+  return base + ext;
 }
 
 // 灯箱翻到某一格时刷新右上角的下载按钮。app.js / share.js 的 renderLightbox 各调一次。
