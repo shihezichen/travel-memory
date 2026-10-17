@@ -350,6 +350,8 @@ const WELCOME_PENDING_KEY = 'tm_welcome_pending';
 // 数量、不看是不是刚注册（2026-10-17 用户定的策略）。全站只有这一处
 // 会弹，将来加入口时都走它，避免又漏一个。
 function maybeShowWelcome() {
+  // 幂等：同一次进入里几个入口（ensureAuth / onLoggedIn / ?next=）都可能
+  // 调到它，靠 welcomeShown 保证只弹一次。切行程、切 tab 不会再进来。
   if (welcomeShown) return;
   welcomeShown = true;
   justRegistered = false;
@@ -379,8 +381,15 @@ async function ensureAuth() {
     await api('/api/me');
     hideLogin();
     await loadCurrentUser();
-    // ?next= 登录同样是「刚刚登录成功」，在这里补弹一次引导。
-    consumePendingWelcome();
+    // 这条路径是「打开页面时已经登录」—— 没经过登录框、也就没有
+    // onLoggedIn() 兜底，弹窗曾经在这里完全不触发（实测：登录过一次
+    // test 账号后，之后每次直接打开 /app 都再也不弹）。用户把「进入这个
+    // 应用」当作一次进入，所以同样该弹一次。
+    //
+    // 只调 maybeShowWelcome()，**不要**在前面先置 welcomeShown —— 那样
+    // 它进来第一行`if (welcomeShown) return` 就短路回去了，什么都不弹。
+    // 它本身幂等，同一次进入里onLoggedIn() 也调到也不会重复。
+    maybeShowWelcome();
     return true;
   } catch (e) {
     showLogin();
