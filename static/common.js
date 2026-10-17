@@ -662,6 +662,40 @@ function tmDownloadUrl(m, label) {
     + (qs.length ? '?' + qs.join('&') : '');
 }
 
+// 安卓 / 鸿蒙壳的 WebView 通常**没有下载管理器**：直接 <a> 下载要么被系统转去
+// 「用 Edge 打开」、要么报「下载失败」。所以下载这件事在壳里不能硬来，要分情况。
+function tmIsAndroid() {
+  return /Android/i.test(navigator.userAgent || '');
+}
+function tmIsHarmony() {
+  return /HarmonyOS|OpenHarmony|OHOS/i.test(navigator.userAgent || '');
+}
+
+// 壳 App（安卓 / 鸿蒙 WebView）若暴露原生下载桥，优先用它直接存到相册 / 下载目录——
+// 这才是「点一下就存图库」的唯一可靠做法。不同壳的全局名 / 方法名不一，这里按
+// 常见命名探测，命中且确为函数才调用（猜错也不崩，回落到下面的长按方案）。
+function tmNativeDownload(url, name, type) {
+  try {
+    const w = window;
+    const cand = [
+      w.Android, w.android, w.AndroidBridge, w.JSBridge,
+      w.hmSmartWebviewBridge, w.hmosBridge, w.hmBridge, w.ohosBridge,
+      w.webviewBridge, w.WebViewJavascriptBridge
+    ];
+    for (const obj of cand) {
+      if (obj && typeof obj === 'object') {
+        for (const meth of ['download', 'saveFile', 'downloadFile', 'saveMedia', 'saveToGallery']) {
+          if (typeof obj[meth] === 'function') {
+            obj[meth](url, name || (type === 'video' ? 'video.mp4' : 'image.jpg'));
+            return true;
+          }
+        }
+      }
+    }
+  } catch (e) { /* 猜错就当没桥 */ }
+  return false;
+}
+
 function tmTriggerDownload(m, label) {
   if (tmIsWeChat()) {
     // 微信里点了也不会下载，所以干脆不发请求，直接给能用的办法
@@ -671,31 +705,39 @@ function tmTriggerDownload(m, label) {
     return;
   }
   const url = tmDownloadUrl(m, label);
+  const inline = mediaSrc(m, 'full');   // 内联可看原图（OSS 直链，无附件头）
   const name = tmDownloadName(m, label);
-  // 安卓 / 鸿蒙壳里的 WebView 自身没有下载管理器：直接 <a href> 跳「附件头」响应，
-  // 会被系统转去「用 Edge 打开」。改成先 fetch 成 blob，再用 blob: URL 触发下载——
-  // 这一步完全在 WebView 内完成，不再惊动外部浏览器。
-  // iOS 仍走原路：Safari 对 blob: 下载支持不稳，附件头在 Safari 上是被识别的。
-  if (!tmIsIOS()) {
-    tmToast('正在准备下载…');
-    fetch(url, { credentials: 'same-origin' })
-      .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
-      .then(blob => {
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objUrl;
-        a.download = name;
-        a.rel = 'noopener';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (e) {} }, 4000);
-        tmToast('已开始下载…');
-      })
-      .catch(() => tmDirectDownload(url, name, m.type));
+
+  // 1) 原生桥优先：壳已实现下载桥时，点一下直接存相册，不弹 Edge、不报错
+  if (tmNativeDownload(url, name, m.type)) {
+    tmToast('已开始下载…');
     return;
   }
-  tmDirectDownload(url, name, m.type);
+  // 2) iOS：Safari 认附件头，跳「文件」App
+  if (tmIsIOS()) { tmDirectDownload(url, name, m.type); return; }
+  // 3) 安卓 / 鸿蒙壳：WebView 无下载管理器，<a> 下载必失败。退回最稳的存图方式——
+  //    灯箱里那张图/那个视频本来就是内联显示的，在 WebView 里长按即可「存储到相册」。
+  //    （绝不走 <a> 下载，否则要么跳 Edge、要么系统报「下载失败」。）
+  if (tmIsAndroid() || tmIsHarmony()) {
+    tmToast('灯箱中的图片 / 视频可长按「存储到相册」', 4000);
+    return;
+  }
+  // 4) 桌面浏览器：blob 下载最干净（不会新开标签页，也不会跳 Edge）
+  tmToast('正在准备下载…');
+  fetch(url, { credentials: 'same-origin' })
+    .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
+    .then(blob => {
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (e) {} }, 4000);
+      tmToast('已开始下载…');
+    })
+    .catch(() => tmDirectDownload(url, name, m.type));
 }
 
 // 桌面 / iOS 的兜底：直接锚点跳附件头（服务端 Content-Disposition: attachment 促成下载）。
