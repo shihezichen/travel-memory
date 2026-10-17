@@ -389,7 +389,10 @@ async function ensureAuth() {
     // 只调 maybeShowWelcome()，**不要**在前面先置 welcomeShown —— 那样
     // 它进来第一行`if (welcomeShown) return` 就短路回去了，什么都不弹。
     // 它本身幂等，同一次进入里onLoggedIn() 也调到也不会重复。
-    maybeShowWelcome();
+    //
+    // 2026-10-17 追加：弹之前先等行程渲染完（见下方调用处）。原来是这里一
+    // 弹完就把控制权交回去，loadTrips 才开始跑，于是引导面板压在**还没画完的
+    // 地图**上 —— 用户看到的是一张没底图、没轨迹的画布，很容易以为地图坏了。
     return true;
   } catch (e) {
     showLogin();
@@ -528,6 +531,8 @@ function onLoggedIn() {
   $('#reg-password').value = '';
   $('#reg-password2').value = '';
   hideLogin();
+  // 登录前地图是在「登录浮层盖着」的状态下建的，浮层撤走后布局会再动一次
+  setTimeout(kickMapResize, 0);
   // 登录后同样要恢复图层勾选与灯箱状态。原来只有「打开页面时已登录」那条路径调了，
   // 走登录框进来的用户图层偏好一直没被恢复（照片视频默认开也因此不生效）。
   // 起步引导挂在 **finally** 而不是 then：/api/trips 一旦失败（网络抖动、
@@ -921,10 +926,59 @@ function restoreMapView() {
   const st = getTripState();
   if (st.zoom != null && st.center && st.center.length === 2) {
     // 第三个参数 immediately=true：直接落位，不做从默认视野飞过去的动画
-    try { map.setZoomAndCenter(st.zoom, st.center, true); viewRestored = true; return; } catch (e) {}
+    try { map.setZoomAndCenter(st.zoom, st.center, true); viewRestored = true; } catch (e) {}
+  } else {
+    viewRestored = false;
+    map.setFitView(null, false, [60, 60, 60, 60]);
   }
-  viewRestored = false;
-  map.setFitView(null, false, [60, 60, 60, 60]);
+}
+
+/* ============================================================================
+   地图视图必须跟着「实际可见尺寸」走
+   ============================================================================
+   2026-10-17 用户报「PC 端进入 test 账号后，选任何一条行程都没有地图和轨迹」。
+
+   根因不是某一行代码写错，而是**画布尺寸和容器尺寸脱钩**：高德在
+   `new AMap.Map()` 那一刻量一次 #map 的大小，之后只有显式调 resize() 才会重算。
+   而我们这边能改变 #map 尺寸的动作不少 —— 面板宽度恢复、面板收起/展开、
+   顶栏收起、地图全屏、窗口缩放、手机横竖屏切换 —— 每一个都各自在某个地方
+   补了一次 resize()，还散落在不同文件里。只要有一处漏了（或者时序没赶上①），
+   画布就还按旧尺寸画：少画一块是「地图缺一半」，画布尺寸算成 0 就是**整张图空白**，
+   偏偏 overlay 是另建的 DOM 层、照样跟着经纬度换算，于是出现「轨迹在、底图没有」
+   这种最难排查的组合。
+
+   这里兜住这类问题：用 ResizeObserver 盯住 #map 的真实尺寸，一变就让高德重算；
+   启动、窗口尺寸变化、页面从 bfcache 回来、页面重新可见时再各补一次。
+   resize() 是幂等的，多叫几次无副作用，所以这些补刀不需要去重。
+   ========================================================================== */
+function kickMapResize() {
+  if (!map || typeof map.resize !== 'function') return;
+  const box = document.getElementById('map');
+  const w = box ? Math.round(box.clientWidth) : 0;
+  const h = box ? Math.round(box.clientHeight) : 0;
+  // 尺寸还是 0（面板动画刚开始、容器刚建）就别算了，记下来等下一帧——
+  // 某些内核上带着 0 尺寸 resize 一次，画布会停在 0×0 并且之后不再自己恢复。
+  if (!w || !h) { requestAnimationFrame(kickMapResize); return; }
+  try { map.resize(); } catch (e) {}
+}
+
+function watchMapSize() {
+  const el = document.getElementById('map');
+  if (!el || el.__tmSizeWatched) return;
+  el.__tmSizeWatched = true;
+  const bump = () => { requestAnimationFrame(kickMapResize); };
+  if (typeof ResizeObserver === 'function') {
+    try {
+      const ro = new ResizeObserver(bump);
+      ro.observe(el);
+      el.__tmSizeRO = ro;
+    } catch (e) { /* 老内核没有 ResizeObserver，退回下面那几刀 */ }
+  }
+  window.addEventListener('resize', bump);
+  window.addEventListener('orientationchange', bump);
+  // 从 bfcache 恢复 / 切回这个标签页时，视口可能已经变了，但不会再派发 resize
+  window.addEventListener('pageshow', bump);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) bump(); });
 }
 
 // 恢复界面状态：面板高度 / 选中点 / tab（内容已刷新，这里只恢复位置与选中状态）
@@ -1264,10 +1318,22 @@ function highlightAdjacentSegments(pointId) {
   buildRouteOverlay();
 }
 
-// 保证分段折线可用：真实路线（segPolylines）未就绪时，隐藏直线兜底并用直线临时分段
+// 保证分段折线可用：真实路线（segPolylines）未就绪时，把已经算出来的路线先画上去
+// （见 applySegmentData），仍然一段都没有才退到临时直线分段。
+//
+// 2026-10-17 修：原来这里只看 segPolylines 空不空。点开一个点时路线规划还没回来，
+// 就把直线兜底藏了、另建一套直线分段 —— 之后 drawRoute 回来时，这批临时线被
+// 静默丢掉（segPolylines 被整体替换）。表现上就是「点开某个点，整条轨迹变成折线
+// 直线，要刷新才恢复」。
 function ensureSegmentsForHighlight() {
   if (segPolylines.length > 0) return;
-  if (!polyline || !lastPoints || lastPoints.length < 2) return;
+  if (!lastPoints || lastPoints.length < 2) return;
+  // 已经有真实路线结果（只是还没落图）：直接画真路线，别用直线糊
+  if (segmentData && segmentData.length === lastPoints.length - 1) {
+    applySegmentData(lastPoints, segmentData);
+    if (segPolylines.length) return;
+  }
+  if (!polyline) return;
   polyline.setMap(null); // 临时隐藏整条直线兜底
   for (let i = 0; i < lastPoints.length - 1; i++) {
     const a = lastPoints[i], b = lastPoints[i + 1];
@@ -1690,39 +1756,52 @@ async function drawRoute(points, seq) {
       Array.from({ length: segCount }, (_, i) => planOneSegment(i, points[i], points[i + 1]))
     );
     if (seq !== renderSeq) return; // 行程已切换，丢弃
-    // 清除直线兜底，一次性绘制所有可点击的路线
-    if (polyline) { polyline.setMap(null); polyline = null; }
-    segPolylines.forEach(p => p.setMap(null)); // 清掉高亮用的临时直线分段（若有）
-    segPolylines = [];
-    fallbackSegs = false;
-    segmentData = segInfo;
-    segInfo.forEach((info) => {
-      const poly = new AMap.Polyline({
-        path: info.path,
-        strokeColor: '#2563eb',
-        strokeWeight: 4,
-        strokeOpacity: 1,
-        lineJoin: 'round',
-        zIndex: 50,   // 路线在照片堆(40)之上、轨迹点(100/120)之下
-      });
-      poly.on('click', () => showSegmentPanel(info.i));
-      poly.setMap(map);
-      segPolylines.push(poly);
-    });
-    // 真实路线就绪后重建里程标签（位置要按真实路线算，不能再用直线中点）
-    renderSegLabels();
-    buildRouteOverlay();     // 自绘路线层跟着重建
-    // 真实路线就绪后，若有点处于选中态则恢复相邻段高亮
-    if (currentPointId) highlightAdjacentSegments(currentPointId);
-    // 真实路线就绪后刷新统计中的总里程
-    updateStatsDistance();
-    // 无选中点时重新适配视野到完整真实路线，避免全景下曲线被误认为直线。
-    // 但如果这次是「恢复了上次保存的视野」，就不要自适应——否则用户存的视野会被顶掉。
-    if (!currentPointId && !viewRestored && segPolylines.length && typeof map.setFitView === 'function') {
-      try { map.setFitView(segPolylines, false, [60, 60, 60, 60], 300); } catch (e) {}
-    }
+    // 先落库再画：这一段算出来的路线得记住，否则下次切回这条行程又白算一遍
+    // （画面表现就是用户说的「每次切回来都要从直线变曲线」）。
+    // 不 await：写库慢一点也不该挡住绘制。
+    persistPlannedRoutes(points, segInfo);
+    applySegmentData(points, segInfo);
   } catch (e) {
     // 路线规划异常则保持直线兜底
+  }
+}
+
+// 拿到「每段的真实路线」之后真正落图：清直线兜底、逐段建折线、重建标签与自绘层。
+// 抽成函数是因为现在有两个调用点：drawRoute（算完就画）和
+// ensureSegmentsForHighlight（点开一个点、但路线还没就绪时，先把已有结果画出来）。
+// 两处如果各写一遍，迟早会因为漏掉某一步（比如忘了 setAmapRouteVisible）而
+// 表现成「路线一会儿有一会儿没」。
+function applySegmentData(points, segInfo) {
+  // 清除直线兜底，一次性绘制所有可点击的路线
+  if (polyline) { polyline.setMap(null); polyline = null; }
+  segPolylines.forEach(p => p.setMap(null)); // 清掉高亮用的临时直线分段（若有）
+  segPolylines = [];
+  fallbackSegs = false;
+  segmentData = segInfo;
+  segInfo.forEach((info) => {
+    const poly = new AMap.Polyline({
+      path: info.path,
+      strokeColor: '#2563eb',
+      strokeWeight: 4,
+      strokeOpacity: 1,
+      lineJoin: 'round',
+      zIndex: 50,   // 路线在照片堆(40)之上、轨迹点(100/120)之下
+    });
+    poly.on('click', () => showSegmentPanel(info.i));
+    poly.setMap(map);
+    segPolylines.push(poly);
+  });
+  // 真实路线就绪后重建里程标签（位置要按真实路线算，不能再用直线中点）
+  renderSegLabels();
+  buildRouteOverlay();     // 自绘路线层跟着重建
+  // 真实路线就绪后，若有点处于选中态则恢复相邻段高亮
+  if (currentPointId) highlightAdjacentSegments(currentPointId);
+  // 真实路线就绪后刷新统计中的总里程
+  updateStatsDistance();
+  // 无选中点时重新适配视野到完整真实路线，避免全景下曲线被误认为直线。
+  // 但如果这次是「恢复了上次保存的视野」，就不要自适应——否则用户存的视野会被顶掉。
+  if (!currentPointId && !viewRestored && segPolylines.length && typeof map.setFitView === 'function') {
+    try { map.setFitView(segPolylines, false, [60, 60, 60, 60], 300); } catch (e) {}
   }
 }
 
@@ -1994,20 +2073,62 @@ function redrawSegment(i, path, choice) {
   saveSegmentRoute(i, choice);
 }
 
+// 一条路线存进库里只需要这四个字段。抽出来是因为现在有两条路都要存：
+// 用户手选的方案（下面 saveSegmentRoute），以及**自动规划出来的结果**
+// （见 persistPlannedRoutes）—— 后者才是「切走再切回来不用重算」的关键。
+function serializeRoute(r) {
+  return {
+    path: r.path, distance: r.distance || 0, time: r.time || 0,
+    label: r.label || '', roadRuns: r.roadRuns || [],
+  };
+}
+
+// 把这一轮**自动规划**出来的路线存到各段起点上，下次切回这条行程直接复用。
+//
+// 为什么必须存（2026-10-16 用户反馈）：之前只有「用户手动挑过方案」的段才落库，
+// 其余段全靠浏览器现场向高德要一次。于是同一个行程每切一次就重算一次，画面
+// 先直线再变曲线、里程从 800 跳到 2482 —— 用户以为是 bug，确实是：算过的就该记住。
+//
+// 规则：
+//   · 只存「真算出来的」路线。规划失败退回直线兜底的段不存 —— 存了就等于把
+//     一次网络抖动固化下来，以后再也不重试了。
+//   · 已经有了 route_json 的段不覆盖（手选方案优先于自动结果）。
+//   · 只存默认那条（choices[0]，界面展示的就是它），备选方案用完就丢，库里不留冗余。
+//   · 存储：服务端那侧顺手抽稀封顶，一段几百公里的路不会原样塞进去。
+// 返回尚未落库（传输失败）的段数，调用方据此决定要不要重试。
+async function persistPlannedRoutes(points, segInfo) {
+  const jobs = [];
+  (segInfo || []).forEach((info, i) => {
+    const from = points[i];
+    if (!from || !from.id) return;
+    if (info.mode === 'line') return;
+    if (from.route_json) return;                 // 手选/已存过
+    const pick = info.picked || (info.choices && info.choices[0]);
+    if (!pick || !pick.path || pick.path.length < 2) return;
+    // 直线兜底（path 只有首尾两点且点太少）不值得存
+    if (info.path && info.path.length <= 2 && !pick.distance) return;
+    const json = JSON.stringify(serializeRoute(pick));
+    from.route_json = json;                      // 先认下来，避免连续切换时重复提交
+    const body = new FormData();
+    body.append('route', json);
+    jobs.push(
+      api(`/api/points/${from.id}/route`, { method: 'PUT', body })
+        .catch(() => { from.route_json = null; return 1; })
+    );
+  });
+  if (!jobs.length) return 0;
+  const res = await Promise.all(jobs);
+  return res.reduce((s, v) => s + (v === 1 ? 1 : 0), 0);
+}
+
 // 把第 i 段挑定的路线存到这一段的起点上。choice 为空表示恢复成每次现规划。
 async function saveSegmentRoute(i, choice) {
   const from = lastPoints && lastPoints[i];
   if (!from || !from.id) return;
   const body = new FormData();
   if (choice && choice.path && choice.path.length >= 2) {
-    body.append('route', JSON.stringify({
-      path: choice.path, distance: choice.distance || 0, time: choice.time || 0,
-      label: choice.label || '', roadRuns: choice.roadRuns || [],
-    }));
-    from.route_json = JSON.stringify({
-      path: choice.path, distance: choice.distance || 0, time: choice.time || 0,
-      label: choice.label || '', roadRuns: choice.roadRuns || [],
-    });
+    body.append('route', JSON.stringify(serializeRoute(choice)));
+    from.route_json = JSON.stringify(serializeRoute(choice));
   } else {
     body.append('route', '');
     from.route_json = null;
@@ -4195,6 +4316,9 @@ function switchTab(name, slideFrom) {
   syncAddPointBar();
   if (name === 'albums') loadAlbums();
   saveTripState({ tab: name });
+  // 详情/相册页的顶部有内容高度变化，面板内部滚动条出现或消失会挤动 #map 的宽度，
+  // 让高德按新宽度重算一次（幂等，多叫一次无副作用）
+  requestAnimationFrame(kickMapResize);
 }
 
 // ---------- 移动端：左右滑动切换 tab ----------
@@ -7822,7 +7946,14 @@ initLayerControls();
 // 顺序要紧：先 initMap() 建好地图，再套宽度（见 restorePanelWidth 的注释）
 restorePanelState();
 restorePanelWidth();
+// 面板宽度/折叠/顶栏收起/全屏都会改 #map 的尺寸，任何一个环节漏了 resize，
+// 高德的画布就停在旧尺寸上（PC 端「地图整片空白」就是这么来的）。统一盯住。
+watchMapSize();
+kickMapResize();
 loadPlacesDict();
+// 首屏之后再补两刀：字体加载、PWA 状态栏、地址栏收起等都会在几百毫秒后
+// 再动一次布局，那时 ResizeObserver 可能还没盯上（或高德画布已按 0 尺寸初始化）。
+[300, 1200].forEach(t => setTimeout(kickMapResize, t));
 $('#points-view').addEventListener('scroll', savePointListScroll, { passive: true });
 positionViews(currentTab);   // 首屏先把三页在轨道上摆好（不带过渡）
 syncTabIndicator();
@@ -7831,8 +7962,20 @@ ensureAuth().then(ok => {
   // 未捕获的 promise rejection 会在每次打开未登录页面时往控制台打红字。
   // 登录成功后的行程加载走 onLoggedIn()，这里只管「打开页面就已登录」这条。
   if (!ok) return;
-  loadTrips();
-  restoreLayerState(); restoreLightboxState(); initPhotoSearch();
+  // 先把行程拉完、画完，再弹引导 —— 弹窗压在空地图上，用户第一眼就是
+  // 「没有地图也没有轨迹」。loadTrips 失败也照样弹（引导是独立的入口，
+  // 不该被一次接口抖动连坐）。
+  loadTrips()
+    .catch(() => {})
+    .finally(() => {
+      restoreLayerState(); restoreLightboxState(); initPhotoSearch();
+      maybeShowWelcome();
+      // 引导面板会盖住地图：关掉时再让高德按真实可见尺寸重算一次
+      setTimeout(() => {
+        kickMapResize();
+        if (currentTripId) restoreMapView();
+      }, 260);
+    });
 });
 
 // ---------- 照片生成轨迹 ----------
