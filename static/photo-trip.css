@@ -147,3 +147,11 @@
 @media (max-width: 600px) {
   .pt-dup-report { left: 12px; right: 12px; max-width: none; }
 }
+
+/* 存储超限时跟在提示后面的「去清理」按钮 */
+.pt-go-storage {
+  margin-left: 10px; padding: 3px 10px; font-size: 12px; font-family: inherit;
+  color: #fff; background: var(--primary, #1a73e8);
+  border: none; border-radius: 999px; cursor: pointer; vertical-align: middle;
+}
+.pt-go-storage:hover { filter: brightness(1.07); }

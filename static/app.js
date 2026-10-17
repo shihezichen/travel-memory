@@ -5359,6 +5359,10 @@ function openMoreSheet() {
     search: '<circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/>',
     // 导入导出合并成一个入口：双向箭头，一眼看出「双向搬东西」
     transfer: '<path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/>',
+    // 存储管理：叠起来的卡片 + 下箭头（表示「占用/清理」）
+    storage: '<rect x="3" y="4" width="18" height="5" rx="1.5"/>'
+             + '<rect x="3" y="12" width="18" height="5" rx="1.5"/>'
+             + '<line x1="7" y1="15.5" x2="13" y2="15.5"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
           + '<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
   };
@@ -5370,12 +5374,19 @@ function openMoreSheet() {
     { ico: svg(ICON.plus),     lbl: '手工行程',     fn: openNewTrip },
     // 照片行程紧跟「手工行程」：两者都是「造一个行程出来」，放一起好找。
     // 顶栏那枚按钮在窄屏会被 .topbtn{display:none} 收掉，所以手机端必须从这里进。
-    { ico: svg(ICON.photos),   lbl: '照片行程',     fn: () => window.PhotoTrip && window.PhotoTrip.open('create') },
+    // accent: 让它在菜单里第一眼就能看到（用户最常用的起步入口之一）。
+    // 见 style.css 里的 .more-sheet-item.accent。
+    { ico: svg(ICON.photos),   lbl: '照片行程',     accent: true,
+      sub: '照片 / 视频自动成轨迹',
+      fn: () => window.PhotoTrip && window.PhotoTrip.open('create') },
     { ico: svg(ICON.edit),     lbl: '编辑行程信息', fn: openEditTrip },
     { ico: svg(ICON.share),    lbl: '分享当前行程', fn: shareTrip },
     { ico: svg(ICON.refresh),  lbl: '重新计算路线', fn: () => $('#btn-recalc').click() },
     // 导入/导出合成一个入口（2026-10-16）：两个都是「把行程搬进搬出」，
     // 各占一行对只有几项的菜单太奢侈，点开后再选方向更省一步。
+    // 存储管理：上传被拒时会引导来这里（图片行程的提示里也提到它）。
+    // 常驻摆着而不是只在报错后才出现 —— 用户得先知道有这么个地方。
+    { ico: svg(ICON.storage),  lbl: '存储管理',     fn: openStoragePanel },
     { ico: svg(ICON.transfer), lbl: '导入导出行程', fn: openTransferSheet },
     // 用真锚点而不是 window.open：手机浏览器（尤其微信内置和 iOS Safari）
     // 会把「非用户手势同步调用」的 window.open 当弹窗拦掉，然后降级成
@@ -5388,8 +5399,13 @@ function openMoreSheet() {
   const sheet = document.createElement('div');
   sheet.className = 'more-sheet';
   const body = items.map(it => {
-    const inner = `<span class="ico">${it.ico}</span><span class="lbl">${it.lbl}</span>`;
-    const cls = `more-sheet-item${it.danger ? ' danger' : ''}`;
+    // accent：给「照片行程」这类主入口加一层主色底+ 高亮角标。
+    // 菜单是图标网格（column），塞说明文字会把整行挤乱，所以用角标而非文字。
+    const inner = `<span class="ico">${it.ico}</span>`
+      + `<span class="lbl">${it.lbl}</span>`
+      + (it.accent ? '<span class="hot" aria-hidden="true"></span>' : '');
+    const cls = `more-sheet-item${it.danger ? ' danger' : ''}`
+      + `${it.accent ? ' accent' : ''}`;
     const idx = items.indexOf(it);
     return it.href
       ? `<a class="${cls}" data-idx="${idx}" href="${it.href}" target="_blank" rel="noopener">${inner}</a>`
@@ -7824,3 +7840,104 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 });
+
+/* ============================================================================
+   存储管理
+   ============================================================================
+   为什么需要它：配额满了以后，光一句「请先删除一些既有的照片或视频」是不够的 ——
+   用户得知道去哪儿删、删哪个最划算。列表**按体积倒序**，因为他要腾空间时最该先
+   看到的是那些大文件（尤其视频），而不是最近加的那几个。
+
+   删除走既有的 DELETE /api/media/{id}，它会连带清掉转码档位和磁盘文件
+   （见 app.py: api_delete_media），所以这里不另写一套清理逻辑。
+   ========================================================================== */
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  const u = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v >= 10 ? 0 : 1) + ' ' + u[i];
+}
+
+async function openStoragePanel() {
+  openModal('存储管理', '<div class="st-wrap"><div class="st-loading">正在统计…</div></div>');
+  let d;
+  try {
+    d = await api('/api/storage/items');
+  } catch (e) {
+    const w = document.querySelector('.st-wrap');
+    if (w) w.innerHTML = '<div class="st-empty">读取失败：' + esc(e.message || e) + '</div>';
+    return;
+  }
+
+  const pct = (d.cap_text === '不限') ? 0
+    : Math.min(100, Math.round(100 * (d.usage.bytes / Math.max(1, d.usage.bytes + (d.free_bytes || 0)))));
+  const over = d.over;
+  const freeTxt = (d.free_bytes == null) ? '不限制'
+    : (over ? '已超出 ' + fmtBytes(-d.free_bytes) : '还能上传 ' + fmtBytes(d.free_bytes));
+
+  const rows = d.items.length ? d.items.map(it => `
+    <div class="st-item" data-id="${it.id}">
+      <span class="st-ico">${it.type === 'video' ? '🎬' : '🖼'}</span>
+      <span class="st-info">
+        <span class="st-name">${esc(it.point_name || '未命名地点')}</span>
+        <span class="st-sub">${esc(it.trip_name || '')}${it.exif_time ? ' · ' + esc(String(it.exif_time).slice(0, 10)) : ''}</span>
+      </span>
+      <span class="st-size">${fmtBytes(it.size)}</span>
+      <button class="st-del" data-id="${it.id}">删除</button>
+    </div>`).join('')
+    : '<div class="st-empty">还没有任何照片或视频</div>';
+
+  const wrap = document.querySelector('.st-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="st-sum ${over ? 'over' : ''}">
+      <div class="st-bar"><i style="width:${pct}%"></i></div>
+      <div class="st-sum-txt">
+        已用 <b>${esc(d.usage_text)}</b> / 上限 ${esc(d.cap_text)} · ${freeTxt}
+      </div>
+      <div class="st-sum-sub">
+        共 ${d.usage.items} 个文件（照片 ${d.usage.photos} · 视频 ${d.usage.videos}）
+        ${over ? ' · 已超出配额，删除后即可继续上传' : ''}
+      </div>
+    </div>
+    <div class="st-hint">按体积倒序排列 —— 先删大的最划算。</div>
+    <div class="st-list">${rows}</div>`;
+
+  wrap.querySelectorAll('.st-del').forEach(btn => {
+    btn.onclick = async () => {
+      const id = Number(btn.dataset.id);
+      const row = wrap.querySelector(`.st-item[data-id="${id}"]`);
+      if (!confirm('删除这一个文件？\n同时会删掉它在磁盘上的原文件和缩略图。')) return;
+      btn.disabled = true;
+      try {
+        await api(`/api/media/${id}`, { method: 'DELETE' });
+        if (row) row.remove();
+        tmToast('已删除');
+        forgetRecentUpload(id);
+        // 顶栏/地图上的媒体计数跟着少
+        if (typeof scheduleMediaCountRefresh === 'function') scheduleMediaCountRefresh();
+        refreshStorageQuota();     // 让上传弹窗里的配额提示也跟着更新
+        // 列表空了就把「还没有任何…」显示出来
+        if (!wrap.querySelector('.st-item')) {
+          wrap.querySelector('.st-list').innerHTML =
+            '<div class="st-empty">还没有任何照片或视频</div>';
+        }
+      } catch (e) {
+        btn.disabled = false;
+        tmToast('删除失败：' + (e.message || e));
+      }
+    };
+  });
+}
+
+/** 上传弹窗用的配额缓存。删完文件后要失效重取，否则还按旧的余量提示。 */
+let _storageQuota = null;
+async function refreshStorageQuota() {
+  _storageQuota = null;
+  if (window.PhotoTrip && window.PhotoTrip.invalidateQuota) {
+    window.PhotoTrip.invalidateQuota();
+  }
+}
+

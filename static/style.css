@@ -1117,6 +1117,70 @@ body.map-fullscreen-on { overflow: hidden; }
   text-align: center; word-break: keep-all;
 }
 .more-sheet-item.danger .ico { background: #fee2e2; color: var(--danger); }
+
+        /* ---------- 「照片行程」主入口高亮 ----------
+           手机端顶栏按钮全被收进这个菜单，照片行程是用户最常用的起步动作，
+           和「手工行程」平级摆着容易被当成普通项划过去。这里给它主色底色
+           + 右上角一个圆点标记，让它第一眼就被看到。
+           accent 只加在「照片行程」上，不给其他项加 —— 满屏高亮等于没有高亮。 */
+        .more-sheet-item { position: relative; }
+        .more-sheet-item.accent .ico {
+          background: var(--primary); color: #fff;
+          box-shadow: 0 2px 8px rgba(26,115,232,.30);
+        }
+        .more-sheet-item.accent .lbl { color: var(--primary); font-weight: 600; }
+        .more-sheet-item.accent:active { background: rgba(26,115,232,.08); }
+        .more-sheet-item .hot {
+          position: absolute; top: 6px; right: 50%; margin-right: -26px;
+          width: 8px; height: 8px; border-radius: 50%;
+          background: #f2994a; box-shadow: 0 0 0 2px #fff;
+        }
+
+        /* 顶栏同一枚按钮：主色实底，和手机端菜单里那颗一致 */
+        /* ---------- 存储管理面板 ---------- */
+        .st-wrap { font-size: 14px; }
+        .st-loading, .st-empty { padding: 26px; text-align: center; color: var(--muted); font-size: 13px; }
+        .st-sum { padding: 12px 14px; border-radius: 12px; background: var(--panel2, #f8f9fa); margin-bottom: 12px; }
+        .st-sum.over { background: #fdecea; }
+        .st-bar { height: 8px; border-radius: 4px; background: #e3e6ea; overflow: hidden; margin-bottom: 9px; }
+        .st-bar > i { display: block; height: 100%; border-radius: 4px; background: var(--primary); transition: width .2s; }
+        .st-sum.over .st-bar > i { background: var(--danger); }
+        .st-sum-txt { font-size: 13px; color: var(--text); }
+        .st-sum-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+        .st-hint { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+        .st-list { max-height: 46vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+        .st-item {
+          display: flex; align-items: center; gap: 10px;
+          padding: 9px 4px; border-bottom: 1px solid var(--border, #eceff1);
+        }
+        .st-item:last-child { border-bottom: none; }
+        .st-ico { font-size: 17px; flex: none; width: 24px; text-align: center; }
+        .st-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .st-name {
+          font-size: 13.5px; color: var(--text);
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .st-sub {
+          font-size: 11.5px; color: var(--muted);
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .st-size { font-size: 12.5px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+        .st-del {
+          flex: none; padding: 5px 11px; font-size: 12.5px; font-family: inherit;
+          color: var(--danger); background: transparent; cursor: pointer;
+          border: 1px solid var(--danger); border-radius: 7px;
+        }
+        .st-del:hover { background: var(--danger); color: #fff; }
+        .st-del:disabled { opacity: .5; cursor: default; }
+
+        .topbar .topbtn.topbtn-photo {
+          background: var(--primary); border-color: var(--primary); color: #fff;
+          font-weight: 600;
+        }
+        .topbar .topbtn.topbtn-photo:hover {
+          background: var(--primary); filter: brightness(1.06);
+        }
+        .topbar .topbtn.topbtn-photo:active { filter: brightness(.94); }
 .more-sheet-item.danger .lbl { color: var(--danger); }
 /* 320~360px 的小屏（iPhone SE 一类）：4 列后每格只剩 ~70px，
    「编辑行程信息」这种 6 字标签会顶到边，字号再收一点保证不折行 */

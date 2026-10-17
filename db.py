@@ -206,6 +206,25 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 );
 CREATE INDEX IF NOT EXISTS idx_prefs_user ON user_prefs(user_id);
 
+-- 每个用户的上传配额（管理员可在控制台逐用户调整，保存即生效）
+--
+-- 为什么存库而不是写死常量：限量是为了保护服务器不被一次上传拖死，
+-- 但不同用户的合理用量差很多（重度用户 vs 只放几张照片的）。
+-- 写死成 MAX_BATCH=500 那种常量，管理员想给某个用户放宽/收紧都没办法。
+--
+-- 值存NULL 或缺行时回落到 DEFAULT_LIMITS，语义是「未单独设置 = 用默认」。
+-- 负数表示不限（0 则是一律禁止，两者语义不同，别混）。
+CREATE TABLE IF NOT EXISTS user_limits (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    max_photos_per_upload INTEGER,      -- 单次上传的照片张数上限
+    max_videos_per_upload INTEGER,      -- 单次上传的视频个数上限
+    max_video_seconds INTEGER,          -- 单个视频的时长上限（秒）
+    max_storage_bytes INTEGER,          -- 该用户媒体总占用上限（字节）
+    updated_by INTEGER,                 -- 谁改的（管理员 id，便于追溯）
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
+
 -- 点级情绪/场景元数据（N-7）：感官记忆重建的地基，稀疏可增量更新
 CREATE TABLE IF NOT EXISTS point_meta (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2242,3 +2261,157 @@ def get_media_brief(media_ids):
     finally:
         conn.close()
     return {r["id"]: dict(r) for r in rows}
+
+
+# ============================================================================
+# 用户上传配额（user_limits）
+# ============================================================================
+# 业务代码一律通过 get_limits(user_id) 取配额，**不要在别处再写数字常量** ——
+# 管理员改完立刻生效，散落的硬编码会让「改了一个地方、另一个地方还是老规矩」。
+#
+# 默认值也集中在这里，改默认值同样只改这一处。
+DEFAULT_LIMITS = {
+    "max_photos_per_upload": 99,       # 单次上传最多 99 张照片
+    "max_videos_per_upload": 20,       # 单次上传最多 20 个视频
+    "max_video_seconds": 600,          # 单个视频最长 10 分钟
+    "max_storage_bytes": 5 * 1024 ** 3,   # 每个用户 5GB 媒体存储
+}
+
+# 配额字段名 -> (类型, 下界)。写库前统一按这张表校验，避免前端传进来
+# 一堆莫名其妙的值（比如 "999999999999" 或者字符串）。
+_LIMIT_FIELDS = {
+    "max_photos_per_upload": int,
+    "max_videos_per_upload": int,
+    "max_video_seconds": int,
+    "max_storage_bytes": int,
+}
+
+
+def get_limits(user_id) -> dict:
+    """取该用户的配额。缺行/字段为 NULL 时用默认值补齐。
+
+    返回的 dict 一定四个键都在，调用方不用到处判None。
+    """
+    out = dict(DEFAULT_LIMITS)
+    try:
+        conn = get_conn()
+        row = conn.execute("SELECT * FROM user_limits WHERE user_id=?",
+                           (user_id,)).fetchone()
+        conn.close()
+    except Exception:
+        return out
+    if not row:
+        return out
+    for k in _LIMIT_FIELDS:
+        v = row[k] if k in row.keys() else None
+        if v is not None:
+            out[k] = int(v)
+    return out
+
+
+def set_limits(user_id, limits: dict, updated_by=None) -> dict:
+    """设置某用户的配额。limits 里只包含要改的字段（None = 不限制）。
+
+    「不限制」和「默认值」在这里是同一件事：传 None 表示不限制，
+    下次 get_limits 会拿默认值回来。所以想彻底放开就把值设成很大，
+    或者让管理员在前端填 -1（这里把负数归一为「不限」）。
+    """
+    clean = {}
+    for k, cast in _LIMIT_FIELDS.items():
+        if k not in (limits or {}):
+            continue
+        v = limits[k]
+        if v is None or v == "":
+            continue
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            raise ValueError("%s 必须是整数，收到 %r" % (k, v))
+        clean[k] = None if iv < 0 else iv
+    if not clean:
+        return get_limits(user_id)
+
+    # 两步走（先 INSERT OR IGNORE 出行、再 UPDATE），比拼 ON CONFLICT
+    # 的占位符更不容易数错 —— 之前那版把 updated_by 也算进更新列表，
+    # SQL 有 5 个 ? 却只传 3 个值，直接报Incorrect number of bindings。
+    conn = get_conn()
+    conn.execute("INSERT OR IGNORE INTO user_limits(user_id) VALUES(?)", (user_id,))
+    for k, v in clean.items():
+        conn.execute("UPDATE user_limits SET %s=? WHERE user_id=?" % k, (v, user_id))
+    conn.execute("UPDATE user_limits SET updated_by=?, "
+                 "updated_at=datetime('now','localtime') WHERE user_id=?",
+                 (updated_by, user_id))
+    conn.commit()
+    conn.close()
+    return get_limits(user_id)
+
+
+def list_all_limits() -> dict:
+    """所有用户 id -> 配额。管理端列表用。"""
+    out = {}
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT l.user_id, l.max_photos_per_upload, l.max_videos_per_upload, "
+        "       l.max_video_seconds, l.max_storage_bytes, "
+        "       l.updated_by, l.updated_at "
+        "  FROM user_limits l").fetchall()
+    conn.close()
+    for r in rows:
+        item = {}
+        for k in _LIMIT_FIELDS:
+            v = r[k] if k in r.keys() else None
+            item[k] = int(v) if v is not None else None
+        item["updated_at"] = r["updated_at"]
+        item["updated_by"] = r["updated_by"] if "updated_by" in r.keys() else None
+        out[r["user_id"]] = item
+    return out
+
+
+def user_storage_usage(user_id) -> dict:
+    """该用户媒体总占用（字节）与张/个/时长分布。
+
+    filesize 只在本次改动之后写入的新媒体上有值，历史行是 NULL ——
+    那部分退回 os.stat 实际量（只统计有落盘文件行的），所以结果偏保守
+    （不会虚报）。
+    """
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT m.filename, m.thumb_filename, m.filesize, m.type "
+        "  FROM media m "
+        "  JOIN points p ON p.id = m.point_id "
+        "  JOIN trips  t ON t.id = p.trip_id "
+        " WHERE t.user_id = ?", (user_id,)).fetchall()
+    conn.close()
+
+    from config import UPLOAD_ROOT
+    total = 0
+    photos = videos = 0
+    unknown = 0
+    for r in rows:
+        fsize = r["filesize"] if "filesize" in r.keys() else None
+        if fsize:
+            total += int(fsize)
+        else:
+            # 历史行：实测磁盘
+            for nm in (r["filename"], r["thumb_filename"]):
+                if not nm:
+                    continue
+                p = UPLOAD_ROOT / nm
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    pass
+        t = (r["type"] if "type" in r.keys() else "") or "photo"
+        if t == "video":
+            videos += 1
+        elif t == "photo":
+            photos += 1
+        else:
+            unknown += 1
+    return {
+        "bytes": total,
+        "photos": photos,
+        "videos": videos,
+        "other": unknown,
+        "items": len(rows),
+    }

@@ -37,6 +37,9 @@ log = logging.getLogger("travel.photo_trip")
 router = APIRouter()
 
 # 待分配照片挂载点用的特殊轨迹点名
+DEFAULT_VIDEO_SECONDS = 600   # 兜底常量，正常路径都由 user_limits 提供
+BIG = 1 << 62                 # 语义上的「不限」，足够大又不溢出
+
 ORPHAN_POINT_NAME = "📷 待分配照片"
 
 # 单次导入上限，防止一次拖进来几千张把浏览器和服务端一起拖垮
@@ -165,46 +168,209 @@ def _probe_video_tags(path: Path) -> dict:
         return tags
     except Exception:
         return {}
-def _parse_uploads(files: list[UploadFile]):
+def _fmt_limit(n) -> str:
+    """把**用量**说成人话。给用户看的提示不能是一串 5368709120。
+
+    这里只描述「已经用了多少」，所以 0 就该显示 0 B ——
+    早先把 0 也当成「不限」返回，于是新用户撞到存储上限时看到的是
+    「已用 不限 / 上限 1.0 KB」，自相矛盾。配额本身是否无限由调用处
+    用 _fmt_cap 表达。
+    """
+    n = int(n or 0)
+    if n < 0:
+        return "不限"
+    v = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if v < 1024 or unit == "TB":
+            return ("%d B" % n) if unit == "B" else ("%.1f %s" % (v, unit))
+        v /= 1024.0
+    return "%.1f TB" % v
+
+
+def _fmt_cap(n) -> str:
+    """把**配额上限**说成人话。<=0 表示不限制。"""
+    n = int(n or 0)
+    return "不限" if n <= 0 else _fmt_limit(n)
+
+
+def _fmt_dur(sec) -> str:
+    sec = int(sec or 0)
+    if sec <= 0:
+        return "0 秒"
+    if sec < 60:
+        return "%d 秒" % sec
+    if sec % 60 == 0:
+        return "%d 分钟" % (sec // 60)
+    return "%d 分 %d 秒" % (sec // 60, sec % 60)
+
+
+def _check_batch_limits(user_id, files: list) -> dict:
+    """单次上传的「数量」校验 —— 在读文件之前就判定。
+
+    分开于存储配额：数量超了没必要先把文件收进来再丢，直接拒最省资源。
+    超限抛 HTTPException(400)，带中文原因。
+    """
+    lim = db.get_limits(user_id)
+    max_p = lim["max_photos_per_upload"]
+    max_v = lim["max_videos_per_upload"]
+
+    n_photo = n_video = 0
+    for f in files:
+        fn = getattr(f, "filename", "") or "x"
+        if not _is_media(fn):
+            continue
+        if _media_type_of(fn) == "video":
+            n_video += 1
+        else:
+            n_photo += 1
+
+    # 0 表示「一律不许」，>0 是正常上限，负数在 get_limits 里已回落默认值
+    if max_p == 0 and n_photo > 0:
+        raise HTTPException(400, "当前账号未开通照片上传权限")
+    if max_p > 0 and n_photo > max_p:
+        raise HTTPException(
+            400, "本次选了 %d 张照片，超出单次上限 %d 张。请分批上传"
+                 "（上限可由管理员调整）。" % (n_photo, max_p))
+    if max_v == 0 and n_video > 0:
+        raise HTTPException(400, "当前账号未开通视频上传权限")
+    if max_v > 0 and n_video > max_v:
+        raise HTTPException(
+            400, "本次选了 %d 个视频，超出单次上限 %d 个。请分批上传"
+                 "（上限可由管理员调整）。" % (n_video, max_v))
+    return {"photos": n_photo, "videos": n_video, "limits": lim}
+
+
+def _check_storage_limit(user_id, extra_bytes: int = 0) -> dict:
+    """存储总量配额校验。extra_bytes 是本次即将再写入的字节数。"""
+    lim = db.get_limits(user_id)
+    cap = lim["max_storage_bytes"]
+    if cap <= 0:
+        return {"usage": None, "limits": lim, "over": False}
+    use = db.user_storage_usage(user_id)
+    used = use["bytes"] + max(0, int(extra_bytes or 0))
+    if used > cap:
+        free = max(0, cap - use["bytes"])
+        raise HTTPException(
+            413, "存储空间不足：已用 %s / 上限 %s，还能上传 %s。"
+                 "请先删除一些既有的照片或视频再试。"
+                 % (_fmt_limit(use["bytes"]), _fmt_cap(cap), _fmt_limit(free)))
+    use["bytes"] = used
+    return {"usage": use, "limits": lim, "over": False}
+
+
+def _video_duration_seconds(path):
+    """视频时长（秒），拿不到返回 None。
+
+    拿不到时**不拒绝** —— 只装了 ffmpeg 的环境里探测偶尔失败，
+    为一次探测失败把用户的视频挡在门外不划算；真正的兜底是存储配额。
+    """
+    try:
+        return media_mod.probe_video_duration(path)
+    except Exception:
+        return None
+
+
+def _parse_uploads(files: list, user_id=None, limits: dict = None):
     """把上传的文件落盘 + 读 EXIF。
 
     返回 (rows, stored)，stored 每项是 (落盘名, 完整路径, 类型)。
 
     只落盘不建 media 行 —— 建行需要 point_id，而轨迹点还没生成。
     真正的 media 行在 create/append 阶段才写。
+
+    限量两层挡：
+      · 数量        -> _check_batch_limits（读文件之前就拒，不占磁盘）
+      · 视频时长    -> 落盘后探测，超了立刻删掉这个文件并报错
+      · 存储总量    -> 边写边累加，超过上限就中止并清理
+    任何一层拒绝都不会在磁盘上留下没人引用的垃圾文件。
     """
+    if user_id is not None and limits is None:
+        # 注意：_check_batch_limits 返回的是包装 dict（内含数量统计），
+        # 真正的配额在它的["limits"] 里。这里必须取内层 ——
+        # 之前直接 lim = limits，导致 lim.get("max_storage_bytes")
+        # 永远取不到，存储与视频时长两道校验被静默跳过。
+        limits = _check_batch_limits(user_id, files)["limits"]
+    lim = limits or (db.get_limits(user_id) if user_id
+                     else db.DEFAULT_LIMITS)
+
+    # 注意不要写 `x or 0`：配额值 0 的语义是「一律不许」，
+    # 而 `0 or 0` 之后那层 `if ... > 0` 会把「禁止」当成「不检查」，
+    # 于是管理员把上限设成 0 反而放开了。这里全部用 None 判定。
+    cap = lim.get("max_storage_bytes")
+    cap = BIG if cap is None else int(cap)
+    used = 0
+    if user_id is not None and cap is not None and cap > 0:
+        used = db.user_storage_usage(user_id)["bytes"]
+
+    max_sec = lim.get("max_video_seconds")
+    max_sec = DEFAULT_VIDEO_SECONDS if max_sec is None else int(max_sec)
+    written = []          # 本次已落盘的，失败时统一清理
     rows, stored = [], []
-    for f in files[:MAX_BATCH]:
-        raw = f.file.read()
-        if not raw:
-            continue
-        mtype = _media_type_of(f.filename or "x")
-        if not _is_media(f.filename or "x"):
-            # 音频/字幕之类确实没有空间信息，不参与
-            continue
-        # 落盘名 = 原文件名 + uuid 后缀。用户提的设计：既保证唯一（同一张
-        # 图可以导很多次），又保留原名信息（便于人工在目录里认出来）。
-        # uuid 放在扩展名之前、连字符分隔，这样从落盘名能反推回原名，
-        # 排查问题时对着 uploads/ 目录也能对上号。
-        orig = Path(f.filename or "unknown").name or "photo"
-        ext = Path(orig).suffix.lower() or ".jpg"
-        stem = Path(orig).stem or "photo"
-        # 原名里可能有路径分隔符/超长/控制字符，清一遍再拼
-        safe_stem = re.sub(r"[\x00-\x1f/\\:*?\"<>|]", "_", stem)[:60].strip() or "photo"
-        name = f"{safe_stem}-{uuid.uuid4().hex[:12]}{ext}"
-        src = UPLOAD_DIR / name
-        src.write_bytes(raw)
-        row = (_read_video_exif(src) if mtype == "video"
-               else _read_photo_exif(src))
-        row["_src_path"] = str(src)
-        row["_mtype"] = mtype
-        row["_orig_name"] = orig
-        row["_filesize"] = len(raw)
-        rows.append(row)
-        # stored 带上 mtype：建 media 行时要用，写死 photo 会让视频被当成图片存
-        # （前端拿不到可播的 srcset）
-        stored.append((name, str(src), mtype))
-    return rows, stored
+    try:
+        for f in files[:MAX_BATCH]:
+            raw = f.file.read()
+            if not raw:
+                continue
+            fn = getattr(f, "filename", "") or "x"
+            mtype = _media_type_of(fn)
+            if not _is_media(fn):
+                # 音频/字幕之类确实没有空间信息，不参与
+                continue
+
+            # 存储配额：写之前判断，绝不「先写满再删」
+            if (user_id is not None and cap is not None
+                    and cap >= 0 and used + len(raw) > cap):
+                raise HTTPException(
+                    413, "存储空间不足：已用 %s，本次上传会超过上限 %s。"
+                         "请先删除一些既有的照片或视频再试。"
+                         % (_fmt_limit(used), _fmt_limit(cap)))
+
+            # 落盘名 = 原文件名 + uuid 后缀。用户提的设计：既保证唯一
+            # （同一张图可以导很多次），又保留原名信息（便于人工在目录里
+            # 认出来）。uuid 放扩展名之前、连字符分隔，从落盘名能反推原名。
+            orig = Path(fn).name or "photo"
+            ext = Path(orig).suffix.lower() or ".jpg"
+            stem = Path(orig).stem or "photo"
+            # 原名里可能有路径分隔符/超长/控制字符，清一遍再拼
+            safe_stem = re.sub(r"[\x00-\x1f/\\:*?\"<>|]", "_", stem)[:60].strip() or "photo"
+            name = "%s-%s%s" % (safe_stem, uuid.uuid4().hex[:12], ext)
+            src = UPLOAD_DIR / name
+            src.write_bytes(raw)
+            written.append(src)
+            used += len(raw)
+
+            if mtype == "video" and max_sec == 0:
+                raise HTTPException(
+                    400, "当前账号未开通视频上传权限（视频时长上限为 0）")
+            if mtype == "video":
+                dur = _video_duration_seconds(src)
+                # 只在「明确超了」时拒绝；探测失败(None)就放过
+                if dur is not None and dur > max_sec + 1:
+                    raise HTTPException(
+                        400, "视频「%s」时长 %s，超过单个上限 %s。"
+                             "请剪短后再上传（上限可由管理员调整）。"
+                             % (orig, _fmt_dur(dur), _fmt_dur(max_sec)))
+
+            row = (_read_video_exif(src) if mtype == "video"
+                   else _read_photo_exif(src))
+            row["_src_path"] = str(src)
+            row["_mtype"] = mtype
+            row["_orig_name"] = orig
+            row["_filesize"] = len(raw)
+            rows.append(row)
+            # stored 带mtype：建 media 行时要用，写死 photo 会让视频被当成
+            # 图片存（前端拿不到可播的 srcset）
+            stored.append((name, str(src), mtype))
+        return rows, stored
+    except Exception:
+        # 任何一处拒绝/报错，把这次已经落盘的全部清掉 —— 否则用户看到
+        # 「上传失败」，磁盘上却留着一堆没人引用的文件。
+        for p in written:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def _ensure_orphan_point(trip_id: int, user):
@@ -319,6 +485,32 @@ def _attach_orphans_with_report(trip_id: int, orphans, stored_by_name: dict,
     return dupes, n
 
 
+@router.get("/api/photo-trip/limits")
+async def photo_trip_limits(request: Request):
+    """当前用户的上传配额 + 存储用量。
+
+    前端在用户选文件时先拉这个做预检，超限当场提示，而不是等服务端拒了
+    才让用户知道。四项上限与 /api/console/limits 用的是同一份数据，
+    管理员改完这里立刻跟着变。
+    """
+    from app import current_user
+    user = current_user(request)
+    lim = db.get_limits(user["id"])
+    use = db.user_storage_usage(user["id"])
+    cap = lim["max_storage_bytes"]
+    return {
+        "max_photos_per_upload": lim["max_photos_per_upload"],
+        "max_videos_per_upload": lim["max_videos_per_upload"],
+        "max_video_seconds": lim["max_video_seconds"],
+        "max_storage_bytes": cap,
+        "usage": use,
+        "usage_text": _fmt_limit(use["bytes"]),
+        "cap_text": _fmt_cap(cap),
+        "free_bytes": max(0, cap - use["bytes"]) if cap > 0 else None,
+        "over": bool(cap > 0 and use["bytes"] > cap),
+    }
+
+
 @router.post("/api/photo-trip/preview")
 async def photo_trip_preview(request: Request,
                              files: list[UploadFile] = File(...),
@@ -330,7 +522,11 @@ async def photo_trip_preview(request: Request,
     之前只有 append 的响应里才有skipped_photos，用户点完按钮看到
     「已追加 0 个点」却不知道为什么，像是坏了。
     """
-    rows, stored = _parse_uploads(files)
+    # 限量校验需要用户身份，所以这里取一次（preview 原来没取过）
+    from app import current_user
+    _u = current_user(request)
+    _uid = _u.get("id") if _u else None
+    rows, stored = _parse_uploads(files, user_id=_uid)
     if not rows:
         raise HTTPException(400, "没有可用的照片（仅支持带 EXIF 的照片文件）")
 
@@ -398,7 +594,7 @@ async def photo_trip_create(request: Request,
     if not trip_name.strip():
         raise HTTPException(400, "行程名不能为空")
 
-    rows, stored = _parse_uploads(files)
+    rows, stored = _parse_uploads(files, user_id=(user or {}).get("id"))
     if not rows:
         raise HTTPException(400, "没有可用的照片")
 
@@ -499,7 +695,9 @@ async def photo_trip_append(request: Request, trip_id: int,
     if not db.get_trip(trip_id):
         raise HTTPException(404, "行程不存在")
 
-    rows, stored = _parse_uploads(files)
+    from app import current_user
+    _u = current_user(request)
+    rows, stored = _parse_uploads(files, user_id=(_u or {}).get("id"))
     if not rows:
         raise HTTPException(400, "没有可用的照片")
 

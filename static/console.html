@@ -126,6 +126,27 @@
   .toast.show { display: block; }
   .toast.err { border-color: var(--red); color: var(--red); }
   .empty { color: var(--muted); text-align: center; padding: 28px; font-size: 13px; }
+
+  /* ---------- 用户配额 ---------- */
+  /* 操作列别被挤成竖排：给个 nowrap + 白底不换行 */
+  #limits-body td:last-child { white-space: nowrap; }
+  #limits-body td:last-child .btn { margin-right: 4px; }
+  #limits-body input { width: 92px; }
+  .lim-bar { height: 6px; border-radius: 3px; background: #e8eaed; overflow: hidden; margin-top: 5px; min-width: 90px; }
+  .lim-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .lim-bar.warn > i { background: #f0a020; }
+  .lim-bar.over > i { background: #d93025; }
+  .lim-fields { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin: 12px 0 4px; }
+  .lim-fields label { display: block; font-size: 12px; color: var(--muted); }
+  .lim-fields input {
+    width: 100%; margin-top: 4px; padding: 7px 9px; font-size: 13px;
+    font-family: inherit; color: inherit;
+    background: #fff; border: 1px solid #dadce0; border-radius: 7px;
+  }
+  .lim-fields input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .lim-hint { font-size: 11.5px; color: var(--muted); }
+  .lim-tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: #e8f0fe; color: #1a73e8; }
+  @media (max-width: 560px) { .lim-fields { grid-template-columns: repeat(2, minmax(0,1fr)); } }
   .console-ver { text-align: center; color: var(--muted); font-size: 11px; padding: 18px 0 8px; }
   /* 「这是模板，要替换」的提醒。做得比正文显眼，不然整段拷走的人不会看见 */
   .prompt-warn {
@@ -247,6 +268,7 @@
 
   <nav class="tabs">
     <button class="tab active" data-page="keys" onclick="switchTab('keys')">🔑 API Keys</button>
+    <button class="tab" data-page="limits" id="tab-limits" style="display:none" onclick="switchTab('limits')">📦 用户配额</button>
     <button class="tab" data-page="usage" onclick="switchTab('usage')">📊 用量统计</button>
     <button class="tab" data-page="audit" onclick="switchTab('audit')">📜 审计日志</button>
   </nav>
@@ -318,6 +340,25 @@
   </div>
 
   <!-- ============ 页 2：用量统计 ============ -->
+  <div class="page" id="page-limits">
+    <h2>用户上传配额</h2>
+    <p class="muted" style="font-size:13px;line-height:1.6;margin:0 0 16px">
+      限量是为了保护服务器不被一次上传拖死。<b>保存后立即生效</b>，
+      下一次上传就会用新上限。填 <code>-1</code> 表示不限，填 <code>0</code> 表示一律禁止。
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>用户</th><th>存储占用</th>
+          <th>单次照片</th><th>单次视频</th><th>视频时长</th><th>总存储</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="limits-body"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+    </table>
+    <div class="cards" id="limits-cards"><div class="empty">加载中…</div></div>
+  </div>
+
   <div class="page" id="page-usage">
     <section>
       <h2>用量统计</h2>
@@ -392,6 +433,7 @@
 <!-- 底部常驻 Tab：只在手机端显示（宽屏走顶部 .tabs） -->
 <nav class="tabbar">
   <button data-page="keys" class="active" onclick="switchTab('keys')"><em>🔑</em>API Keys</button>
+  <button data-page="limits" id="tabbar-limits" style="display:none" onclick="switchTab('limits')"><em>📦</em>配额</button>
   <button data-page="usage" onclick="switchTab('usage')"><em>📊</em>统计</button>
   <button data-page="audit" onclick="switchTab('audit')"><em>📜</em>日志</button>
 </nav>
@@ -440,6 +482,20 @@ async function api(method, path, form) {
   return data;
 }
 
+/** 发 JSON body 的POST（配额这类结构化数据用表单传太别扭）。
+    没有并进上面的 api()：它第三个参数是 URLSearchParams，
+    改语义会牵动既有调用点。 */
+async function jsonApi(method, path, bodyObj) {
+  const r = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bodyObj || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || data.detail || ('HTTP ' + r.status));
+  return data;
+}
+
 /* ---------- Tab 切换 ---------- */
 function switchTab(name) {
   /* 顶部 .tab（宽屏）和底部 .tabbar button（手机）是同一套状态的两个视图，一起切 */
@@ -449,6 +505,7 @@ function switchTab(name) {
   closeSwipes();
   window.scrollTo(0, 0);
   if (name === 'usage') loadUsage();
+  if (name === 'limits') loadLimits();
   if (name === 'audit') loadAudit();
 }
 
@@ -526,6 +583,11 @@ async function load() {
     isAdmin = !!me.is_admin;
     $('who').textContent = me.display_name || me.username;
     if (isAdmin) $('sc-admin-wrap').style.display = '';
+    // 用户配额页只对管理员有意义，普通用户连入口都不给
+    if (isAdmin) {
+      $('tab-limits').style.display = '';
+      $('tabbar-limits').style.display = '';
+    }
   } catch (e) {
     $('who').textContent = '未登录';
     toast('未登录，请先在主界面登录后访问控制台', true);
@@ -937,6 +999,165 @@ function fmt(s) { return s ? String(s).replace('T', ' ').slice(0, 16) : '—'; }
 
 syncScopes();
 load();
+
+
+/* ---------- 用户配额（仅管理员可见） ---------- */
+let limitsCache = [];
+
+/** 存储上限在表单里用 GB 表示 —— 让管理员填 0.5 而不是 5368709120 */
+const GB = 1024 ** 3;
+
+function limBytesToGb(n) {
+  if (!n || n <= 0) return -1;              // -1 = 不限，0 = 禁止
+  return Math.round((n / GB) * 1000) / 1000;
+}
+
+function limGbToBytes(v) {
+  if (v === -1 || v === -1) return -1;
+  const n = Number(v);
+  if (!isFinite(n)) return -1;
+  if (n === 0) return 0;
+  return Math.round(n * GB);
+}
+
+async function loadLimits() {
+  if (!isAdmin) return;
+  const body = $('limits-body'), cards = $('limits-cards');
+  try {
+    const d = await api('GET', '/api/console/limits');
+    limitsCache = d.users || [];
+    renderLimits();
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`;
+    cards.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
+}
+
+/** 一行配额输入：宽屏表格里直接一格，手机卡片里一整块 */
+function limInputs(u, cls) {
+  const L = u.limits || {};
+  const gb = limBytesToGb(L.max_storage_bytes);
+  return `
+    <input class="${cls}" type="number" min="-1" step="1"
+           data-uid="${u.id}" data-f="max_photos_per_upload"
+           value="${L.max_photos_per_upload}" title="单次上传的照片张数上限">
+    <input class="${cls}" type="number" min="-1" step="1"
+           data-uid="${u.id}" data-f="max_videos_per_upload"
+           value="${L.max_videos_per_upload}" title="单次上传的视频个数上限">
+    <input class="${cls}" type="number" min="-1" step="1"
+           data-uid="${u.id}" data-f="max_video_seconds"
+           value="${L.max_video_seconds}" title="单个视频的时长上限（秒）">
+    <input class="${cls}" type="number" min="-1" step="0.001"
+           data-uid="${u.id}" data-f="max_storage_bytes"
+           value="${gb}" title="该用户的存储总上限（GB，-1 不限，0 禁止）">`;
+}
+
+function renderLimits() {
+  const body = $('limits-body'), cards = $('limits-cards');
+  if (!limitsCache.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">没有用户</td></tr>';
+    cards.innerHTML = '<div class="empty">没有用户</div>';
+    return;
+  }
+  body.innerHTML = limitsCache.map(u => {
+    const pct = u.percent == null ? 0 : u.percent;
+    const cls = pct >= 100 ? 'over' : (pct >= 80 ? 'warn' : '');
+    const tag = u.customized ? '<span class="lim-tag">已自定义</span>' : '';
+    return `<tr>
+      <td><b>${esc(u.display_name)}</b><br><span class="muted mono" style="font-size:12px">${esc(u.username)}</span> ${tag}</td>
+      <td>${esc(u.usage_text)}<div class="lim-bar ${cls}"><i style="width:${Math.min(100, pct)}%"></i></div></td>
+      <td>${limInputs(u, 'lim-in')}</td>
+      <td>${limInputs(u, 'lim-in')}</td>
+      <td>${limInputs(u, 'lim-in')}</td>
+      <td>${limInputs(u, 'lim-in')}</td>
+      <td>
+        <button class="btn" onclick="saveLimits(${u.id})">保存</button>
+        ${u.customized ? `<button class="btn" onclick="resetLimits(${u.id})">恢复默认</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+
+  // 表格里 4 个输入挤在一行不好看：改成每个单元格一个
+  const tds = body.querySelectorAll('tr');
+  tds.forEach((tr, i) => {
+    const tds2 = tr.querySelectorAll('td');
+    const inputs = tr.querySelectorAll('.lim-in');
+    // 顺序：uid 字段按 DOM 序是 照片/视频/时长/存储
+    [2, 3, 4, 5].forEach((ti, k) => {
+      const inp = inputs[k];
+      if (inp && tds2[ti]) { tds2[ti].textContent = ''; tds2[ti].appendChild(inp); }
+    });
+  });
+
+  cards.innerHTML = limitsCache.map(u => {
+    const pct = u.percent == null ? 0 : u.percent;
+    const cls = pct >= 100 ? 'over' : (pct >= 80 ? 'warn' : '');
+    const tag = u.customized ? '<span class="lim-tag">已自定义</span>' : '';
+    return `<div class="card">
+      <div class="row">
+        <div><b>${esc(u.display_name)}</b> ${tag}<br>
+          <span class="muted mono" style="font-size:12px">${esc(u.username)}</span></div>
+        <div style="text-align:right">
+          <div>${esc(u.usage_text)} / ${esc(u.cap_text)}</div>
+          <div class="lim-bar ${cls}" style="width:120px;margin-left:auto"><i style="width:${Math.min(100, pct)}%"></i></div>
+        </div>
+      </div>
+      <div class="lim-fields">
+        <label>单次照片（张）
+          <input class="lim-in" type="number" min="-1" step="1" data-uid="${u.id}"
+                 data-f="max_photos_per_upload" value="${u.limits.max_photos_per_upload}"></label>
+        <label>单次视频（个）
+          <input class="lim-in" type="number" min="-1" step="1" data-uid="${u.id}"
+                 data-f="max_videos_per_upload" value="${u.limits.max_videos_per_upload}"></label>
+        <label>视频时长（秒，-1 不限）
+          <input class="lim-in" type="number" min="-1" step="1" data-uid="${u.id}"
+                 data-f="max_video_seconds" value="${u.limits.max_video_seconds}"></label>
+        <label>总存储（GB，-1 不限，0 禁止）
+          <input class="lim-in" type="number" min="-1" step="0.001" data-uid="${u.id}"
+                 data-f="max_storage_bytes" value="${limBytesToGb(u.limits.max_storage_bytes)}"></label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="lim-hint">-1 = 不限 · 0 = 禁止</span>
+        <span>
+          <button class="btn primary" onclick="saveLimits(${u.id})">保存</button>
+          ${u.customized ? `<button class="btn" onclick="resetLimits(${u.id})">恢复默认</button>` : ''}
+        </span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/** 收集该用户四个输入框的值。存储那项走 GB -> 字节。 */
+function collectLimits(uid) {
+  const out = {};
+  document.querySelectorAll(`.lim-in[data-uid="${uid}"]`).forEach(inp => {
+    const f = inp.dataset.f;
+    let v = Number(inp.value);
+    if (!isFinite(v)) return;
+    if (f === 'max_storage_bytes') v = limGbToBytes(v);
+    out[f] = Math.round(v);
+  });
+  return out;
+}
+
+async function saveLimits(uid) {
+  const payload = collectLimits(uid);
+  if (!Object.keys(payload).length) { toast('没有可保存的内容', true); return; }
+  try {
+    await jsonApi('POST', `/api/console/limits/${uid}`, payload);
+    toast('已保存，该用户下次上传即按新上限');
+    await loadLimits();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function resetLimits(uid) {
+  if (!confirm('恢复该用户的默认配额？')) return;
+  try {
+    await api('POST', `/api/console/limits/${uid}/reset`);
+    toast('已恢复默认');
+    await loadLimits();
+  } catch (e) { toast(e.message, true); }
+}
 </script>
 </body>
 </html>

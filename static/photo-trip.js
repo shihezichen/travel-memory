@@ -227,16 +227,108 @@
   }
 
   // ---------- 选照片 → 调preview ----------
+  // ---------- 上传前的本地预检 ----------
+  // 限量（照片数、视频数、视频时长、存储余量）由服务端裁定，但**不等服务端报错**
+  // 才告诉用户：这里先按同样的规则检查一遍，超了立刻在状态栏说清楚。
+  // 两边的数字都来自 /api/storage/usage 与 /api/photo-trip/limits，
+  // 服务端改了这里下次打开就是新值，没有硬编码。
+  let QUOTA = null;      // { max_photos_per_upload, max_videos_per_upload, max_video_seconds, ... }
+
+  async function loadQuota() {
+    if (QUOTA) return QUOTA;
+    try {
+      const r = await fetch('/api/photo-trip/limits', {
+        credentials: 'same-origin',
+      });
+      if (r.ok) QUOTA = await r.json();
+    } catch (e) { /* 拿不到就跳过预检，服务端还会再挡一道 */ }
+    return QUOTA;
+  }
+
+  function isVideoFile(f) {
+    return f.type.startsWith('video/')
+      || /\.(mp4|mov|m4v|avi|mkv|webm|3gp)$/i.test(f.name || '');
+  }
+
+  /** 返回 true 表示可以继续。超限时已在状态栏说明，直接拦住。 */
+  function precheck(files) {
+    if (!QUOTA) return true;
+    const photos = files.filter((f) => !isVideoFile(f)).length;
+    const videos = files.length - photos;
+    const mp = QUOTA.max_photos_per_upload;
+    const mv = QUOTA.max_videos_per_upload;
+
+    if (mp === 0 && photos > 0) {
+      setStatus('当前账号未开通照片上传权限', 'err');
+      return false;
+    }
+    if (mp > 0 && photos > mp) {
+      setStatus(`本次选了 ${photos} 张照片，超出单次上限 ${mp} 张。请分批上传（上限可由管理员调整）。`, 'err');
+      return false;
+    }
+    if (mv === 0 && videos > 0) {
+      setStatus('当前账号未开通视频上传权限', 'err');
+      return false;
+    }
+    if (mv > 0 && videos > mv) {
+      setStatus(`本次选了 ${videos} 个视频，超出单次上限 ${mv} 个。请分批上传（上限可由管理员调整）。`, 'err');
+      return false;
+    }
+
+    // 存储余量：粗略用文件字节数对一下。真正的判定在服务端（它还要算历史
+    // 落盘文件），这里只是提前给个心理预期。
+    const cap = QUOTA.max_storage_bytes;
+    if (cap > 0 && QUOTA.usage) {
+      const incoming = files.reduce((s, f) => s + (f.size || 0), 0);
+      const free = Math.max(0, cap - QUOTA.usage.bytes);
+      if (incoming > free) {
+        setStatus(
+          `存储空间不足：当前已用 ${fmtSize(QUOTA.usage.bytes)} / 上限 `
+          + `${fmtSize(cap)}，本次选中 ${fmtSize(incoming)} 超过剩余的 `
+          + `${fmtSize(free)}。请先删除一些既有的照片或视频，或减少本次上传。`,
+          'err');
+        // 给一个能立刻处理的地方，而不只是让用户自己去找该删哪些
+        const st = modal.querySelector('#pt-status');
+        if (st && !st.querySelector('.pt-go-storage')) {
+          const go = document.createElement('button');
+          go.type = 'button';
+          go.className = 'pt-go-storage';
+          go.textContent = '去清理';
+          go.onclick = () => {
+            close();
+            if (typeof openStoragePanel === 'function') openStoragePanel();
+          };
+          st.appendChild(go);
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
   async function setFiles(files) {
-    // 照片与视频都收：手机拍的视频同样带拍摄时间和GPS，能和照片一起成点
+    // 照片与视频都收：手机拍的视频同样带拍摄时间和 GPS，能和照片一起成点
     const photos = files.filter((f) =>
       f.type.startsWith('image/') || f.type.startsWith('video/'));
     if (!photos.length) {
       setStatus('没识别到图片或视频文件', 'err');
       return;
     }
+    await loadQuota();
+    if (!precheck(photos)) {
+      // 拦住：清掉选择，用户改完再选
+      state.files = [];
+      state.plan = null;
+      const pv = modal.querySelector('#pt-preview');
+      if (pv) pv.innerHTML = '';
+      const ok = modal.querySelector('#pt-ok');
+      if (ok) ok.disabled = true;
+      const input = modal.querySelector('#pt-file-input');
+      if (input) input.value = '';
+      return;
+    }
     state.files = photos;
-    setStatus(`已选 ${photos.length} 张（${fmtSize(
+    setStatus(`已选 ${photos.length} 个（${fmtSize(
       photos.reduce((s, f) => s + f.size, 0))}），正在读取拍摄时间与位置…`);
 
     const fd = new FormData();
@@ -251,14 +343,20 @@
       const r = await fetch(API_PREVIEW, {
         method: 'POST', body: fd, credentials: 'same-origin',
       });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!r.ok) {
+        // ★ 服务端已经把「为什么不行」写在 detail 里了（超了几张、超了多久、
+        //  还能存多少），直接丢掉只显示 "HTTP 400" 等于让用户自己猜。
+        const err = await r.json().catch(() => ({}));
+        const msg = err.detail || err.error || ('HTTP ' + r.status);
+        throw new Error(msg);
+      }
       const data = await r.json();
       state.plan = data.plan;
       state.previewDupCount = data.duplicate_count;
       state.previewDupPhotos = data.duplicate_photos || [];
       renderPreview(data);
     } catch (err) {
-      setStatus('解析失败：' + err.message, 'err');
+      setStatus(err.message, 'err');
       state.plan = null;
       const pv = modal.querySelector('#pt-preview');
       if (pv) pv.innerHTML = '';
@@ -266,7 +364,6 @@
       if (ok) ok.disabled = true;
     }
   }
-
   function setStatus(text, cls) {
     if (!modal) return;
     const st = modal.querySelector('#pt-status');
@@ -505,5 +602,10 @@ function renderPreview(data) {
     }
   }
 
-  window.PhotoTrip = { open };
+  // invalidateQuota：用户在「存储管理」里删了文件后，app.js 会调它清缓存，
+  // 否则下次打开这个弹窗还按旧余量提示「空间不足」，而实际已经腾出来了。
+  window.PhotoTrip = {
+    open,
+    invalidateQuota() { QUOTA = null; },
+  };
 })();
