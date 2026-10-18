@@ -715,13 +715,25 @@ function tmTriggerDownload(m, label) {
   }
   // 2) iOS：Safari 认附件头，跳「文件」App
   if (tmIsIOS()) { tmDirectDownload(url, name, m.type); return; }
-  // 3) 安卓 / 鸿蒙壳：WebView 无下载管理器，<a> 下载必失败。退回最稳的存图方式——
-  //    灯箱里那张图/那个视频本来就是内联显示的，在 WebView 里长按即可「存储到相册」。
-  //    （绝不走 <a> 下载，否则要么跳 Edge、要么系统报「下载失败」。）
+  // 3) Android / Harmony shell WebView: no download manager, and the
+  //    long-press 'save image' context menu is disabled by the shell.
+  //    Neither <a download> (jumps to Edge / fails) nor long-press works,
+  //    so open the REAL attachment URL and let the system / browser download
+  //    manager save it to local storage (Download dir -> gallery scan).
   if (tmIsAndroid() || tmIsHarmony()) {
-    tmToast('灯箱中的图片 / 视频可长按「存储到相册」', 4000);
+    tmToast('正在通过系统/浏览器下载，请留意下载通知…', 4000);
+    var w = window;
+    var started = false;
+    try {
+      if (typeof w.open === 'function') {
+        var pop = w.open(url, '_blank');
+        if (pop) started = true;
+      }
+    } catch (e) {}
+    if (!started) { try { if (w.location) w.location.href = url; } catch (e) {} }
     return;
   }
+
   // 4) 桌面浏览器：blob 下载最干净（不会新开标签页，也不会跳 Edge）
   tmToast('正在准备下载…');
   fetch(url, { credentials: 'same-origin' })
